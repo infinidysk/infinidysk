@@ -22,6 +22,11 @@ This is InfiniDysk **2.0**, rewritten in Rust and now in **beta**. Docs: [infini
 >
 > [Pick a version](https://www.infinidysk.com/) first. To move, follow [Upgrade from 1.x](https://www.infinidysk.com/v2/upgrade/), and check [what is not in 2.x yet](https://www.infinidysk.com/v2/whats-new/#feature-comparison).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/overview-dark.png" />
+  <img src=".github/assets/overview-light.png" alt="The infinidysk Overview page: files being read right now, download activity for the last 24 hours, and summary tiles for reads, stalls, provider misses, imports, health checks and cache" />
+</picture>
+
 ## Looking for 1.x?
 
 1.x (the C# version) lives on the [`v1`](https://github.com/infinidysk/infinidysk/tree/v1) branch and keeps the `ghcr.io/infinidysk/infinidysk` image. It gets bug fixes only. Its docs are at [infinidysk.com/v1](https://www.infinidysk.com/v1/).
@@ -73,7 +78,7 @@ PAR2 repair is an experiment: enable it in **Settings → Experiments**, then re
 
 When enabled, confirmed health damage tries local repair before Arr replacement. Damaged imports wait for repair, then retry through verified saved articles. Unsupported compression and missing passwords still fail directly. The worker checks source data before requesting additional recovery slices. One repair runs at a time; work is bounded to 256 MB of working memory, a 16 MB NZB/metadata allowance, 100 GB of decoded source reads per attempt, one hour per attempt and three attempts. Transport overhead and provider retries can add traffic. Saved repairs have a 10 GB capacity; referenced articles are never evicted to make room.
 
-Saved repair articles live in `/config/repairs` for SQLite and PostgreSQL. Built-in backup and restore supports SQLite only. Those backups include verified repair bytes and pending C# repair candidates. For PostgreSQL, stop infinidysk, take a database dump with `pg_dump` and copy `/config/repairs` as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Older database-only backups stay readable, and missing repairs trigger health rechecks. Cleanup waits while a restore undo or the SQLite copy from a PostgreSQL switch remains available. Back up config before upgrading.
+Saved repair articles live in `repairs/` inside your config folder (`/config/repairs` by default) for SQLite and PostgreSQL. Built-in backup and restore supports SQLite only. Those backups include verified repair bytes and pending C# repair candidates. For PostgreSQL, stop infinidysk, take a database dump with `pg_dump` and copy that repair directory as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Older database-only backups stay readable, and missing repairs trigger health rechecks. Cleanup waits while a restore undo or the SQLite copy from a PostgreSQL switch remains available. Back up config before upgrading.
 
 To move an install, stop infinidysk and copy the whole config directory, including `repairs/`, before starting it at the new location.
 
@@ -102,7 +107,7 @@ With `/dev/fuse` and mount permission, run `cargo test -p infinidysk --test repa
 
 With `par2` installed, run `cargo run --release --locked -p infinidysk-bench -- --scenario par2-` to measure playback with idle, active, cancelled, and failed repairs on loopback NNTP. The benchmark uses `par2` to generate the fixture before timing.
 
-`vendor/fuse3` contains fuse3 0.9.0 with a post-INIT notifier and checked inode invalidation. Keep this patch until upstream reports notification write errors. Its original license is retained.
+`vendor/fuse3` contains fuse3 0.10.0 with checked inode invalidation. Keep this patch until upstream reports notification write errors. Its original license is retained.
 
 ## License
 

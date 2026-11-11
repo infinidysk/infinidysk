@@ -1,0 +1,9 @@
+schema = 1
+name = "Agent Usenet"
+website = "https://www.forteinc.com/apn/"
+# Forte's service; the server is an Easynews alias.
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news80.forteinc.com"

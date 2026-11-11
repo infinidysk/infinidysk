@@ -7,7 +7,7 @@ use infinidysk_core::{
 use sqlx::Connection as _;
 use uuid::Uuid;
 
-use crate::{Db, Error, Ordering, Pool, on};
+use crate::{DELETE_UNUSED_BLOB, Db, Error, Ordering, Pool, RELEASE_NZB, now_ms, on};
 
 /// Bound the descriptors held for one atomic publication.
 pub const MAX_PATCHES: usize = 1024;
@@ -117,6 +117,42 @@ fn decode(row: &Row) -> Result<Patch, Error> {
 }
 
 impl Db {
+    /// Keep a damaged inner NZB as the queued repair source before parking its import.
+    pub async fn replace_queued_repair_nzb(
+        &self,
+        source: &Source,
+        encoded: &[u8],
+        total_bytes: u64,
+        file_name: &str,
+    ) -> Result<bool, Error> {
+        let Owner::Queue(job) = source.owner else {
+            return Err(Error::RepairBounds("queued repair owner"));
+        };
+        let total = i64::try_from(total_bytes).map_err(|_| Error::RepairBounds("NZB size"))?;
+        let replacement = BlobId::new();
+        let changed = on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            if matches!(self.pool, Pool::Postgres(_)) {
+                sqlx::query("SELECT id FROM queue WHERE id = $1 FOR UPDATE").bind(job.0).execute(&mut *tx).await?;
+                sqlx::query("SELECT id FROM blobs WHERE id = $1 FOR UPDATE").bind(source.nzb.0).execute(&mut *tx).await?;
+            }
+            if capture!(&mut *tx, source.owner) != Some(source.clone()) {
+                return Ok(false);
+            }
+            sqlx::query("INSERT INTO blobs (id, data) VALUES ($1, $2)")
+                .bind(replacement.0).bind(encoded).execute(&mut *tx).await?;
+            sqlx::query("UPDATE queue SET nzb_blob = $2, total_bytes = $3, file_name = $4, content_hash = NULL WHERE id = $1")
+                .bind(job.0).bind(replacement.0).bind(total).bind(file_name).execute(&mut *tx).await?;
+            crate::release_nzb!(self, tx, source.nzb.0);
+            tx.commit().await?;
+            true
+        });
+        if changed {
+            self.notify(crate::Change::Queue);
+        }
+        Ok(changed)
+    }
+
     /// Bound compressed source allocation before loading it from either database.
     pub async fn repair_blob(&self, id: BlobId, limit: i64) -> Result<Option<Vec<u8>>, Error> {
         Ok(
@@ -222,13 +258,11 @@ impl Db {
             if changed > 0 {
                 sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND state = 1 AND verify_only = TRUE")
                     .bind(item.0).bind(meta.0).bind(generation).bind(source.generation).execute(&mut *tx).await?;
+                self.blob_epoch.fetch_add(1, Ordering::Release);
             }
             tx.commit().await?;
             changed
         });
-        if changed > 0 {
-            self.blob_epoch.fetch_add(1, Ordering::Release);
-        }
         Ok(changed > 0)
     }
     /// Capture a queued original and its generation in one SQL snapshot.
@@ -402,6 +436,8 @@ impl Db {
             }
             // Enabled before visibility so a concurrent read cannot skip a committed row.
             self.repair_present.store(true, Ordering::Release);
+            // Released health observations must retry even after an uncertain COMMIT.
+            self.blob_epoch.fetch_add(1, Ordering::Release);
             tx.commit().await?;
         });
         Ok(true)

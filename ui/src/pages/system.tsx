@@ -1,9 +1,9 @@
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
-import { CircleArrowUp, Cpu, Database, Download, HardDrive, Info, Loader2, MemoryStick, Search, Tag, TriangleAlert, type LucideIcon } from "lucide-react";
-import { Fragment, useDeferredValue, useState, type ReactNode } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, CircleArrowUp, Cpu, Database, Download, HardDrive, Info, Loader2, MemoryStick, Search, Tag, TriangleAlert, type LucideIcon } from "lucide-react";
+import { Fragment, useDeferredValue, useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, body, HttpError, type Schemas } from "../api/client";
-import { bytes, stamp } from "../format";
+import { ago, bytes, stamp } from "../format";
 import { jobCopy } from "../maintenance";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +80,7 @@ export function System() {
         )}
         <Resources live={live.data} />
         {status.data?.disk_cache && <DiskCache cache={status.data.disk_cache} />}
+        <Leftovers />
       </div>
       <Tracing />
       <Logs />
@@ -297,6 +298,104 @@ function Card({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode 
       </div>
       <div className="min-w-0 flex-1">{children}</div>
     </Panel>
+  );
+}
+
+const notCounted: Record<Schemas["LeftoverReason"], string> = {
+  live_data: "2.x uses this path; keep it",
+  symlink: "a symlink; not followed or counted",
+  unreadable: "could not be read; not counted",
+  changed: "appeared since the last measurement; measure again",
+};
+
+/** 1.x data an upgraded install no longer reads; measured once per start unless refreshed. */
+function Leftovers() {
+  const client = useQueryClient();
+  const view = useQuery({ queryKey: ["upgrade", "leftovers"], queryFn: () => body(api.GET("/api/v1/upgrade/leftovers")) });
+  const measure = useMutation({
+    mutationFn: () => body(api.POST("/api/v1/upgrade/leftovers/scan")),
+    onSuccess: (next) => client.setQueryData(["upgrade", "leftovers"], next),
+    // The server keeps a measurement whose request failed, so the next GET may have it.
+    onError: () => client.invalidateQueries({ queryKey: ["upgrade", "leftovers"] }),
+  });
+  const v = view.data;
+  const unmeasured = !!v?.imported && !v.scan && !v.scan_error;
+  const { mutate, isIdle } = measure;
+  useEffect(() => {
+    if (unmeasured && isIdle) mutate();
+  }, [unmeasured, isIdle, mutate]);
+  if (!v?.imported || v.scan?.gone) return null;
+  const scan = v.scan;
+  const measured = scan?.items.filter((i) => i.status === "present") ?? [];
+  const skipped = scan?.items.filter((i) => i.status === "not_assessed") ?? [];
+  const partial = measured.some((i) => !i.complete);
+  const paths = (items: Schemas["Leftover"][]) => (
+    <ul className="mt-1.5 space-y-0.5 text-xs">
+      {items.map((i) => (
+        <li key={i.path} className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <span className="min-w-0 truncate font-mono" title={i.path}>
+            {i.path}
+          </span>
+          <span className="text-muted-foreground tabular-nums">
+            {i.reason ? notCounted[i.reason] : `${bytes(i.bytes ?? 0)}${i.complete ? "" : " or more"}`}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <Card icon={Archive}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span className="font-medium">infinidysk 1.x data</span>
+        <span className="text-muted-foreground tabular-nums">
+          {measure.isPending ? (
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="text-primary size-3.5 animate-spin" />
+              Measuring…
+            </span>
+          ) : scan ? (
+            `${bytes(scan.bytes)} estimated disk usage`
+          ) : (
+            "–"
+          )}
+        </span>
+      </div>
+      {v.in_use ? (
+        <p className="text-warning-text mt-0.5">Still in use. {v.in_use} Keep it until then.</p>
+      ) : (
+        measured.length > 0 && (
+          <p className="text-muted-foreground mt-0.5">
+            2.x no longer reads these. Once your library plays as expected, you can delete them to free disk space.
+          </p>
+        )
+      )}
+      {measured.length > 0 && paths(measured)}
+      {skipped.length > 0 && (
+        <>
+          <p className="text-muted-foreground mt-1.5">Not measured, and not part of the estimate:</p>
+          {paths(skipped)}
+        </>
+      )}
+      <div className="text-muted-foreground mt-1.5 space-y-1 text-xs">
+        <p>Paths inside this installation; in Docker, inside the container.</p>
+        {partial && <p>Some of it could not be read, so the estimate is low.</p>}
+        {v.source === "postgres" && (
+          <p>1.x kept its database in PostgreSQL, which is not counted here. Drop it on your PostgreSQL server once you no longer need 1.x.</p>
+        )}
+        {v.scan_error && (
+          <p className="text-warning-text">
+            Measuring failed {v.scan_failed_at_ms ? stamp(v.scan_failed_at_ms) : ""}: {v.scan_error}
+          </p>
+        )}
+        {measure.isError && <Failure error={measure.error} />}
+        <p className="flex flex-wrap items-center gap-x-3">
+          {scan && <span>Measured {ago(scan.at_ms)}</span>}
+          <Button variant="link" size="sm" className="h-auto p-0 text-xs" disabled={measure.isPending} onClick={() => measure.mutate()}>
+            Measure again
+          </Button>
+        </p>
+      </div>
+    </Card>
   );
 }
 

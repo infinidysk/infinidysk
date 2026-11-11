@@ -733,6 +733,7 @@ async fn list_history(state: &Sab, ctx: &Ctx, p: &Params) -> Result<Value, Fail>
             category: category.as_deref(),
             search: search.as_deref(),
             status,
+            failed_since: None,
             offset: start,
             limit: Some(limit),
         })

@@ -97,12 +97,12 @@ async fn rejected_login_explains_itself() {
         panic!("a rejected login fails the connect")
     };
     assert!(
-        matches!(error, Error::AuthRejected { code: 481 }),
+        matches!(error, Error::AuthRejected { code: 481, .. }),
         "{error:?}"
     );
     assert_eq!(
         error.connect_problem(),
-        "The server rejected the username or password (481)."
+        "The server rejected the username or password: 481 Authentication failed"
     );
 }
 

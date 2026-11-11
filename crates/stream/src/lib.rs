@@ -828,6 +828,67 @@ impl SegmentReader {
             })
     }
 
+    /// Replaces the head fetch with a new one that streams in and skips the budget, as a
+    /// fetch the reader waits on may.
+    fn refetch_head(&mut self) {
+        let (client, layout, cache, hole, index) = (
+            Arc::clone(&self.client),
+            Arc::clone(&self.layout),
+            self.cache.clone(),
+            self.hole(self.head),
+            self.head,
+        );
+        let wait = Some(Arc::new(Wait::default()));
+        let probe = self.probe(index, wait.clone(), false);
+        probe.step(Step::Queued);
+        let wanted = Arc::new(AtomicBool::new(true));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let progress = Progress {
+            tx,
+            wanted: Arc::clone(&wanted),
+        };
+        let task = tokio::spawn(async move {
+            probe.step(Step::Bypassed);
+            let started = Instant::now();
+            let source = match &cache {
+                Some(cache) => Source::Shared(cache),
+                None => Source::Direct,
+            };
+            let (data, filled) = fetch(
+                &client,
+                source,
+                &layout.segments[index],
+                Some(&probe),
+                Some(progress),
+                &hole,
+                false,
+            )
+            .await?;
+            Ok(((data, None, filled), started.elapsed()))
+        });
+        self.drop_hedge();
+        self.recheck = None;
+        if let Some(watch) = &self.watch {
+            watch.set_head(Some((segment_id(index), wait.clone())));
+        }
+        let head = self
+            .pending
+            .front_mut()
+            .expect("called with the failed head fetch still queued");
+        *head = Fetch {
+            task,
+            started: Instant::now(),
+            waited: true,
+            partial: Some(Partial {
+                rx,
+                data: Vec::new(),
+                wanted,
+            }),
+            urgent: None,
+            wait,
+        };
+    }
+
     /// The head segment, from its fetch or from a hedge that beat it.
     fn poll_head(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<Fetched>> {
         let now = Instant::now();
@@ -838,9 +899,8 @@ impl SegmentReader {
         if let Some(urgent) = head.urgent.take() {
             urgent.notify_one();
         }
-        if !head.waited
-            && let Some(watch) = &self.watch
-        {
+        let first = !head.waited;
+        if first && let Some(watch) = &self.watch {
             watch.set_head(Some((segment_id(self.head), head.wait.clone())));
         }
         head.waited = true;
@@ -850,6 +910,16 @@ impl SegmentReader {
             .as_ref()
             .is_some_and(|wait| matches!(wait.view().stage, Stage::Pipeline | Stage::Reply));
         if let Poll::Ready(result) = Pin::new(&mut head.task).poll(cx) {
+            // Read-ahead that failed while nobody waited gets one fetch on demand.
+            if first
+                && !self.strict
+                && let Ok(Err(error)) = &result
+                && is_transient(error)
+            {
+                self.refetch_head();
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
             self.pending.pop_front();
             self.drop_hedge();
             self.clear_head();
@@ -1073,6 +1143,20 @@ impl Drop for SegmentReader {
 /// Segment index as recorded in traces.
 fn segment_id(index: usize) -> u32 {
     u32::try_from(index).unwrap_or(u32::MAX)
+}
+
+/// A failure another request may not repeat: a dropped or stalled connection, or no
+/// provider free in time.
+fn is_transient(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<Arc<Error>>())
+        .is_some_and(|error| {
+            matches!(
+                **error,
+                Error::Closed | Error::Io(_) | Error::Timeout | Error::Unavailable
+            )
+        })
 }
 
 /// Where [`fetch`] gets a body.

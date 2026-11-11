@@ -603,6 +603,47 @@ async fn readers_share_fetches_and_reread_from_the_cache() {
 }
 
 #[tokio::test]
+async fn a_prefetch_that_failed_while_the_reader_paused_is_fetched_again() {
+    let corpus = Corpus::generate(1025, 8, ARTICLE_SIZE);
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    // Shorter than the hedge delay, so the head is fetched again on demand, not hedged.
+    let (client, layout) = setup_timed(&corpus, &[&server], Duration::from_millis(200));
+    let cache = Arc::new(Cache::new(true, 64 * ARTICLE_SIZE as u64));
+    let id = &corpus.articles[2].message_id;
+
+    // The read-ahead stall fails while the reader pauses; the demand fetch works.
+    server.stall_article(id, 1, Duration::from_secs(2));
+    let mut reader = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 8)
+        .with_cache(Arc::clone(&cache));
+    let mut all = vec![0; ARTICLE_SIZE];
+    reader.read_exact(&mut all).await.unwrap();
+    paused_until_failed(&server, id).await;
+    reader.read_to_end(&mut all).await.unwrap();
+    assert!(all == corpus.data, "the paused read continues intact");
+    assert_eq!(server.stalled(id), 1);
+
+    // A demand fetch that fails too is the read's error, not a third request.
+    server.stall_article(id, usize::MAX, Duration::from_secs(2));
+    let cache = Arc::new(Cache::new(true, 64 * ARTICLE_SIZE as u64));
+    let mut reader = SegmentReader::new(client, layout, 8).with_cache(cache);
+    let mut head = vec![0; ARTICLE_SIZE];
+    reader.read_exact(&mut head).await.unwrap();
+    paused_until_failed(&server, id).await;
+    assert!(reader.read_to_end(&mut Vec::new()).await.is_err());
+    assert_eq!(server.stalled(id), 2);
+}
+
+/// Waits until `id`'s stalled request has timed out.
+async fn paused_until_failed(server: &LoopbackServer, id: &str) {
+    while server.stalled(id) == 0 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
+}
+
+#[tokio::test]
 async fn the_disk_cache_survives_a_restart() {
     let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
     let server = LoopbackServer::start(corpus.articles.clone())
@@ -1036,6 +1077,14 @@ async fn the_watch_counts_the_articles_each_provider_delivered() {
 
 /// [`setup`] with `servers` as providers, tried in order.
 fn setup_on(corpus: &Corpus, servers: &[&LoopbackServer]) -> (Arc<Client>, Arc<Layout>) {
+    setup_timed(corpus, servers, Duration::from_secs(5))
+}
+
+fn setup_timed(
+    corpus: &Corpus,
+    servers: &[&LoopbackServer],
+    timeout: Duration,
+) -> (Arc<Client>, Arc<Layout>) {
     let article_size = corpus.data.len() / corpus.articles.len();
     let config = PoolConfig {
         max_connections: 4,
@@ -1060,7 +1109,7 @@ fn setup_on(corpus: &Corpus, servers: &[&LoopbackServer]) -> (Arc<Client>, Arc<L
             server.addr().port(),
             TlsMode::Plain,
             None,
-            Duration::from_secs(5),
+            timeout,
         )
         .unwrap();
         Provider {

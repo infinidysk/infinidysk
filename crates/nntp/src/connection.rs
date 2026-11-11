@@ -27,10 +27,11 @@ const READ_BUFFER_LEN: usize = 128 * 1024;
 const MAX_LINE_LEN: u64 = 64 * 1024;
 /// RFC 3977 caps message-ids at 250 octets.
 const MAX_MESSAGE_ID_LEN: usize = 250;
-/// Reply text kept on [`Error::Status`].
+/// Reply text kept on [`Error::Status`] and [`Error::AuthRejected`].
 const MAX_REPLY_LEN: usize = 120;
 /// Extra decode capacity so `\r\n=yend` is reached without growing the body buffer.
 const DECODE_SLACK: usize = 64;
+const OTHER_PART: Error = Error::Yenc("article is another part of the file");
 
 type Stream = Either<TcpStream, TlsStream<TcpStream>>;
 
@@ -95,6 +96,33 @@ impl Phase {
             Self::Transfer => "transfer",
             Self::Bandwidth => "bandwidth",
             Self::Draining => "draining",
+        }
+    }
+}
+
+/// Where a connect failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    Resolve,
+    Tcp,
+    Tls,
+    Greeting,
+    Auth,
+}
+
+impl Stage {
+    /// Whether the server had accepted the TCP connection.
+    pub(crate) const fn reached(self) -> bool {
+        matches!(self, Self::Tls | Self::Greeting | Self::Auth)
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Resolve => "resolve",
+            Self::Tcp => "tcp",
+            Self::Tls => "tls",
+            Self::Greeting => "greeting",
+            Self::Auth => "auth",
         }
     }
 }
@@ -305,6 +333,19 @@ impl Connection {
 
     /// Connects, reads the greeting and authenticates.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, Error> {
+        Self::connect_staged(endpoint)
+            .await
+            .map_err(|(_, error)| error)
+    }
+
+    /// [`connect`](Self::connect), with the stage a failure happened in.
+    pub(crate) async fn connect_staged(endpoint: &Endpoint) -> Result<Self, (Stage, Error)> {
+        let mut stage = Stage::Resolve;
+        let result = Self::connect_at(endpoint, &mut stage).await;
+        result.map_err(|error| (stage, error))
+    }
+
+    async fn connect_at(endpoint: &Endpoint, stage: &mut Stage) -> Result<Self, Error> {
         let timeout_after = endpoint.timeout;
         let started = Instant::now();
         let addrs: Vec<_> = timeout(
@@ -315,6 +356,7 @@ impl Connection {
         .map_err(|_| Error::Timeout)??
         .collect();
         let resolved = Instant::now();
+        *stage = Stage::Tcp;
         let tcp = timeout(timeout_after, TcpStream::connect(addrs.as_slice()))
             .await
             .map_err(|_| Error::Timeout)??;
@@ -326,6 +368,7 @@ impl Connection {
                 .with_interval(Duration::from_secs(5))
                 .with_retries(3),
         )?;
+        *stage = Stage::Tls;
         let stream = match &endpoint.tls {
             None => Either::Left(tcp),
             Some((connector, name)) => Either::Right(
@@ -359,11 +402,13 @@ impl Connection {
             timing: Timing::default(),
             bandwidth: endpoint.bandwidth.clone(),
         };
+        *stage = Stage::Greeting;
         match conn.read_status().await? {
             200 | 201 => {}
             code => return Err(conn.unexpected(code)),
         }
         let greeted = Instant::now();
+        *stage = Stage::Auth;
         if let Some(credentials) = &endpoint.credentials {
             conn.authenticate(credentials).await?;
         }
@@ -509,19 +554,22 @@ impl Connection {
             return self.fail_drained(Error::Yenc("missing =ybegin size")).await;
         };
 
+        let other_part = |offset: u64| begin.is_some_and(|begin| begin != offset);
         let mut offset = 0;
         let mut expected = usize::try_from(file_size).unwrap_or(usize::MAX);
+        // Whether the offset was checked against `begin`; a `=ypart` line split across
+        // reads is only seen by the decoder, so the check waits for it or the first byte.
+        let mut checked = false;
         if self.fill().await?.starts_with(b"=ypart ") {
             self.read_line().await?;
             match parse_ypart(&self.line) {
                 Some((begin, len)) => (offset, expected) = (begin, len),
                 None => return self.fail_drained(Error::Yenc("invalid =ypart")).await,
             }
-        }
-        if begin.is_some_and(|begin| begin != offset) {
-            return self
-                .fail_drained(Error::Yenc("article is another part of the file"))
-                .await;
+            if other_part(offset) {
+                return self.fail_drained(OTHER_PART).await;
+            }
+            checked = true;
         }
 
         let mut data = Vec::with_capacity(expected.min(MAX_DECODED_LEN) + DECODE_SLACK);
@@ -529,6 +577,9 @@ impl Connection {
         let mut crc = 0;
         // Decoded bytes already sent to `progress`.
         let mut sent = 0;
+        // Another part found mid-data: decoded to its end and discarded, so the
+        // connection stays in step without draining from inside an encoded line.
+        let mut wrong = false;
         loop {
             if data.len() > MAX_DECODED_LEN {
                 return Err(Error::TooLarge);
@@ -542,7 +593,14 @@ impl Connection {
             let (used, end) = decode_incremental(buf, &mut data, &mut state);
             crc = crc32(crc, &data[decoded..]);
             self.timing.decode += started.elapsed();
-            if let Some(progress) = progress
+            self.stream.consume(used);
+            if !checked && data.len() > decoded {
+                checked = true;
+                wrong = other_part(offset);
+            }
+            if wrong {
+                data.clear();
+            } else if let Some(progress) = progress
                 && data.len() > sent
                 && progress.wanted.load(Ordering::Relaxed)
                 && !progress.tx.is_closed()
@@ -550,10 +608,12 @@ impl Connection {
                 let _ = progress.tx.send((sent, data[sent..].to_vec()));
                 sent = data.len();
             }
-            self.stream.consume(used);
             match end {
                 DecodeEnd::None => {}
                 DecodeEnd::Article => {
+                    if wrong || (!checked && other_part(offset)) {
+                        return Err(OTHER_PART);
+                    }
                     // Without `=yend`, only the length shows the article is whole.
                     if data.len() < expected {
                         return Err(Error::Yenc("article ended before its announced size"));
@@ -564,14 +624,36 @@ impl Connection {
                     // Rest of a `=y…` line; data resumes at a line start.
                     self.read_line().await?;
                     state = DecoderState::default();
-                    if self.line.starts_with(b"part ") {
-                        if let Some((begin, len)) = parse_ypart(&self.line) {
-                            (offset, expected) = (begin, len);
+                    if wrong {
+                        if self.line.starts_with(b"end") {
+                            self.drain().await?;
+                            return Err(OTHER_PART);
                         }
+                    } else if self.line.starts_with(b"part ") {
+                        match parse_ypart(&self.line) {
+                            Some((begin, _)) if other_part(begin) => {
+                                return self.fail_drained(OTHER_PART).await;
+                            }
+                            Some((begin, len)) => {
+                                (offset, expected) = (begin, len);
+                                let fits = len.min(MAX_DECODED_LEN) + DECODE_SLACK;
+                                if data.is_empty() && data.capacity() > fits {
+                                    data = Vec::with_capacity(fits);
+                                }
+                            }
+                            None if !checked => {
+                                return self.fail_drained(Error::Yenc("invalid =ypart")).await;
+                            }
+                            None => {}
+                        }
+                        checked = true;
                     } else if self.line.starts_with(b"end") {
                         let key: &[u8] = if part.is_some() { b"pcrc32" } else { b"crc32" };
                         let posted = crc_field(&self.line, key);
                         self.drain().await?;
+                        if !checked && other_part(offset) {
+                            return Err(OTHER_PART);
+                        }
                         if let Some(expected) = posted
                             && expected != crc
                         {
@@ -610,7 +692,7 @@ impl Connection {
         match self.read_status().await? {
             281 => return Ok(()),
             381 => {}
-            code => return Err(Error::AuthRejected { code }),
+            code => return Err(self.rejected(code)),
         }
         self.write_buf.extend_from_slice(b"AUTHINFO PASS ");
         self.write_buf.extend_from_slice(password.as_bytes());
@@ -618,7 +700,7 @@ impl Connection {
         self.flush().await?;
         match self.read_status().await? {
             281 => Ok(()),
-            code => Err(Error::AuthRejected { code }),
+            code => Err(self.rejected(code)),
         }
     }
 
@@ -683,8 +765,23 @@ impl Connection {
             .ok_or(Error::Protocol)
     }
 
-    /// [`Error::Status`] with the text of the status line just read, cleaned for logs.
+    /// [`Error::Status`] with the text of the status line just read.
     fn unexpected(&self, code: u16) -> Error {
+        Error::Status {
+            code,
+            reply: self.reply(),
+        }
+    }
+
+    fn rejected(&self, code: u16) -> Error {
+        Error::AuthRejected {
+            code,
+            reply: self.reply(),
+        }
+    }
+
+    /// Text of the status line just read, cleaned for logs.
+    fn reply(&self) -> Box<str> {
         let text = String::from_utf8_lossy(self.line.get(3..).unwrap_or_default());
         let reply: String = text.chars().filter(|c| !c.is_control()).collect();
         let reply = reply.trim();
@@ -692,10 +789,7 @@ impl Connection {
         while !reply.is_char_boundary(end) {
             end -= 1;
         }
-        Error::Status {
-            code,
-            reply: reply[..end].into(),
-        }
+        reply[..end].into()
     }
 
     /// Skips lines through the article terminator.

@@ -88,8 +88,8 @@ struct Sampled {
     /// Counters since start at the last sample.
     last: HashMap<String, u64>,
     last_at: Option<Instant>,
-    /// Keys of providers whose breaker was open at the last sample.
-    open: HashSet<String>,
+    /// Providers whose breaker is open, by key.
+    open: HashMap<String, Outage>,
     /// Bytes served per open read at the last sample.
     served: HashMap<u64, u64>,
     /// Bytes each provider delivered per open read at the last sample.
@@ -424,6 +424,8 @@ struct ProviderPoint {
     bytes: u64,
     failures: u64,
     missing: u64,
+    /// Circuit breaker openings.
+    trips: u64,
 }
 
 #[derive(Default, Serialize, ToSchema)]
@@ -581,8 +583,57 @@ struct AppUsage {
 #[derive(Serialize, ToSchema)]
 struct BreakerView {
     at: i64,
+    /// The provider's key; none on outages stored before keys were.
+    provider_key: Option<String>,
+    /// Display name when it opened.
     provider: String,
+    /// How long it stayed open; up to now while it still is.
     open_ms: i64,
+}
+
+/// A provider's open breaker, since `at`.
+#[derive(Clone)]
+struct Outage {
+    at: i64,
+    name: String,
+}
+
+/// Starts outages for providers in `now_open` (key, name) and ends the rest at `at`.
+fn track_outages<'a>(
+    open: &mut HashMap<String, Outage>,
+    now_open: impl IntoIterator<Item = (&'a str, &'a str)>,
+    at: i64,
+) -> Vec<BreakerEvent> {
+    let now_open: HashSet<&str> = now_open
+        .into_iter()
+        .map(|(key, name)| {
+            open.entry(key.to_owned()).or_insert_with(|| Outage {
+                at,
+                name: name.to_owned(),
+            });
+            key
+        })
+        .collect();
+    let mut ended = Vec::new();
+    open.retain(|key, o| {
+        let still = now_open.contains(key.as_str());
+        if !still {
+            ended.push(o.event(key, at));
+        }
+        still
+    });
+    ended
+}
+
+impl Outage {
+    fn event(&self, key: &str, now: i64) -> BreakerEvent {
+        BreakerEvent {
+            at: self.at,
+            provider_key: Some(key.to_owned()),
+            provider: self.name.clone(),
+            open_ms: (now - self.at).max(0),
+        }
+    }
 }
 
 impl Metrics {
@@ -680,10 +731,18 @@ impl Metrics {
             }
         }
         self.sample();
+        self.end_outages();
         self.write(minute * MINUTE_MS).await;
         if let Some(store) = self.store.get() {
             store.close().await;
         }
+    }
+
+    /// Saves the outages still open as ending now, so a shutdown keeps them.
+    fn end_outages(&self) {
+        let mut state = self.state();
+        let ended = track_outages(&mut state.open, [], now_ms());
+        state.pending.events.extend(ended);
     }
 
     fn state(&self) -> MutexGuard<'_, Sampled> {
@@ -810,7 +869,7 @@ impl Metrics {
                 .sum(),
         );
         let mut fetched = 0;
-        let mut open_now = HashSet::new();
+        let mut open_now = Vec::new();
         let mut live_providers = Vec::with_capacity(providers.len());
         for p in &providers {
             let (mut bytes, mut requests, mut failures) = (0, 0, 0);
@@ -831,15 +890,8 @@ impl Metrics {
                     .pending
                     .add(&format!("peak.p.{}.bps", p.key), rate(bytes));
             }
-            if let Some(left) = p.open_for {
-                if !state.open.contains(&p.key) && state.pending.events.len() < MAX_PENDING {
-                    state.pending.events.push(BreakerEvent {
-                        at,
-                        provider: p.name.clone(),
-                        open_ms: i64::try_from(left.as_millis()).unwrap_or(i64::MAX),
-                    });
-                }
-                open_now.insert(p.key.clone());
+            if p.open_for.is_some() {
+                open_now.push((p.key.as_str(), p.name.as_str()));
             }
             live_providers.push(LiveProvider {
                 key: p.key.clone(),
@@ -870,7 +922,11 @@ impl Metrics {
                 connecting: p.connecting,
             });
         }
-        state.open = open_now;
+        for ended in track_outages(&mut state.open, open_now, at) {
+            if state.pending.events.len() < MAX_PENDING {
+                state.pending.events.push(ended);
+            }
+        }
 
         for s in &ended {
             let r = record(s);
@@ -1050,11 +1106,21 @@ impl Metrics {
     /// Writes what is pending as the minute starting at `minute_ms`; on failure keeps it
     /// for the next try.
     async fn write(&self, minute_ms: i64) {
-        let pending = std::mem::take(&mut self.state().pending);
+        let (pending, mut events) = {
+            let mut state = self.state();
+            let now = now_ms();
+            // Open outages are saved too, so a crash keeps them up to the last write.
+            let open: Vec<BreakerEvent> = state
+                .open
+                .iter()
+                .map(|(key, o)| o.event(key, now))
+                .collect();
+            (std::mem::take(&mut state.pending), open)
+        };
         let Some(store) = self.store.get() else {
             return;
         };
-        if pending.is_empty() {
+        if pending.is_empty() && events.is_empty() {
             return;
         }
         let counters: Vec<_> = pending
@@ -1062,8 +1128,9 @@ impl Metrics {
             .iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect();
+        events.extend(pending.events.iter().cloned());
         let written = store
-            .write(minute_ms, &counters, &pending.sessions, &pending.events)
+            .write(minute_ms, &counters, &pending.sessions, &events)
             .await;
         let mut state = self.state();
         match written {
@@ -1113,13 +1180,14 @@ impl Metrics {
                 None => Default::default(),
             };
         let catalogue = self.sources.vfs.db().catalogue(now - 7 * DAY_MS).await?;
-        let (pending, error, at, pending_minute) = {
+        let (pending, error, at, pending_minute, open) = {
             let state = self.state();
             (
                 state.pending.clone(),
                 state.error.clone(),
                 now_ms(),
                 state.pending_minute,
+                state.open.clone(),
             )
         };
 
@@ -1143,6 +1211,7 @@ impl Metrics {
                         }
                     }
                     Field::Failed(_) => spark.failures += value,
+                    Field::Trips => spark.trips += value,
                     _ => {}
                 }
             }
@@ -1184,13 +1253,19 @@ impl Metrics {
             .map(recent_read)
             .collect();
         reads.sort_by_key(|r| std::cmp::Reverse(r.closed_at));
+        let ongoing: Vec<BreakerEvent> = open.iter().map(|(key, o)| o.event(key, at)).collect();
+        let mut seen = HashSet::new();
         let mut breaker_events: Vec<BreakerView> = pending
             .events
             .iter()
             .rev()
+            .chain(&ongoing)
             .chain(&events)
+            // The store holds open outages as of the last write; the copy in memory is newer.
+            .filter(|e| e.provider_key.is_none() || seen.insert((e.provider_key.clone(), e.at)))
             .map(|e| BreakerView {
                 at: e.at,
+                provider_key: e.provider_key.clone(),
                 provider: e.provider.clone(),
                 open_ms: e.open_ms,
             })
@@ -2403,6 +2478,26 @@ mod tests {
             (point.stream, point.queue, point.health, point.missing),
             (1, 2, 0, 1)
         );
+    }
+
+    #[test]
+    fn an_outage_lasts_until_the_breaker_closes_and_keeps_its_key() {
+        let mut open = HashMap::new();
+        let none: Vec<BreakerEvent> = Vec::new();
+        assert_eq!(track_outages(&mut open, [("k1", "Name")], 1_000), none);
+        // Failed probes keep it open well past the first cooldown; a rename changes nothing.
+        assert_eq!(track_outages(&mut open, [("k1", "Renamed")], 200_000), none);
+        let ended = track_outages(&mut open, [], 250_000);
+        assert_eq!(
+            ended,
+            [BreakerEvent {
+                at: 1_000,
+                provider_key: Some("k1".to_owned()),
+                provider: "Name".to_owned(),
+                open_ms: 249_000,
+            }]
+        );
+        assert!(open.is_empty());
     }
 
     #[test]

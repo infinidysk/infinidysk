@@ -2431,7 +2431,7 @@ pub async fn post_library_preview(
 ) -> Result<Json<LibraryView>, Fail> {
     let mut next = admin.config.read().await.settings().clone();
     req.apply(&mut next, req.new_key.then_some("x"));
-    next.validate()?;
+    next.validate_in(admin.live.default_cache_dir())?;
     admin.library.request_preview(req);
     Ok(Json(admin.library.view().await?))
 }

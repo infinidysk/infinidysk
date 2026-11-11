@@ -72,10 +72,37 @@ impl From<(Inode, FileAttr)> for crate::raw::reply::FileAttr {
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 /// init reply
 pub struct ReplyInit {
     /// the max write size
     pub max_write: NonZeroU32,
+
+    /// Optional maximum number of pending background FUSE requests.
+    ///
+    /// The kernel queues background requests (readahead, async reads) up to this
+    /// limit. If `None`, defaults to `DEFAULT_MAX_BACKGROUND` (12).
+    pub max_background: Option<u16>,
+
+    /// Optional congestion threshold for background FUSE requests.
+    ///
+    /// When the number of pending background requests exceeds this threshold,
+    /// the kernel starts throttling. If `None`, defaults to
+    /// `DEFAULT_CONGESTION_THRESHOLD` (75% of `max_background`).
+    pub congestion_threshold: Option<u16>,
+}
+
+impl ReplyInit {
+    /// Create a new `ReplyInit` with the given max write size.
+    ///
+    /// All optional fields default to `None`, which uses kernel defaults.
+    pub fn new(max_write: NonZeroU32) -> Self {
+        Self {
+            max_write,
+            max_background: None,
+            congestion_threshold: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]

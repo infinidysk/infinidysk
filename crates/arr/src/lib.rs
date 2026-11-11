@@ -104,6 +104,9 @@ pub enum Error {
     },
     #[error("its API {0} is newer than this version of infinidysk supports")]
     Unsupported(String),
+    /// Its search of the media still ran when repair stopped waiting.
+    #[error("its own search for a replacement is still running")]
+    Searching,
 }
 
 impl Error {
@@ -115,7 +118,10 @@ impl Error {
                 e.is_connect() || e.is_timeout() || e.status().is_some_and(|s| s.is_server_error())
             }
             Self::Rejected { status, .. } => status.is_server_error(),
-            Self::Unexpected(_) | Self::WrongApp { .. } | Self::Unsupported(_) => false,
+            Self::Unexpected(_)
+            | Self::WrongApp { .. }
+            | Self::Unsupported(_)
+            | Self::Searching => false,
         }
     }
 }

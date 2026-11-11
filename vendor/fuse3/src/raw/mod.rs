@@ -8,6 +8,7 @@
 
 pub use filesystem::Filesystem;
 pub use request::Request;
+pub(crate) use session::spawn_task;
 #[cfg(any(feature = "async-io-runtime", feature = "tokio-runtime"))]
 pub use session::{MountHandle, Session};
 

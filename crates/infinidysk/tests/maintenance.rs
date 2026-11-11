@@ -65,6 +65,24 @@ async fn run(addr: SocketAddr, path: &str, body: Value) -> Value {
     }
 }
 
+/// A one-minute maintenance window half a day away, so a scheduled job never holds the slot.
+fn closed_window() -> [(String, String); 2] {
+    let start = jiff::Zoned::now()
+        .time()
+        .wrapping_add(jiff::Span::new().hours(12));
+    let end = start.wrapping_add(jiff::Span::new().minutes(1));
+    [
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__START".to_owned(),
+            start.strftime("%H:%M").to_string(),
+        ),
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__END".to_owned(),
+            end.strftime("%H:%M").to_string(),
+        ),
+    ]
+}
+
 /// Serves an install whose database is `root/infinidysk.sqlite` and mount `root/mnt`.
 async fn start(
     root: &Path,
@@ -85,6 +103,7 @@ async fn start(
         trace_minutes: 0,
         metrics_path: root.join("metrics.sqlite"),
         log_dir: root.join("logs"),
+        home: root.join("config"),
         config_dir: root.join("config"),
         ffprobe: "ffprobe".to_owned(),
     };
@@ -98,6 +117,7 @@ async fn start(
             root.join("mnt").display().to_string(),
         ),
     ];
+    vars.extend(closed_window());
     vars.extend(
         extra
             .iter()
@@ -227,6 +247,35 @@ async fn removes_only_files_no_library_link_points_to() {
     );
     assert!(!exists(&old[5]).await);
     assert!(exists(&old[0]).await && exists(&kept[0]).await);
+
+    // A run with no unlinked files left still removes the empty folders a stopped run left.
+    let (empty_job, _) = download(&db, "empty", &[]).await;
+    db.delete_history(&[empty_job]).await.unwrap();
+    let empty = db.item_by_path("/content/tv/empty").await.unwrap().unwrap();
+    let folders: Vec<_> = (0..500)
+        .map(|index| {
+            let mut folder =
+                Item::child(&empty, &format!("sub-{index}"), ItemKind::Directory).unwrap();
+            folder.created_at = 1;
+            folder
+        })
+        .collect();
+    db.insert(&folders, &[]).await.unwrap();
+    let report = run(addr, &format!("{JOB}/run"), json!({ "dry_run": false })).await;
+    assert_eq!(report["outcome"], "finished", "{report}");
+    assert_eq!(
+        (
+            report["removed"].as_u64(),
+            report["folders_removed"].as_u64()
+        ),
+        (Some(0), Some(501))
+    );
+    assert!(
+        db.item_by_path("/content/tv/empty")
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     db.close().await;
     cancel.cancel();

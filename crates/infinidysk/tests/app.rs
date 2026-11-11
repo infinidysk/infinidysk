@@ -3,8 +3,10 @@
 #![allow(clippy::unwrap_used)] // Test helpers outside `#[test]` fns; panics are the assertions.
 
 use std::net::SocketAddr;
+use std::process::Stdio;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Request, State};
@@ -66,6 +68,7 @@ async fn start_from(csharp_db: Option<&[u8]>) -> (SocketAddr, CancellationToken,
         trace_minutes: 0,
         metrics_path: path.with_extension("metrics.sqlite"),
         log_dir: path.with_extension("logs"),
+        home: path.with_extension("config"),
         config_dir: path.with_extension("config"),
         ffprobe: "ffprobe".to_owned(),
     };
@@ -156,6 +159,319 @@ async fn a_restart_request_stops_the_server_for_a_restart() {
     let (code, _) = send(addr, &admin_request("POST", "/api/v1/restart", "")).await;
     assert_eq!(code, "HTTP/1.1 202 Accepted");
     assert_eq!(server.await.unwrap().unwrap(), Exit::Restart);
+}
+
+/// After an import from 1.x, the System page lists 1.x data still on disk; signed in only.
+#[tokio::test]
+async fn lists_1x_data_left_after_the_import() {
+    let (addr, cancel, server, database_url) = start().await;
+    let get = admin_request("GET", "/api/v1/upgrade/leftovers", "");
+    let (code, body) = send(addr, &get).await;
+    assert_eq!(code, "HTTP/1.1 200 OK");
+    let view: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(view["imported"], false);
+    assert_eq!(view["present"], false);
+
+    let config = std::path::PathBuf::from(database_url.trim_start_matches("sqlite:"))
+        .with_extension("config");
+    std::fs::create_dir_all(config.join("blobs")).unwrap();
+    std::fs::write(config.join("db.sqlite"), vec![1u8; 8192]).unwrap();
+    // Not imported from 1.x: a db.sqlite there means nothing.
+    let (_, body) = send(addr, &get).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["present"],
+        false
+    );
+
+    let db = infinidysk_db::Db::connect(&database_url).await.unwrap();
+    db.write_config(
+        &[("upgrade.state", "\"done\""), ("upgrade.report", "\"r\"")],
+        &[],
+    )
+    .await
+    .unwrap();
+    let (_, body) = send(addr, &get).await;
+    let view: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(view["imported"], true);
+    assert_eq!(view["present"], true);
+    assert!(view["in_use"].as_str().unwrap().contains("skipped"));
+    assert!(view["scan"].is_null());
+
+    db.write_config(
+        &[
+            ("upgrade.download_ids", "true"),
+            ("upgrade.skipped_retried.5", "true"),
+        ],
+        &[],
+    )
+    .await
+    .unwrap();
+    db.close().await;
+    let scan = admin_request("POST", "/api/v1/upgrade/leftovers/scan", "");
+    let (code, body) = send(addr, &scan).await;
+    assert_eq!(code, "HTTP/1.1 200 OK");
+    let view: Value = serde_json::from_str(&body).unwrap();
+    assert!(view["in_use"].is_null());
+    assert_eq!(view["scan"]["gone"], false);
+    assert!(view["scan"]["bytes"].as_u64().unwrap() > 0);
+
+    // Dismissing the notice leaves the import report's own notice alone.
+    let dismiss = admin_request("POST", "/api/v1/upgrade/leftovers/dismiss", "");
+    assert_eq!(status(addr, &dismiss).await, "HTTP/1.1 204 No Content");
+    let (_, body) = send(addr, &get).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["dismissed"],
+        true
+    );
+    let report = admin_request("GET", "/api/v1/upgrade/report", "");
+    let (_, body) = send(addr, &report).await;
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["seen"], false);
+
+    // A library folder inside `blobs` makes it 2.x data.
+    let library = config.join("blobs/library");
+    std::fs::create_dir_all(&library).unwrap();
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+    let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
+    settings["imports"]["library_dirs"] = json!([{ "path": library, "arr_path": "" }]);
+    let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
+    assert_eq!(status(addr, &put).await, "HTTP/1.1 200 OK");
+    let (_, body) = send(addr, &get).await;
+    let view: Value = serde_json::from_str(&body).unwrap();
+    let blobs = view["scan"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["path"].as_str().unwrap().ends_with("/blobs"))
+        .unwrap();
+    assert_eq!(blobs["status"], "not_assessed");
+    assert_eq!(blobs["reason"], "live_data");
+
+    for (method, path) in [
+        ("GET", "/api/v1/upgrade/leftovers"),
+        ("POST", "/api/v1/upgrade/leftovers/scan"),
+        ("POST", "/api/v1/upgrade/leftovers/dismiss"),
+    ] {
+        let anonymous = format!(
+            "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+        );
+        assert_eq!(
+            status(addr, &anonymous).await,
+            "HTTP/1.1 401 Unauthorized",
+            "{method} {path}"
+        );
+    }
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+}
+
+/// The boot file, the default disk cache and the shown SQLite file use `Boot::home`.
+#[tokio::test]
+async fn keeps_the_boot_file_and_disk_cache_in_the_config_folder() {
+    use infinidysk::database::{BootFile, Migration, MigrationState, Source};
+    let home = std::env::temp_dir().join(format!("infinidysk-home-{}", ItemId::new()));
+    std::fs::create_dir_all(&home).unwrap();
+    let sqlite = home.join("infinidysk.sqlite");
+    // A move to PostgreSQL left from before a restart; its target never answers.
+    BootFile {
+        url: None,
+        migration: Some(Migration {
+            target: "postgres://u:p@127.0.0.1:1/x".to_owned(),
+            state: MigrationState::Copying,
+            schema_version: 0,
+        }),
+    }
+    .save(&home, (0, 0))
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let boot = Boot {
+        listen: addr,
+        database_url: format!("sqlite:{}", sqlite.display()),
+        database_source: Source::Default,
+        uid: 0,
+        gid: 0,
+        trace_minutes: 0,
+        metrics_path: home.join("metrics.sqlite"),
+        log_dir: home.join("logs"),
+        home: home.clone(),
+        config_dir: home.clone(),
+        ffprobe: "ffprobe".to_owned(),
+    };
+    let vars = [
+        ("INFINIDYSK__WEBDAV__PASSWORD".to_owned(), "pw".to_owned()),
+        (
+            "INFINIDYSK__AUTH__API_KEY".to_owned(),
+            "adminkey".to_owned(),
+        ),
+        ("INFINIDYSK__SAB__API_KEY".to_owned(), "sabkey".to_owned()),
+        (
+            "INFINIDYSK__PERFORMANCE__DISK_CACHE_ENABLED".to_owned(),
+            "true".to_owned(),
+        ),
+    ];
+    let cancel = CancellationToken::new();
+    let server = tokio::spawn({
+        let cancel = cancel.clone();
+        async move { serve(listener, &boot, vars, cancel).await }
+    });
+
+    let (code, body) = send(addr, &admin_request("GET", "/api/v1/database", "")).await;
+    assert_eq!(code, "HTTP/1.1 200 OK");
+    let database: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(database["migration"]["state"], "copying");
+
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/status", "")).await;
+    let status_body: Value = serde_json::from_str(&body).unwrap();
+    // The running cache reports its folder resolved (`/var` is `/private/var` on macOS).
+    assert_eq!(
+        status_body["disk_cache"]["dir"],
+        std::fs::canonicalize(home.join("cache"))
+            .unwrap()
+            .display()
+            .to_string()
+    );
+    assert_eq!(database["sqlite_path"], sqlite.display().to_string());
+
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/performance", "")).await;
+    let performance: Value = serde_json::from_str(&body).unwrap();
+    let cache = home.join("cache").display().to_string();
+    assert_eq!(performance["effective"]["disk_cache_dir"], cache);
+    for preset in performance["presets"].as_array().unwrap() {
+        assert_eq!(preset["tuning"]["disk_cache_dir"], cache);
+    }
+
+    // A mount over the config folder would hide its files, even with the disk cache elsewhere.
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+    let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
+    settings["mount"]["dir"] = home.display().to_string().into();
+    settings["performance"]["disk_cache_dir"] = std::env::temp_dir()
+        .join("infinidysk-elsewhere")
+        .display()
+        .to_string()
+        .into();
+    let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
+    let (code, body) = send(addr, &put).await;
+    assert_eq!(code, "HTTP/1.1 400 Bad Request");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["path"],
+        "mount.dir"
+    );
+
+    let cancel_move = admin_request("DELETE", "/api/v1/database/migration", "");
+    assert_eq!(status(addr, &cancel_move).await, "HTTP/1.1 200 OK");
+    assert!(BootFile::load(&home).unwrap().migration.is_none());
+
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+}
+
+/// The real binary with only `PATH`, `HOME` and `TMPDIR` from this process, so a developer's
+/// `INFINIDYSK_*` or 1.x variables never reach it.
+fn binary() -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_infinidysk"));
+    command
+        .env_clear()
+        .env("RUST_LOG", "info")
+        .kill_on_drop(true);
+    for key in ["PATH", "HOME", "TMPDIR"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+/// A config folder or saved settings that cannot be used stop startup with one warning,
+/// even with backtraces on.
+#[tokio::test]
+async fn an_unusable_config_dir_stops_startup_with_one_warning() {
+    let root = std::env::temp_dir().join(format!("infinidysk-config-dir-{}", ItemId::new()));
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let file = root.join("file");
+    std::fs::write(&file, b"").unwrap();
+    let home_text = home.display().to_string();
+    let cases = [
+        (file.display().to_string(), None, "creating"),
+        ("relative".to_owned(), None, "absolute path"),
+        // A mount over the config folder would hide its files.
+        (
+            home_text.clone(),
+            Some(home_text.clone()),
+            "must not contain the config folder",
+        ),
+    ];
+    for (dir, mount, reason) in cases {
+        let mut command = binary();
+        command
+            .env("INFINIDYSK_CONFIG_DIR", &dir)
+            .env("INFINIDYSK_LISTEN", "127.0.0.1:0")
+            .env("RUST_BACKTRACE", "1")
+            .env("NO_COLOR", "1");
+        if let Some(mount) = &mount {
+            command.env("INFINIDYSK__MOUNT__DIR", mount);
+        }
+        let output = tokio::time::timeout(Duration::from_secs(60), command.output())
+            .await
+            .expect("startup did not stop")
+            .unwrap();
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.code(), Some(1), "{dir}: {printed}");
+        let warnings: Vec<&str> = printed.lines().filter(|l| l.contains(" WARN ")).collect();
+        assert_eq!(warnings.len(), 1, "{dir}: {printed}");
+        assert!(
+            warnings[0].contains("reason=") && warnings[0].contains(reason),
+            "{dir}: {printed}"
+        );
+        assert!(
+            !printed.contains("Error:") && !printed.contains("backtrace"),
+            "{dir}: {printed}"
+        );
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// `INFINIDYSK_CONFIG_DIR` decides where the real binary makes its database and logs, and
+/// where it looks for a 1.x install to import.
+#[tokio::test]
+async fn the_binary_keeps_its_files_in_the_config_dir() {
+    let root = std::env::temp_dir().join(format!("infinidysk-config-dir-{}", ItemId::new()));
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // A 1.x install the importer finds and cannot read.
+    std::fs::write(home.join("db.sqlite"), b"not a database").unwrap();
+    let port = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut child = binary()
+        .env("INFINIDYSK_CONFIG_DIR", &home)
+        .env("INFINIDYSK_LISTEN", addr.to_string())
+        .env("INFINIDYSK__MOUNT__DIR", root.join("mnt"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let failed = tokio::time::timeout(Duration::from_secs(60), async {
+        while TcpStream::connect(addr).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        wait_for_failed_import(addr).await
+    })
+    .await
+    .expect("the server did not answer");
+    assert_eq!(failed["state"], "failed");
+    assert!(home.join("infinidysk.sqlite").is_file());
+    assert!(home.join("logs").is_dir());
+    child.kill().await.unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[tokio::test]
@@ -444,6 +760,15 @@ static HOOKS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 static QUEUE: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 static REMOVED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// The distinct values of a webhook's `on*` event flags.
+fn events(hook: &Value) -> std::collections::BTreeSet<bool> {
+    let flags = hook.as_object().unwrap().iter();
+    flags
+        .filter(|(k, _)| k.starts_with("on"))
+        .map(|(_, v)| v.as_bool().unwrap())
+        .collect()
+}
+
 /// Answers like a Sonarr under `/sonarr` holding two masked SAB clients, and a Chaptarr
 /// under `/chaptarr` holding two unmasked ones; `app` is our server.
 async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
@@ -498,10 +823,25 @@ async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
             json!([])
         }
         "/sonarr/api/v3/notification" | "/chaptarr/api/v1/notification" => {
+            assert_eq!(req.method(), axum::http::Method::POST);
+            assert_eq!(req.uri().query(), Some("forceSave=true"));
             let body = axum::body::to_bytes(req.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            let hook = serde_json::from_slice(&body).unwrap();
+            let hook: Value = serde_json::from_slice(&body).unwrap();
+            // Any event left on enables it, and the Arr tests an enabled create.
+            assert_eq!(events(&hook), [false].into());
+            json!({ "id": 9 })
+        }
+        "/sonarr/api/v3/notification/9" | "/chaptarr/api/v1/notification/9" => {
+            assert_eq!(req.method(), axum::http::Method::PUT);
+            assert_eq!(req.uri().query(), Some("forceSave=true"));
+            let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let hook: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(hook["id"], 9);
+            assert_eq!(events(&hook), [true].into());
             HOOKS.lock().unwrap().push((path.clone(), hook));
             json!({})
         }

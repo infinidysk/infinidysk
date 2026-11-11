@@ -61,8 +61,8 @@ pub enum Error {
     Unavailable,
     #[error("unexpected server response {code} {reply}")]
     Status { code: u16, reply: Box<str> },
-    #[error("authentication rejected ({code})")]
-    AuthRejected { code: u16 },
+    #[error("authentication rejected ({code} {reply})")]
+    AuthRejected { code: u16, reply: Box<str> },
     #[error("invalid {0}")]
     InvalidArgument(&'static str),
     #[error("local repair unavailable: {0}")]
@@ -137,8 +137,8 @@ impl Error {
     #[must_use]
     pub fn connect_problem(&self) -> String {
         match self {
-            Self::AuthRejected { code } => {
-                format!("The server rejected the username or password ({code}).")
+            Self::AuthRejected { code, reply } => {
+                format!("The server rejected the username or password: {code} {reply}")
             }
             Self::Timeout => "The server did not answer in time.".to_owned(),
             Self::Closed => "The server closed the connection.".to_owned(),

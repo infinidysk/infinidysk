@@ -20,7 +20,7 @@ use axum::http::{Extensions, HeaderMap, HeaderName, HeaderValue, Method, StatusC
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use futures_util::stream;
+use futures_util::{TryStreamExt as _, stream};
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use infinidysk_queue::{Queue, Submission, service};
 use infinidysk_vfs::{Delivery, Kind, Node, Origin, Vfs};
@@ -682,16 +682,21 @@ async fn get(
                 .into_response();
         }
     };
-    let body = Body::from_stream(stream::try_unfold(
-        (reader, fence, first),
-        |(mut reader, fence, first)| async move {
-            let next = match first {
-                Some(data) => Some(data),
-                None => body::chunk(&mut reader, fence.as_ref()).await?,
-            };
-            Ok::<_, std::io::Error>(next.map(|data| (data, (reader, fence, None))))
-        },
-    ));
+    let body = Body::from_stream(
+        stream::try_unfold(
+            (reader, fence, first),
+            |(mut reader, fence, first)| async move {
+                let next = match first {
+                    Some(data) => Some(data),
+                    None => body::chunk(&mut reader, fence.as_ref()).await?,
+                };
+                Ok::<_, std::io::Error>(next.map(|data| (data, (reader, fence, None))))
+            },
+        )
+        .inspect_err(|error| {
+            tracing::warn!(reason = %error, "webdav read failed mid-stream");
+        }),
+    );
     (status, out, body).into_response()
 }
 

@@ -1,0 +1,8 @@
+schema = 1
+name = "Pure Usenet"
+website = "https://www.pureusenet.nl"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.pureusenet.nl"

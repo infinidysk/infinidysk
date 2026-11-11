@@ -78,20 +78,30 @@ export function Stats() {
   );
 }
 
+/** Smallest bar for a bucket with an outage, so a short one in a long bucket stays visible. */
+const MIN_OUTAGE = 0.25;
+
 /** Share of each bucket a provider's circuit breaker was open. */
-function outages(provider: string, h: History) {
+function outages(key: string, name: string, score: Score | undefined, h: History) {
   const bucket = h.bucket_ms;
-  return h.points.map((p) => {
+  return h.points.map((p, i) => {
     let open = 0;
+    let hit = (score?.points[i]?.trips ?? 0) > 0;
     for (const e of h.breaker_events) {
-      if (e.provider !== provider) continue;
+      // Outages stored before keys were carry only the name.
+      if (e.provider_key != null ? e.provider_key !== key : e.provider !== name) continue;
+      const end = p.ts + bucket;
       const from = Math.max(e.at, p.ts);
-      const to = Math.min(e.at + Math.max(e.open_ms, bucket / 50), p.ts + bucket);
+      const to = Math.min(e.at + e.open_ms, end);
       if (to > from) open += to - from;
+      if (to > from || (e.at >= p.ts && e.at < end)) hit = true;
     }
-    return Math.min(1, open / bucket);
+    return hit ? Math.min(1, Math.max(MIN_OUTAGE, open / bucket)) : 0;
   });
 }
+
+const MISSING_TIP =
+  "Articles the provider did not have. A backup is asked only for what the providers before it missed, so a high share there is expected.";
 
 function Providers({ history: h, live, span }: { history: History; live?: Live; span: Window }) {
   const now = new Map(live?.providers.map((p) => [p.key, p]));
@@ -126,7 +136,12 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
             <TableHead className="text-right">Requests</TableHead>
             <TableHead className="hidden xl:table-cell">Rate</TableHead>
             <TableHead className="hidden md:table-cell">Errors</TableHead>
-            <TableHead className="hidden md:table-cell">Missing</TableHead>
+            <TableHead className="hidden md:table-cell">
+              <span className="inline-flex items-center gap-1">
+                Missing
+                <InfoTip label="About missing">{MISSING_TIP}</InfoTip>
+              </span>
+            </TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">
                 Latency
@@ -162,13 +177,16 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
                   {s && (s.failures > 0 || s.missing > 0 || s.trips > 0) && (
                     <div className="text-muted-foreground mt-0.5 font-mono text-xs whitespace-normal tabular-nums md:hidden">
                       <span className={cn(s.failures > 0 && "text-destructive")}>{count(s.failures, "error")}</span> ·{" "}
-                      <span className={cn(s.missing > 0 && "text-warning-text")}>{count(s.missing)} missing</span>
+                      <span className="whitespace-nowrap">
+                        <span className={cn(s.missing > 0 && "text-warning-text")}>{count(s.missing)} missing</span>{" "}
+                        <InfoTip label="About missing">{MISSING_TIP}</InfoTip>
+                      </span>
                       {s.trips > 0 && ` · ${count(s.trips, "trip")}`}
                     </div>
                   )}
                 </TableCell>
                 <TableCell className="hidden 2xl:table-cell">
-                  <Spark values={outages(name, h)} max={1} color="var(--color-destructive)" bars />
+                  <Spark values={outages(key, name, s, h)} max={1} color="var(--color-destructive)" bars />
                 </TableCell>
                 <TableCell className="text-right font-mono tabular-nums">
                   {s ? count(s.attempts) : "–"}
@@ -514,6 +532,7 @@ const Catalogue = memo(function Catalogue({ history: h }: { history: History }) 
   return (
     <Card title="Library" description="Every file you can play, right now">
       <Tiles
+        flush
         tiles={[
           ["Files", count(c.files)],
           ["Total size", bytes(c.bytes)],
@@ -545,6 +564,7 @@ const Lifetime = memo(function Lifetime({ history: h }: { history: History }) {
   return (
     <Card title="All time" description={h.records.since == null ? "No history yet" : since(h.records.since)}>
       <Tiles
+        flush
         tiles={[
         ["Read", bytes(l.served), `${bytes(l.fetched)} from providers`],
         ["Articles", count(l.requests), `${count(l.rescues)} rescued`],

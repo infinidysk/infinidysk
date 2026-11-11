@@ -1,0 +1,16 @@
+schema = 1
+name = "XS News"
+website = "https://www.xsnews.nl"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "reader.xsnews.nl"
+
+[[servers]]
+hostname = "nl.reader.xsnews.nl"
+region = "NL"
+
+[[servers]]
+hostname = "us.reader.xsnews.nl"
+region = "US"

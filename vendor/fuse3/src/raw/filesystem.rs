@@ -15,9 +15,18 @@ pub trait Filesystem {
     /// initialize filesystem. Called before any other filesystem method.
     async fn init(&self, req: Request) -> Result<ReplyInit>;
 
-    /// Store the notifier after INIT succeeds, before request dispatch starts.
-    /// Return promptly; do not access the mount or wait for work that accesses it.
-    /// Stop notification work when the session ends.
+    /// Provides a notifier after INIT handling completes, before normal request dispatch.
+    ///
+    /// Store the notifier and return promptly. This callback is not a guarantee that
+    /// requests against the mount can already complete: dispatch waits for its return.
+    /// Do not access the mount, or await work that accesses it, in this callback.
+    ///
+    /// A background task can use the notifier to invalidate cached data or entries
+    /// after out-of-band changes, without waiting for a filesystem `poll` request.
+    /// Send invalidations outside locks and handlers that kernel writeback may need.
+    /// This is called once when initialization succeeds; the default does nothing.
+    /// Stop background notification work when the session ends. A retained notifier
+    /// does not keep a mount logically valid or guarantee notification delivery.
     async fn ready(&self, notify: Notify) {}
 
     /// clean up filesystem. Called on filesystem exit which is fuseblk, in normal fuse filesystem,
@@ -453,8 +462,9 @@ pub trait Filesystem {
         Err(libc::ENOSYS.into())
     }
 
-    /// forget more than one inode. This is a batch version [`forget`][Filesystem::forget]
-    async fn batch_forget(&self, req: Request, inodes: &[Inode]) {}
+    /// forget more than one inode. This is a batch version [`forget`][Filesystem::forget].
+    /// Each item is an inode and its `nlookup`.
+    async fn batch_forget(&self, req: Request, inodes: &[(Inode, u64)]) {}
 
     /// allocate space for an open file. This function ensures that required space is allocated for
     /// specified file.

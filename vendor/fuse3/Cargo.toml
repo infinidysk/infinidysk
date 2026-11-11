@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.91"
 name = "fuse3"
-version = "0.9.0"
+version = "0.10.0"
 authors = ["Sherlock Holo <sherlockya@gmail.com>"]
 build = false
 autolib = false

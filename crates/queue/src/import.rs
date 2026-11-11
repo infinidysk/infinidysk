@@ -26,7 +26,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::names::{self, Kind};
-use crate::nzb::Nzb;
+use crate::nzb::{self, Nzb};
 
 /// Requests in flight per import, across all its steps.
 const CONCURRENCY: usize = 16;
@@ -202,6 +202,18 @@ pub struct Output {
     /// Sanitized path components below the job directory.
     pub path: Vec<String>,
     pub meta: FileMeta,
+}
+
+/// What an import found.
+#[derive(Debug)]
+pub enum Imported {
+    Files {
+        outputs: Vec<Output>,
+        /// First health checks by output index.
+        checks: Vec<Option<FirstCheck>>,
+    },
+    /// The job holds this NZB file in place of a release, as posted (plain or gzip).
+    Nzb(Vec<u8>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -397,6 +409,7 @@ impl Articles for Job {
 /// Obfuscated names are replaced using `release`. Encrypted archives open with
 /// `password`. Every provider request is counted in `progress`. At a 100 % sample,
 /// `verifier` runs each output's first health check, returned by output index.
+/// A job holding only an NZB file returns that file instead, as SABnzbd queues it.
 #[allow(
     clippy::too_many_arguments,
     reason = "one caller; each is a separate input of the attempt"
@@ -411,7 +424,7 @@ pub async fn import(
     progress: Arc<Progress>,
     verifier: Option<&dyn Verifier>,
     source: Option<(BlobId, i64)>,
-) -> Result<(Vec<Output>, Vec<Option<FirstCheck>>), Error> {
+) -> Result<Imported, Error> {
     let started = Instant::now();
     let job = &Arc::new(Job {
         client: Arc::clone(client),
@@ -595,6 +608,9 @@ pub async fn import(
     }
     let sets_at = started.elapsed();
 
+    if let Some(inner) = inner_nzb(job, &outputs).await? {
+        return Ok(Imported::Nzb(inner));
+    }
     let outputs = filter(outputs, job);
     if outputs.is_empty() {
         return Err(Error::Unrepairable("No importable files found.".to_owned()));
@@ -653,7 +669,49 @@ pub async fn import(
         decode_ms = wait_ms(waits.decode),
         "import steps"
     );
-    Ok((outputs, first_checks))
+    Ok(Imported::Files {
+        outputs,
+        checks: first_checks,
+    })
+}
+
+/// The NZB file a job holds in place of a release: every file that is not blocked is an
+/// NZB. `None` when the job holds anything else
+/// (`infinidysk-lab:docs/import-policy.md` §5.2.1).
+async fn inner_nzb(job: &Job, outputs: &[Output]) -> Result<Option<Vec<u8>>, Error> {
+    let is_nzb = |name: &str| {
+        name.rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("nzb"))
+    };
+    let mut nzbs = Vec::new();
+    for output in outputs {
+        let Some(name) = output.path.last() else {
+            continue;
+        };
+        if job.blocks(name) {
+            continue;
+        }
+        if !is_nzb(name) {
+            return Ok(None);
+        }
+        nzbs.push((name, &output.meta));
+    }
+    let (name, meta) = match nzbs[..] {
+        [] => return Ok(None),
+        [one] => one,
+        _ => {
+            return Err(failed(
+                "The download contains several NZB files; only one is supported.",
+            ));
+        }
+    };
+    if meta.size() > nzb::MAX_NZB {
+        return Err(failed(format!("{name}: {}", nzb::Error::TooLarge)));
+    }
+    let data = Volume::of(name.clone(), meta)
+        .read(job, 0, meta.size())
+        .await?;
+    Ok(Some(data))
 }
 
 /// Runs `futures` concurrently, returning results in input order. Requests are bounded by

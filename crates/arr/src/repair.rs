@@ -14,8 +14,9 @@ use crate::{Arr, Error, Profile, Session, fetch, send, version};
 /// History `eventType` values shared by Sonarr, Radarr, Lidarr and Chaptarr.
 const GRABBED: &str = "1";
 const IMPORTED: &str = "3";
-/// How often the Arr queue is polled while waiting for its own search.
-const QUEUE_POLL: Duration = Duration::from_secs(5);
+const FAILED: &str = "4";
+/// How often the Arr's commands are read while it searches the media being repaired.
+const SEARCH_POLL: Duration = Duration::from_secs(5);
 /// History records per page.
 const PAGE: usize = 1000;
 /// Slack between an import's history date and its file's `dateAdded`.
@@ -43,10 +44,21 @@ pub struct Owner {
 }
 
 enum Media {
-    Episodes(Vec<i64>),
+    /// Episode ids, with the series and season of the first one.
+    Episodes {
+        ids: Vec<i64>,
+        series: i64,
+        season: i64,
+    },
     Movie(i64),
-    Album(i64),
-    Book(i64),
+    Album {
+        id: i64,
+        artist: i64,
+    },
+    Book {
+        id: i64,
+        author: i64,
+    },
 }
 
 /// Which API an instance repairs through.
@@ -98,10 +110,10 @@ impl Owner {
     #[must_use]
     pub fn searches(&self) -> (&'static str, &[i64]) {
         match &self.media {
-            Media::Episodes(ids) => ("episode", ids),
+            Media::Episodes { ids, .. } => ("episode", ids),
             Media::Movie(id) => ("movie", std::slice::from_ref(id)),
-            Media::Album(id) => ("album", std::slice::from_ref(id)),
-            Media::Book(id) => ("book", std::slice::from_ref(id)),
+            Media::Album { id, .. } => ("album", std::slice::from_ref(id)),
+            Media::Book { id, .. } => ("book", std::slice::from_ref(id)),
         }
     }
 }
@@ -110,6 +122,54 @@ impl Owner {
 #[serde(rename_all = "camelCase")]
 struct QueueRecord {
     download_id: Option<String>,
+}
+
+/// An entry of the Arr's command list.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Command {
+    name: String,
+    status: String,
+    body: CommandBody,
+}
+
+/// What a search command names.
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct CommandBody {
+    episode_ids: Vec<i64>,
+    series_id: i64,
+    /// Season 0 (specials) is a real season.
+    season_number: Option<i64>,
+    movie_ids: Vec<i64>,
+    album_ids: Vec<i64>,
+    artist_id: i64,
+    book_ids: Vec<i64>,
+    author_id: i64,
+}
+
+/// Whether `command` is a queued or running search that covers `media`.
+fn searching(media: &Media, command: &Command) -> bool {
+    let Command { name, status, body } = command;
+    let running = status.eq_ignore_ascii_case("queued") || status.eq_ignore_ascii_case("started");
+    running
+        && match (media, name.as_str()) {
+            (Media::Episodes { ids, .. }, "EpisodeSearch") => {
+                body.episode_ids.iter().any(|id| ids.contains(id))
+            }
+            (Media::Episodes { series, season, .. }, "SeasonSearch") => {
+                body.series_id == *series && body.season_number == Some(*season)
+            }
+            (Media::Episodes { series, .. }, "SeriesSearch") => body.series_id == *series,
+            (Media::Movie(id), "MoviesSearch") => body.movie_ids.contains(id),
+            (Media::Album { id, .. }, "AlbumSearch") => body.album_ids.contains(id),
+            (Media::Album { artist, .. }, "ArtistSearch") => body.artist_id == *artist,
+            (Media::Book { id, .. }, "BookSearch") => body.book_ids.contains(id),
+            (Media::Book { author, .. }, "AuthorSearch") => {
+                body.author_id != 0 && body.author_id == *author
+            }
+            _ => false,
+        }
 }
 
 #[derive(Deserialize)]
@@ -169,26 +229,44 @@ struct MediaFile {
     /// Lidarr's name their album.
     #[serde(default)]
     album_id: Option<i64>,
+    /// Lidarr's name their artist too.
+    #[serde(default)]
+    artist_id: Option<i64>,
     /// Chaptarr's name their book.
     #[serde(default)]
     book_id: Option<i64>,
+    #[serde(default)]
+    author_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Episode {
-    episode_file_id: i64,
+    #[serde(rename = "episodeFileId")]
+    file_id: i64,
+    #[serde(default)]
+    series_id: i64,
+    #[serde(default)]
+    season_number: i64,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Track {
     track_file_id: i64,
+    #[serde(default)]
+    artist_id: i64,
 }
 
+/// An episode as `GET episode` lists it.
 #[derive(Deserialize)]
-struct Id {
+#[serde(rename_all = "camelCase")]
+struct Listed {
     id: i64,
+    #[serde(default)]
+    series_id: i64,
+    #[serde(default)]
+    season_number: i64,
 }
 
 #[derive(Deserialize)]
@@ -247,11 +325,17 @@ pub async fn owner(
                 .first()
                 .ok_or(Error::Unexpected("import record without episodeId"))?;
             let episode: Episode = fetch(call(Method::GET, format!("episode/{first}"))).await?;
-            let current = match episode.episode_file_id {
+            let current = match episode.file_id {
                 0 => None,
                 id => Some(fetch(call(Method::GET, format!("episodefile/{id}"))).await?),
             };
-            (Media::Episodes(ids), current)
+            let (series, season) = (episode.series_id, episode.season_number);
+            let media = Media::Episodes {
+                ids,
+                series,
+                season,
+            };
+            (media, current)
         }
         Shape::Movies => {
             let id = records
@@ -271,7 +355,8 @@ pub async fn owner(
                 0 => None,
                 id => Some(fetch(call(Method::GET, format!("trackfile/{id}"))).await?),
             };
-            (Media::Album(album), current)
+            let artist = track.artist_id;
+            (Media::Album { id: album, artist }, current)
         }
         Shape::Books => {
             let id = records
@@ -280,8 +365,12 @@ pub async fn owner(
                 .ok_or(Error::Unexpected("import record without bookId"))?;
             let files: Vec<MediaFile> =
                 fetch(call(Method::GET, "bookfile".to_owned()).query(&[("bookId", id)])).await?;
+            let author = files
+                .iter()
+                .find_map(|file| file.author_id)
+                .unwrap_or_default();
             let current = current_book_file(files, &imported_path, last_import, recorded_file);
-            (Media::Book(id), current)
+            (Media::Book { id, author }, current)
         }
     };
     Ok(Some(Owner {
@@ -364,31 +453,37 @@ pub async fn owner_of_file(
     let media = match shape {
         Shape::Series => {
             let file = file.to_string();
-            let episodes: Vec<Id> = fetch(
+            let episodes: Vec<Listed> = fetch(
                 s.call(Method::GET, "episode")
                     .query(&[("episodeFileId", file.as_str())]),
             )
             .await?;
-            if episodes.is_empty() {
+            let Some(first) = episodes.first() else {
                 return Ok(None);
+            };
+            Media::Episodes {
+                ids: episodes.iter().map(|e| e.id).collect(),
+                series: first.series_id,
+                season: first.season_number,
             }
-            Media::Episodes(episodes.into_iter().map(|e| e.id).collect())
         }
         Shape::Movies => Media::Movie(
             current
                 .movie_id
                 .ok_or(Error::Unexpected("movie file without movieId"))?,
         ),
-        Shape::Music => Media::Album(
-            current
+        Shape::Music => Media::Album {
+            id: current
                 .album_id
                 .ok_or(Error::Unexpected("track file without albumId"))?,
-        ),
-        Shape::Books => Media::Book(
-            current
+            artist: current.artist_id.unwrap_or_default(),
+        },
+        Shape::Books => Media::Book {
+            id: current
                 .book_id
                 .ok_or(Error::Unexpected("book file without bookId"))?,
-        ),
+            author: current.author_id.unwrap_or_default(),
+        },
     };
     Ok(Some(Owner {
         media,
@@ -449,17 +544,20 @@ pub async fn all_imports(http: &reqwest::Client, arr: &Arr) -> Result<Vec<Import
     Ok(imports)
 }
 
-/// Gets `owner` a replacement for download `job`: blocklist the release, give the Arr's
-/// own search `wait` to queue one, else delete our file and search. With no download
-/// known, or no grab of it in the Arr's history, nothing gets blocklisted and so nothing
-/// triggers the Arr's search; it deletes and searches at once. Returns at once if a
-/// replacement is already imported or queued.
+/// Gets `owner` a replacement for download `job`: blocklist the release, wait up to `wait`
+/// while the Arr searches the media, else delete our file and search. Once the blocklist
+/// succeeds, `resume` holds the newest grab id read before it; given one, the release is
+/// already blocklisted, so this goes straight to the wait. With no download known, or no
+/// grab of it in the Arr's history, nothing gets blocklisted and so nothing triggers the
+/// Arr's search; it deletes and searches at once. Returns at once if a replacement is
+/// already imported or queued.
 pub async fn replace(
     http: &reqwest::Client,
     arr: &Arr,
     job: Option<&str>,
     owner: &Owner,
     wait: Duration,
+    resume: &mut Option<i64>,
 ) -> Result<(), Error> {
     if owner.replaced() {
         return Ok(());
@@ -470,34 +568,47 @@ pub async fn replace(
         return Ok(());
     }
     if let Some(job) = job {
-        let grabbed: Page = fetch(call(Method::GET, "history".to_owned()).query(&[
-            ("downloadId", job),
-            ("eventType", GRABBED),
-            ("pageSize", "1"),
-        ]))
-        .await?;
-        if let Some(grab) = grabbed.records.first() {
-            send(call(Method::POST, format!("history/failed/{}", grab.id)).json(&json!({})))
-                .await?;
-            // ponytail: also waits when the Arr's automatic redownload is off; reading its
-            // download-client config and the grab's release source would skip that too.
-            let deadline = tokio::time::Instant::now() + wait;
-            while tokio::time::Instant::now() < deadline {
-                tokio::time::sleep(QUEUE_POLL.min(deadline - tokio::time::Instant::now())).await;
-                if replacing(&s, Some(job), owner).await? {
-                    return Ok(());
-                }
+        if resume.is_none() || wait.is_zero() {
+            let grabbed: Page = fetch(call(Method::GET, "history".to_owned()).query(&[
+                ("downloadId", job),
+                ("eventType", GRABBED),
+                ("pageSize", "1"),
+            ]))
+            .await?;
+            if let Some(grab) = grabbed.records.first() {
+                // Read before the blocklist, so a grab its search makes has a larger id.
+                let since = if wait.is_zero() {
+                    None
+                } else {
+                    Some(
+                        newest_grabs(&s, owner)
+                            .await?
+                            .iter()
+                            .map(|grab| grab.id)
+                            .max()
+                            .unwrap_or(0),
+                    )
+                };
+                send(call(Method::POST, format!("history/failed/{}", grab.id)).json(&json!({})))
+                    .await?;
+                *resume = since;
+            } else {
+                tracing::warn!(
+                    arr = %arr.name,
+                    reason = "no grab in its history",
+                    "could not blocklist the broken release; deleting the file and searching now"
+                );
             }
-        } else {
-            tracing::warn!(
-                arr = %arr.name,
-                reason = "no grab in its history",
-                "could not blocklist the broken release; deleting the file and searching now"
-            );
+        }
+        if !wait.is_zero()
+            && let Some(since) = *resume
+            && own_search(&s, job, owner, since, wait).await?
+        {
+            return Ok(());
         }
     }
     let (kind, search) = match &owner.media {
-        Media::Episodes(ids) => (
+        Media::Episodes { ids, .. } => (
             "episodefile",
             json!({ "name": "EpisodeSearch", "episodeIds": ids }),
         ),
@@ -506,11 +617,11 @@ pub async fn replace(
             json!({ "name": "MoviesSearch", "movieIds": [id] }),
         ),
         // Lidarr searches whole albums; one bad track gets the album searched.
-        Media::Album(id) => (
+        Media::Album { id, .. } => (
             "trackfile",
             json!({ "name": "AlbumSearch", "albumIds": [id] }),
         ),
-        Media::Book(id) => ("bookfile", json!({ "name": "BookSearch", "bookIds": [id] })),
+        Media::Book { id, .. } => ("bookfile", json!({ "name": "BookSearch", "bookIds": [id] })),
     };
     if let Some(file) = &owner.current {
         send(call(Method::DELETE, format!("{kind}/{}", file.id))).await?;
@@ -522,10 +633,10 @@ pub async fn replace(
 /// Whether the Arr queue holds a download other than `job` for the owner's media.
 async fn replacing(s: &Session<'_>, job: Option<&str>, owner: &Owner) -> Result<bool, Error> {
     let query: Vec<(&str, i64)> = match &owner.media {
-        Media::Episodes(ids) => ids.iter().map(|&id| ("episodeIds", id)).collect(),
+        Media::Episodes { ids, .. } => ids.iter().map(|&id| ("episodeIds", id)).collect(),
         Media::Movie(id) => vec![("movieId", *id)],
-        Media::Album(id) => vec![("albumIds", *id)],
-        Media::Book(id) => vec![("bookIds", *id)],
+        Media::Album { id, .. } => vec![("albumIds", *id)],
+        Media::Book { id, .. } => vec![("bookIds", *id)],
     };
     let queued: Vec<QueueRecord> =
         fetch(s.call(Method::GET, "queue/details").query(&query)).await?;
@@ -534,6 +645,75 @@ async fn replacing(s: &Session<'_>, job: Option<&str>, owner: &Owner) -> Result<
             .as_deref()
             .is_some_and(|id| job.is_none_or(|job| !id.eq_ignore_ascii_case(job)))
     }))
+}
+
+/// Waits while the Arr searches the owner's media after the blocklist; `true` once a
+/// replacement is queued, or was grabbed after `since` without a later download failure.
+/// A search still queued or running after `wait` is [`Error::Searching`], so the file is
+/// never deleted under it.
+async fn own_search(
+    s: &Session<'_>,
+    job: &str,
+    owner: &Owner,
+    since: i64,
+    wait: Duration,
+) -> Result<bool, Error> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let commands: Vec<Command> = fetch(s.call(Method::GET, "command")).await?;
+        if !commands.iter().any(|c| searching(&owner.media, c)) {
+            // History precedes queue refresh, but a later failure invalidates its grab.
+            for grab in newest_grabs(s, owner).await? {
+                if grab.id <= since {
+                    continue;
+                }
+                let download = grab
+                    .download_id
+                    .as_deref()
+                    .filter(|id| !id.trim().is_empty())
+                    .ok_or(Error::Unexpected("grab history without downloadId"))?;
+                let failed: Page = fetch(s.call(Method::GET, "history").query(&[
+                    ("downloadId", download),
+                    ("eventType", FAILED),
+                    ("pageSize", "1"),
+                ]))
+                .await?;
+                if !failed.records.iter().any(|failure| failure.id > grab.id) {
+                    return Ok(true);
+                }
+            }
+            return replacing(s, Some(job), owner).await;
+        }
+        if replacing(s, Some(job), owner).await? {
+            return Ok(true);
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(Error::Searching);
+        }
+        tokio::time::sleep(SEARCH_POLL.min(deadline - now)).await;
+    }
+}
+
+/// The Arr's newest grab of each of the owner's media.
+async fn newest_grabs(s: &Session<'_>, owner: &Owner) -> Result<Vec<Record>, Error> {
+    let filters: Vec<(&str, i64)> = match &owner.media {
+        Media::Episodes { ids, .. } => ids.iter().map(|&id| ("episodeId", id)).collect(),
+        Media::Movie(id) => vec![("movieIds", *id)],
+        Media::Album { id, .. } => vec![("albumId", *id)],
+        Media::Book { id, .. } => vec![("bookId", *id)],
+    };
+    let mut newest = Vec::new();
+    for filter in filters {
+        let page: Page = fetch(
+            s.call(Method::GET, "history")
+                .query(&[("eventType", GRABBED), ("pageSize", "1")])
+                .query(&[filter]),
+        )
+        .await?;
+        newest.extend(page.records.into_iter().take(1));
+    }
+    Ok(newest)
 }
 
 #[cfg(test)]
@@ -571,7 +751,9 @@ mod tests {
                 date_added: Some(added.to_owned()),
                 movie_id: None,
                 album_id: None,
+                artist_id: None,
                 book_id: None,
+                author_id: None,
             }),
         };
         assert!(!owner("2024-05-01T12:00:00.5Z").replaced());
@@ -586,7 +768,9 @@ mod tests {
             date_added: Some(added.to_owned()),
             movie_id: None,
             album_id: None,
+            artist_id: None,
             book_id: Some(7),
+            author_id: None,
         };
         let files = || {
             vec![
@@ -612,5 +796,92 @@ mod tests {
             pick("/books/a/gone.mp3", Some(9), "2024-06-01T00:00:00Z"),
             None
         );
+    }
+
+    #[test]
+    fn a_search_counts_while_queued_or_started_and_covering_the_media() {
+        let command = |name: &str, status: &str, body: serde_json::Value| -> Command {
+            serde_json::from_value(json!({ "name": name, "status": status, "body": body }))
+                .expect("a command")
+        };
+        let started = |name, body| command(name, "started", body);
+        let episodes = Media::Episodes {
+            ids: vec![5, 6],
+            series: 9,
+            season: 1,
+        };
+        let album = Media::Album { id: 4, artist: 2 };
+        let movie = Media::Movie(3);
+        let ids = |ids: &[i64]| json!({ "episodeIds": ids });
+        let season = |n: i64| json!({ "seriesId": 9, "seasonNumber": n });
+        assert!(searching(
+            &episodes,
+            &started("EpisodeSearch", ids(&[6, 7]))
+        ));
+        assert!(searching(
+            &episodes,
+            &command("EpisodeSearch", "queued", ids(&[5]))
+        ));
+        assert!(!searching(
+            &episodes,
+            &command("EpisodeSearch", "completed", ids(&[5]))
+        ));
+        assert!(!searching(&episodes, &started("EpisodeSearch", ids(&[7]))));
+        assert!(searching(&episodes, &started("SeasonSearch", season(1))));
+        assert!(!searching(&episodes, &started("SeasonSearch", season(2))));
+        for (series, status, expected) in [
+            (9, "started", true),
+            (9, "queued", true),
+            (10, "started", false),
+            (9, "completed", false),
+        ] {
+            assert_eq!(
+                searching(
+                    &episodes,
+                    &command("SeriesSearch", status, json!({ "seriesId": series }))
+                ),
+                expected
+            );
+        }
+        assert!(searching(
+            &movie,
+            &started("MoviesSearch", json!({ "movieIds": [3] }))
+        ));
+        assert!(!searching(&movie, &started("EpisodeSearch", ids(&[3]))));
+        assert!(searching(
+            &album,
+            &started("AlbumSearch", json!({ "albumIds": [4] }))
+        ));
+        assert!(searching(
+            &album,
+            &started("ArtistSearch", json!({ "artistId": 2 }))
+        ));
+        assert!(!searching(
+            &album,
+            &started("ArtistSearch", json!({ "artistId": 3 }))
+        ));
+        let book = Media::Book { id: 8, author: 2 };
+        assert!(searching(
+            &book,
+            &started("BookSearch", json!({ "bookIds": [8] }))
+        ));
+        for (author, status, expected) in [
+            (2, "started", true),
+            (2, "queued", true),
+            (3, "started", false),
+            (2, "completed", false),
+        ] {
+            assert_eq!(
+                searching(
+                    &book,
+                    &command("AuthorSearch", status, json!({ "authorId": author }))
+                ),
+                expected
+            );
+        }
+        assert!(!searching(
+            &Media::Book { id: 8, author: 0 },
+            &started("AuthorSearch", json!({}))
+        ));
     }
 }

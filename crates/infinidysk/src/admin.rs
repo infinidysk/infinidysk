@@ -72,6 +72,7 @@ pub struct Admin {
     pub backups: Arc<crate::backup::Backups>,
     pub updates: Arc<crate::update::Updates>,
     pub database: Arc<crate::database::Migrator>,
+    pub leftovers: Arc<upgrade::leftovers::Leftovers>,
     /// Ends event streams at shutdown.
     pub cancel: CancellationToken,
     /// Set before `cancel` when the process should start again.
@@ -158,6 +159,9 @@ pub struct Admin {
         upgrade::get_upgrade_report,
         upgrade::post_upgrade_report_seen,
         upgrade::post_upgrade_retry,
+        upgrade::leftovers::get_leftovers,
+        upgrade::leftovers::post_leftovers_scan,
+        upgrade::leftovers::post_leftovers_dismiss,
         library::get_library,
         library::post_library_preview,
         library::delete_library_preview,
@@ -325,6 +329,18 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         .route(
             "/api/v1/upgrade/report/seen",
             post(upgrade::post_upgrade_report_seen),
+        )
+        .route(
+            "/api/v1/upgrade/leftovers",
+            get(upgrade::leftovers::get_leftovers),
+        )
+        .route(
+            "/api/v1/upgrade/leftovers/scan",
+            post(upgrade::leftovers::post_leftovers_scan),
+        )
+        .route(
+            "/api/v1/upgrade/leftovers/dismiss",
+            post(upgrade::leftovers::post_leftovers_dismiss),
         )
         .route("/api/v1/library", get(library::get_library))
         .route(
@@ -874,6 +890,8 @@ struct HistoryFilter {
     /// Case-insensitive part of the job or file name.
     search: Option<String>,
     status: Option<HistoryStatus>,
+    /// Hides old stored failures without deleting them; missing-folder completed jobs still match `status=failed` at any age but return `completed`.
+    failed_max_age_ms: Option<u64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -905,6 +923,9 @@ async fn get_history(
         status: filter.status.map(|s| match s {
             HistoryStatus::Completed => JobStatus::Completed,
             HistoryStatus::Failed => JobStatus::Failed,
+        }),
+        failed_since: filter.failed_max_age_ms.map(|age| {
+            infinidysk_db::now_ms().saturating_sub(i64::try_from(age).unwrap_or(i64::MAX))
         }),
         offset: page.offset.unwrap_or(0),
         limit: Some(page.limit.unwrap_or(DEFAULT_PAGE).min(MAX_PAGE)),
@@ -1607,7 +1628,11 @@ async fn get_performance(
     State(admin): State<Arc<Admin>>,
     Query(query): Query<PerformanceQuery>,
 ) -> Json<PerformanceView> {
-    let effective = admin.config.read().await.settings().performance.effective();
+    let default_cache_dir = admin.live.default_cache_dir();
+    let effective = crate::app::effective_tuning(
+        &admin.config.read().await.settings().performance,
+        default_cache_dir,
+    );
     let dir = query
         .dir
         .unwrap_or_else(|| effective.disk_cache_dir.clone());
@@ -1622,7 +1647,10 @@ async fn get_performance(
             .into_iter()
             .map(|preset| PresetView {
                 preset,
-                tuning: preset.tuning(),
+                tuning: config::Tuning {
+                    disk_cache_dir: default_cache_dir.to_owned(),
+                    ..preset.tuning()
+                },
             })
             .collect(),
         effective,
@@ -1892,7 +1920,19 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
             *name = format!("provider-{}", i + 1);
         }
         header["version"] = json!(crate::update::VERSION);
-        header["tuning"] = json!(admin.config.read().await.settings().performance.effective());
+        let default_cache_dir = admin.live.default_cache_dir();
+        let mut tuning = crate::app::effective_tuning(
+            &admin.config.read().await.settings().performance,
+            default_cache_dir,
+        );
+        // Folder names can carry a user name; whether it is the default is what helps.
+        let shown = if tuning.disk_cache_dir == default_cache_dir {
+            "<config>/cache"
+        } else {
+            "<custom>"
+        };
+        shown.clone_into(&mut tuning.disk_cache_dir);
+        header["tuning"] = json!(tuning);
     }
     header["read"] = json!(read);
     header["providers"] = json!(providers);

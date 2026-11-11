@@ -156,6 +156,123 @@ async fn pool_shares_live_connections_when_the_provider_refuses_more() {
 
 #[tokio::test]
 #[allow(clippy::significant_drop_tightening)] // False positive: the pool is used to the end.
+async fn connects_that_never_reach_the_provider_do_not_shrink_the_pool() {
+    let corpus = Arc::new(Corpus::generate(1025, 48, ARTICLE_SIZE));
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    let downloads = Downloads::new(DOWNLOADS);
+    let config = PoolConfig {
+        max_connections: 4,
+        pipeline_depth: 2,
+        idle_timeout: Duration::from_secs(10),
+        min_connections: 0,
+    };
+    let pool = pool(&server, config, &downloads);
+    pool.prewarm(2).await;
+
+    // New connects are refused at TCP; the two open connections carry every request.
+    server.refuse().await;
+    fetch_all(&pool, &corpus).await;
+    assert_eq!(server.peak_connections(), 2);
+
+    server.resume().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    fetch_all(&pool, &corpus).await;
+    assert_eq!(
+        server.peak_connections(),
+        config.max_connections,
+        "the pool opens its full limit once the backoff ends"
+    );
+}
+
+#[tokio::test]
+async fn connects_that_succeed_after_a_refusal_raise_the_limit_again() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::{TcpListener, TcpStream};
+
+    // Answers STAT, except that the first command on any connection drops it.
+    async fn serve(stream: TcpStream, dropped: Arc<AtomicBool>) {
+        let mut stream = BufReader::new(stream);
+        stream.get_mut().write_all(b"200 ready\r\n").await.unwrap();
+        let mut line = String::new();
+        while stream.read_line(&mut line).await.unwrap_or(0) > 0 {
+            if !dropped.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            stream
+                .get_mut()
+                .write_all(b"223 0 <a@test>\r\n")
+                .await
+                .unwrap();
+            line.clear();
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let server = tokio::spawn({
+        let (accepted, dropped) = (Arc::clone(&accepted), Arc::clone(&dropped));
+        async move {
+            let mut pending = Vec::new();
+            for _ in 0..4 {
+                pending.push(listener.accept().await.unwrap().0);
+                accepted.fetch_add(1, Ordering::SeqCst);
+            }
+            // One is refused while the other three are still waiting for their greeting.
+            let mut refused = pending.remove(0);
+            refused
+                .write_all(b"502 too many connections\r\n")
+                .await
+                .unwrap();
+            let _ = refused.read(&mut [0]).await;
+            for stream in pending {
+                tokio::spawn(serve(stream, Arc::clone(&dropped)));
+            }
+            loop {
+                let stream = listener.accept().await.unwrap().0;
+                accepted.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(serve(stream, Arc::clone(&dropped)));
+            }
+        }
+    });
+    let endpoint = Endpoint::new(
+        "127.0.0.1",
+        port,
+        TlsMode::Plain,
+        None,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let config = PoolConfig {
+        max_connections: 4,
+        pipeline_depth: 2,
+        idle_timeout: Duration::from_secs(30),
+        min_connections: 0,
+    };
+    let pool = Pool::new(endpoint, config, Downloads::new(DOWNLOADS)).unwrap();
+
+    let wait = Duration::from_secs(3);
+    tokio::time::timeout(wait, pool.prewarm(4)).await.unwrap();
+    // One of the three connections drops; the request is retried on another.
+    tokio::time::timeout(wait, pool.stat("a@test"))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(wait, pool.prewarm(3)).await.unwrap();
+    server.abort();
+    assert_eq!(
+        accepted.load(Ordering::SeqCst),
+        5,
+        "three connects succeeded, so the dropped one is replaced"
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // False positive: the pool is used to the end.
 async fn cold_start_requests_wait_for_their_own_connection_rather_than_queue() {
     let corpus = Arc::new(Corpus::generate(1025, 2, ARTICLE_SIZE));
     let response = Duration::from_millis(300);

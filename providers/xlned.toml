@@ -1,0 +1,8 @@
+schema = 1
+name = "XLned"
+website = "https://www.xlned.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.xlned.com"

@@ -17,6 +17,8 @@ use uuid::Uuid;
 /// stored secret.
 pub const MASK: &str = "********";
 const ENV_PREFIX: &str = "INFINIDYSK__";
+/// The disk cache folder when none is saved, for callers that know no config folder.
+pub const DEFAULT_CACHE_DIR: &str = "/config/cache";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -848,7 +850,7 @@ impl Preset {
             memory_cache_enabled: true,
             memory_cache_mb,
             disk_cache_enabled: false,
-            disk_cache_dir: "/config/cache".to_owned(),
+            disk_cache_dir: DEFAULT_CACHE_DIR.to_owned(),
             disk_cache_gb: 25,
             disk_cache_max_age_hours: 168,
             read_ahead_memory_mb,
@@ -930,7 +932,7 @@ impl Performance {
         );
     }
 
-    fn validate(&self, mount_dir: &str) -> Result<(), Error> {
+    fn validate(&self, mount_dir: &str, default_cache_dir: &str) -> Result<(), Error> {
         let t = self.effective();
         check(
             "performance.read_ahead_mb",
@@ -974,23 +976,18 @@ impl Performance {
             t.fuse_max_background,
             &FUSE_MAX_BACKGROUND,
         )?;
-        let dir = std::path::Path::new(&t.disk_cache_dir);
+        let cache_dir = self.disk_cache_dir.as_deref().unwrap_or(default_cache_dir);
+        let dir = std::path::Path::new(cache_dir);
         if !dir.is_absolute() {
             return Err(invalid(
                 "performance.disk_cache_dir",
-                format!(
-                    "Disk cache dir {:?} must be an absolute path",
-                    t.disk_cache_dir
-                ),
+                format!("Disk cache dir {cache_dir:?} must be an absolute path"),
             ));
         }
         if dir.starts_with(mount_dir) {
             return Err(invalid(
                 "performance.disk_cache_dir",
-                format!(
-                    "Disk cache dir {:?} must be outside the mount dir",
-                    t.disk_cache_dir
-                ),
+                format!("Disk cache dir {cache_dir:?} must be outside the mount dir"),
             ));
         }
         Ok(())
@@ -1232,10 +1229,28 @@ impl Settings {
 
     /// Checks every field and fills the provider fields that come from the catalog.
     pub fn validate(&mut self) -> Result<(), Error> {
+        self.validate_in(DEFAULT_CACHE_DIR)
+    }
+
+    /// [`Self::validate`], with the disk cache in `default_cache_dir` when none is saved.
+    pub(crate) fn validate_in(&mut self, default_cache_dir: &str) -> Result<(), Error> {
         if !self.mount.dir.starts_with('/') {
             return Err(invalid(
                 "mount.dir",
                 format!("Mount dir {:?} must be an absolute path", self.mount.dir),
+            ));
+        }
+        // A mount over the config folder would hide its files once it mounts.
+        if let Some(config_dir) = std::path::Path::new(default_cache_dir).parent()
+            && config_dir.starts_with(&self.mount.dir)
+        {
+            return Err(invalid(
+                "mount.dir",
+                format!(
+                    "Mount dir {:?} must not contain the config folder {}",
+                    self.mount.dir,
+                    config_dir.display()
+                ),
             ));
         }
         if self.webdav.user.trim().is_empty() {
@@ -1275,7 +1290,8 @@ impl Settings {
             .map(|g| g.trim().to_owned())
             .filter(|g| !g.is_empty())
             .collect();
-        self.performance.validate(&self.mount.dir)?;
+        self.performance
+            .validate(&self.mount.dir, default_cache_dir)?;
         if self.maintenance.window.minutes().is_none() {
             return Err(invalid(
                 "maintenance.window",
@@ -1569,6 +1585,8 @@ pub struct ConfigStore {
     stored: Map<String, Value>,
     env: Vec<Override>,
     settings: Settings,
+    /// The disk cache folder when none is saved; validation checks it against the mount.
+    default_cache_dir: String,
 }
 
 impl ConfigStore {
@@ -1576,6 +1594,15 @@ impl ConfigStore {
     pub async fn load(
         db: Db,
         vars: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<Self, Error> {
+        Self::load_in(db, vars, DEFAULT_CACHE_DIR.to_owned()).await
+    }
+
+    /// [`Self::load`], checking the disk cache in `default_cache_dir` when none is saved.
+    pub(crate) async fn load_in(
+        db: Db,
+        vars: impl IntoIterator<Item = (String, String)>,
+        default_cache_dir: String,
     ) -> Result<Self, Error> {
         let defaults = serde_json::to_value(Settings::default())?;
         let mut env: Vec<Override> = vars
@@ -1604,7 +1631,7 @@ impl ConfigStore {
         for (key, value) in db.config().await? {
             stored.insert(key, serde_json::from_str(&value)?);
         }
-        let settings = effective(&stored, &env)?;
+        let settings = effective(&stored, &env, &default_cache_dir)?;
         // Freeze generated ids and catalog fields so env-defined lists round-trip through saves.
         let resolved = serde_json::to_value(&settings)?;
         for o in &mut env {
@@ -1617,6 +1644,7 @@ impl ConfigStore {
             stored,
             env,
             settings,
+            default_cache_dir,
         })
     }
 
@@ -1656,7 +1684,7 @@ impl ConfigStore {
     /// Validates and persists `new`. [`MASK`] secrets keep their current value.
     pub async fn save(&mut self, mut new: Settings) -> Result<(), Error> {
         new.restore_secrets(&self.settings);
-        new.validate()?;
+        new.validate_in(&self.default_cache_dir)?;
         let mut tree = serde_json::to_value(&new)?;
         let current = serde_json::to_value(&self.settings)?;
         let stored = Value::Object(self.stored.clone());
@@ -1699,13 +1727,17 @@ impl ConfigStore {
                 next.insert(k.clone(), v.clone());
             }
         }
-        self.settings = effective(&next, &self.env)?;
+        self.settings = effective(&next, &self.env, &self.default_cache_dir)?;
         self.stored = next;
         Ok(())
     }
 }
 
-fn effective(stored: &Map<String, Value>, env: &[Override]) -> Result<Settings, Error> {
+fn effective(
+    stored: &Map<String, Value>,
+    env: &[Override],
+    default_cache_dir: &str,
+) -> Result<Settings, Error> {
     let mut tree = serde_json::to_value(Settings::default())?;
     merge(&mut tree, Value::Object(stored.clone()));
     for o in env {
@@ -1714,7 +1746,7 @@ fn effective(stored: &Map<String, Value>, env: &[Override]) -> Result<Settings, 
     reject_readarr(&tree)?;
     let mut settings: Settings = serde_json::from_value(tree)?;
     settings.reset_invalid();
-    settings.validate()?;
+    settings.validate_in(default_cache_dir)?;
     Ok(settings)
 }
 

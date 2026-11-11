@@ -578,6 +578,101 @@ async fn a_complete_trailerless_part_with_a_split_header_is_kept() {
     assert_eq!(downloads.available_permits(), 16);
 }
 
+/// Asks for `begin` twice on one connection: a wrong offset fails before any byte
+/// reaches progress, and the connection still reads the next reply.
+async fn check_identity(chunks: Vec<Vec<u8>>, data: &[u8], begin: u64, wrong: u64) {
+    let port = raw_body_server(chunks).await;
+    let client = Client::new([provider(port, 0, None, &Downloads::new(16))]);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let progress = Progress {
+        tx,
+        wanted: Arc::new(AtomicBool::new(true)),
+    };
+    let fetch = |begin| {
+        client.body_with(
+            "a@test",
+            Workload::Stream,
+            None,
+            Some(&progress),
+            Some(begin),
+        )
+    };
+
+    assert!(
+        fetch(wrong).await.is_err(),
+        "offset {wrong} is another part"
+    );
+    assert!(rx.try_recv().is_err(), "nothing of another part is sent");
+    let ids = |client: &Client| -> Vec<u32> {
+        client.stats()[0].connections.iter().map(|c| c.id).collect()
+    };
+    let before = ids(&client);
+    assert_eq!(before.len(), 1);
+
+    let body = fetch(begin).await.unwrap();
+    assert_eq!((&*body.data, body.offset), (data, begin));
+    assert_eq!(
+        ids(&client),
+        before,
+        "the same connection read the next reply"
+    );
+}
+
+#[tokio::test]
+async fn fragmented_part_headers_preserve_identity_checks() {
+    let corpus = Corpus::generate(1025, 2, ARTICLE_SIZE);
+    let data = &corpus.data[ARTICLE_SIZE..];
+    let (begin, size) = (ARTICLE_SIZE as u64, corpus.data.len());
+    let head = [
+        REPLY,
+        format!("=ybegin part=2 total=2 line=128 size={size} name=x\r\n").as_bytes(),
+    ]
+    .concat();
+    let part = format!("=ypart begin={} end={size}\r\n", begin + 1);
+    let tail = [
+        &infinidysk_yenc::encode(data, 128)[..],
+        format!(
+            "\r\n=yend size={} part=2 pcrc32={:08x}\r\n.\r\n",
+            data.len(),
+            infinidysk_yenc::crc32(0, data)
+        )
+        .as_bytes(),
+    ]
+    .concat();
+
+    let contiguous = vec![[&head[..], part.as_bytes(), &tail].concat()];
+    check_identity(contiguous, data, begin, 0).await;
+    // The `=ypart` line split after `=yp`, so the first read cannot see it.
+    let split = vec![
+        [&head[..], b"=yp"].concat(),
+        [&part.as_bytes()[3..], &tail].concat(),
+    ];
+    check_identity(split, data, begin, 0).await;
+
+    // No `=ypart`: the offset is 0, checked at the first decoded byte.
+    let data = b"abcdefgh";
+    let crc = infinidysk_yenc::crc32(0, data);
+    let whole = vec![
+        [
+            REPLY,
+            b"=ybegin line=128 size=8 name=x\r\n",
+            &infinidysk_yenc::encode(data, 128),
+            b"\r\n=ye",
+        ]
+        .concat(),
+        format!("nd size=8 crc32={crc:08x}\r\n.\r\n").into_bytes(),
+    ];
+    check_identity(whole, data, 0, 5).await;
+
+    // An empty article never decodes a byte, but its offset is still checked.
+    let empty = [
+        REPLY,
+        b"=ybegin line=128 size=0 name=x\r\n=yend size=0\r\n.\r\n",
+    ]
+    .concat();
+    check_identity(vec![empty], b"", 0, 5).await;
+}
+
 #[tokio::test]
 async fn a_complete_trailerless_article_is_kept() {
     let head = [REPLY, b"=ybegin line=128 size=8 name=x\r\n"].concat();
@@ -1156,4 +1251,64 @@ async fn warm_keeps_the_floor_only_where_eligible_and_never_during_a_lease() {
     drop(lease);
     client.warm().await;
     settle([2, 0, 0]).await;
+}
+
+#[tokio::test]
+async fn background_connects_that_fail_are_counted_without_a_trip() {
+    let dead = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let downloads = Downloads::new(16);
+    let endpoint = Endpoint::new(
+        "127.0.0.1",
+        dead,
+        TlsMode::Plain,
+        None,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let config = PoolConfig {
+        max_connections: 2,
+        pipeline_depth: 2,
+        idle_timeout: Duration::from_secs(5),
+        min_connections: 2,
+    };
+    let client = Client::new([Provider {
+        pool: Pool::new(endpoint, config, Arc::clone(&downloads)).unwrap(),
+        ..provider(dead, 0, None, &downloads)
+    }]);
+
+    client.warm().await;
+    let stats = &client.stats()[0];
+    assert_eq!((stats.connect_failures, stats.trips), (2, 0));
+    assert!(stats.open_for.is_none());
+}
+
+#[tokio::test]
+async fn requests_during_the_connect_backoff_count_one_connect_failure() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&accepts);
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let _ = stream.write_all(b"502 service unavailable\r\n").await;
+        }
+    });
+    let client = Client::new([provider(port, 0, None, &Downloads::new(16))]);
+
+    for _ in 0..21 {
+        assert!(body(&client, "a@test").await.is_err());
+    }
+    let stats = &client.stats()[0];
+    assert_eq!(accepts.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.connect_failures, 1);
+    assert_eq!(
+        stats.workloads[0].failed, 21,
+        "every caller still saw its failure"
+    );
 }

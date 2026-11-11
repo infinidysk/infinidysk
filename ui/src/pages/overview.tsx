@@ -99,12 +99,13 @@ export function Overview() {
     <>
       <PageHeader title="Overview" />
       <Imported />
+      <Leftovers />
       <WriterError error={live.data?.writer_error ?? history.data?.writer_error} />
       <Attention live={live.data} />
       <div className="space-y-6">
         {live.isPending ? (
           <Card title="Right now">
-            <TilesSkeleton n={5} />
+            <TilesSkeleton n={5} flush />
           </Card>
         ) : live.isError ? (
           <Failure error={live.error} />
@@ -149,10 +150,15 @@ function Attention({ live }: { live?: Live }) {
   const summary = useQuery({ queryKey: ["health", "summary"], queryFn: () => body(api.GET("/api/v1/health/summary")) }).data;
   const paused = useQuery({ queryKey: ["queue", "paused"], queryFn: () => body(api.GET("/api/v1/queue/paused")) }).data?.paused;
   const status = useQuery({ queryKey: ["status"], queryFn: () => body(api.GET("/api/v1/status")) }).data;
+  const arr = useQuery({ queryKey: ["arr-status"], queryFn: () => body(api.GET("/api/v1/arr/status")), refetchInterval: 30_000 }).data;
   const actionNeeded = summary?.find((s) => s.state === "action_needed")?.files ?? 0;
+  const arrIssues = arr?.instances.reduce((n, i) => n + i.queue_issues.length, 0) ?? 0;
   const down = live?.providers.filter((p) => p.open_for_ms != null) ?? [];
   const items: { to: string; tone: Tone; text: string }[] = [];
   if (actionNeeded > 0) items.push({ to: "/health", tone: "warning", text: `${count(actionNeeded, "file")} ${actionNeeded === 1 ? "needs" : "need"} action` });
+  if (arrIssues > 0) {
+    items.push({ to: "/queue", tone: "warning", text: `${count(arrIssues, "download")} ${arrIssues === 1 ? "needs" : "need"} you in the Arr before it can import` });
+  }
   for (const p of down) {
     items.push({ to: "/settings/providers", tone: "destructive", text: `${p.name} is paused for ${Math.ceil((p.open_for_ms ?? 0) / 1000)} s after errors` });
   }
@@ -219,6 +225,43 @@ function Imported() {
   );
 }
 
+/** After the upgrade: the 1.x data still on disk. Measuring it is left to System. */
+function Leftovers() {
+  const client = useQueryClient();
+  const view = useQuery({ queryKey: ["upgrade", "leftovers"], queryFn: () => body(api.GET("/api/v1/upgrade/leftovers")) }).data;
+  const report = useQuery({ queryKey: ["upgrade", "report"], queryFn: () => body(api.GET("/api/v1/upgrade/report")) }).data?.report;
+  const [open, setOpen] = useState(false);
+  const dismiss = useMutation({
+    mutationFn: () => body(api.POST("/api/v1/upgrade/leftovers/dismiss")),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["upgrade", "leftovers"] }),
+  });
+  if (!view?.imported || !view.present || view.in_use || view.dismissed) return null;
+  return (
+    <Alert className="mb-6">
+      <Info />
+      <AlertTitle>Some 1.x data is still in your config folder</AlertTitle>
+      <AlertDescription>
+        Once you have checked that 2.x plays your library, review it on System. System shows which paths you can delete
+        and estimates their size.
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link to="/system">View on System</Link>
+          </Button>
+          {report && (
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+              View import report
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" disabled={dismiss.isPending} onClick={() => dismiss.mutate()}>
+            Dismiss
+          </Button>
+        </div>
+      </AlertDescription>
+      {report && <ImportReportDialog text={report} open={open} onOpenChange={setOpen} />}
+    </Alert>
+  );
+}
+
 export function ImportReportDialog({
   text,
   open,
@@ -270,9 +313,9 @@ const grids: Record<number, string> = {
 };
 
 /** Placeholder for `Tiles` with the same footprint; `tall` leaves room for sparklines. */
-function TilesSkeleton({ n, tall }: { n: number; tall?: boolean }) {
+function TilesSkeleton({ n, tall, flush }: { n: number; tall?: boolean; flush?: boolean }) {
   return (
-    <div className={cn("bg-border grid gap-px overflow-hidden rounded-lg border", grids[n])} aria-busy="true">
+    <div className={cn("bg-border grid gap-px overflow-hidden", !flush && "rounded-lg border", grids[n])} aria-busy="true">
       {Array.from({ length: n }, (_, i) => (
         <div key={i} className={cn("bg-card space-y-2 p-3", tall ? "h-29" : "h-21")}>
           <Skeleton className="h-3 w-16" />
@@ -283,9 +326,10 @@ function TilesSkeleton({ n, tall }: { n: number; tall?: boolean }) {
   );
 }
 
-export function Tiles({ tiles }: { tiles: [ReactNode, ReactNode, ReactNode?, ReactNode?][] }) {
+/** `flush` drops the outer border for tiles inside a card, which is already raised. */
+export function Tiles({ tiles, flush }: { tiles: [ReactNode, ReactNode, ReactNode?, ReactNode?][]; flush?: boolean }) {
   return (
-    <dl className={cn("bg-border grid gap-px overflow-hidden rounded-lg border", grids[tiles.length])}>
+    <dl className={cn("bg-border grid gap-px overflow-hidden", !flush && "rounded-lg border", grids[tiles.length])}>
       {tiles.map(([label, value, hint, spark], i) => (
         <div key={i} className="bg-card flex min-w-0 flex-col p-3">
           <dt className="text-muted-foreground text-xs">{label}</dt>
@@ -312,6 +356,7 @@ function Now({ live }: { live: Live }) {
       }
     >
       <Tiles
+        flush
         tiles={[
           [
             "Active reads",
@@ -417,6 +462,8 @@ const Windowed = memo(function Windowed({ history: h, span }: { history: History
   const p = h.points;
   const checks = t.healthy + t.unhealthy + t.inconclusive;
   const imports = t.imports + t.import_failures;
+  // Health checks and backup providers miss by design; playback misses are the ones a viewer feels.
+  const play = h.workloads.find((w) => w.workload === "stream");
   const trend = (values: number[], color: string, opts: { max?: number; bars?: boolean } = {}) => (
     <Spark values={values} color={color} {...opts} className="h-6 w-full" />
   );
@@ -439,10 +486,15 @@ const Windowed = memo(function Windowed({ history: h, span }: { history: History
             trend(p.map((x) => x.stalls), "var(--color-warning)", { bars: true }),
           ],
           [
-            "Missing articles",
-            pct(t.missing, t.requests),
-            `${count(t.missing)} of ${count(t.requests)} requests`,
-            trend(p.map((x) => ratio(x.missing, x.stream + x.queue + x.health)), "var(--color-warning)"),
+            <span className="inline-flex items-center gap-1">
+              Provider misses
+              <InfoTip label="About provider misses">
+                Playback requests a provider answered without the article. Another provider may still fetch it, so the viewer may
+                not notice a miss.
+              </InfoTip>
+            </span>,
+            pct(play?.missing ?? 0, play?.requests ?? 0),
+            `${count(play?.missing ?? 0)} of ${count(play?.requests ?? 0)} playback requests`,
           ],
           [
             "Imports",
@@ -757,7 +809,7 @@ const Reads = memo(function Reads({ reads }: { reads: Read[] }) {
                 <TableHead className="hidden sm:table-cell">Closed</TableHead>
                 <TableHead className="text-right">Read</TableHead>
                 <TableHead className="hidden text-right sm:table-cell">First byte</TableHead>
-                <TableHead className="text-right">
+                <TableHead className="hidden text-right sm:table-cell">
                   <span className="inline-flex items-center gap-1">
                     Stalls
                     <InfoTip label="About stalls">
@@ -790,12 +842,13 @@ const Reads = memo(function Reads({ reads }: { reads: Read[] }) {
                       >
                         <ChevronRight className={cn("text-muted-foreground mt-0.5 size-4 shrink-0 transition-transform", expanded && "rotate-90")} />
                         <span className="min-w-0">
-                          <span className="block truncate font-medium" title={latest.path}>
+                          <span className="block font-medium whitespace-normal wrap-anywhere" title={latest.path}>
                             <ReleaseName name={displayName(latest.path)} />
                           </span>
                           <span className="text-muted-foreground block text-xs whitespace-normal wrap-anywhere">
                             {latest.delivery === "fuse" ? "FUSE" : "WebDAV"} · {caller(latest.client).name} · {g.length} opens
                             <span className="sm:hidden"> · {ago(latest.closed_at)}</span>
+                            {stalls > 0 && <span className="text-warning-text sm:hidden"> · {count(stalls, "stall")}</span>}
                           </span>
                         </span>
                       </button>
@@ -810,7 +863,7 @@ const Reads = memo(function Reads({ reads }: { reads: Read[] }) {
                     >
                       {waits.length === 0 ? "–" : ms(waits[Math.floor(waits.length / 2)]!)}
                     </TableCell>
-                    <TableCell className={cn("text-right tabular-nums", stalls > 0 && "text-warning-text")}>{stallText(stalls, sum(g, "stall_ms"))}</TableCell>
+                    <TableCell className={cn("hidden text-right tabular-nums sm:table-cell", stalls > 0 && "text-warning-text")}>{stallText(stalls, sum(g, "stall_ms"))}</TableCell>
                     <TableCell className="hidden text-right tabular-nums md:table-cell">{sum(g, "seeks")}</TableCell>
                   </TableRow>,
                   ...(expanded ? g.map((r) => <ReadRow key={`${key}-${r.opened_at}-${r.closed_at}`} read={r} nested />) : []),
@@ -858,13 +911,14 @@ function ReadRow({ read: r, nested }: { read: Read; nested?: boolean }) {
             {/* Lines up with the chevron on rows that expand. */}
             <span className="size-4 shrink-0" aria-hidden />
             <div className="min-w-0">
-              <div className="truncate font-medium" title={r.path}>
+              <div className="font-medium whitespace-normal wrap-anywhere" title={r.path}>
                 <ReleaseName name={displayName(r.path)} />
               </div>
               <div className="text-muted-foreground text-xs whitespace-normal wrap-anywhere">
                 {r.delivery === "fuse" ? "FUSE" : "WebDAV"} · <Client client={r.client} />
                 {r.end_reason === "eof" && " · read to the end"}
                 <span className="sm:hidden"> · {ago(r.closed_at)}</span>
+                {r.stalls > 0 && <span className="text-warning-text sm:hidden"> · {count(r.stalls, "stall")}</span>}
               </div>
             </div>
           </div>
@@ -875,7 +929,7 @@ function ReadRow({ read: r, nested }: { read: Read; nested?: boolean }) {
       </TableCell>
       <TableCell className="text-right tabular-nums">{bytes(r.served)}</TableCell>
       <TableCell className="hidden text-right tabular-nums sm:table-cell">{r.first_byte_ms == null ? "–" : ms(r.first_byte_ms)}</TableCell>
-      <TableCell className={cn("text-right tabular-nums", r.stalls > 0 && "text-warning-text")}>{stallText(r.stalls, r.stall_ms)}</TableCell>
+      <TableCell className={cn("hidden text-right tabular-nums sm:table-cell", r.stalls > 0 && "text-warning-text")}>{stallText(r.stalls, r.stall_ms)}</TableCell>
       <TableCell className="hidden text-right tabular-nums md:table-cell">{r.seeks}</TableCell>
     </TableRow>
   );

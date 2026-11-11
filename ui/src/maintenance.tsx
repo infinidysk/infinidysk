@@ -22,7 +22,7 @@ export const jobCopy: Record<Job, { title: string; blurb: string; tip: string; c
   "backup-database": {
     title: "Back up database",
     blurb: "Writes a copy of the library database to the backup folder and keeps the newest copies.",
-    tip: "Copies the SQLite library database (settings, logins, downloads, history and file details) and verified repair bytes while infinidysk keeps running. Each copy is checked and gets a SHA-256 checksum. After a good copy, the oldest scheduled and manual backups beyond Copies to keep are deleted; pinned, uploaded and added backups stay. It stops without deleting anything if the backup folder lacks room for the copy plus a reserve. It runs first in the window, before the jobs that delete. Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy /config/repairs as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.",
+    tip: "Copies the SQLite library database (settings, logins, downloads, history and file details) and verified repair bytes while infinidysk keeps running. Each copy is checked and gets a SHA-256 checksum. After a good copy, the oldest scheduled and manual backups beyond Copies to keep are deleted; pinned, uploaded and added backups stay. It stops without deleting anything if the backup folder lacks room for the copy plus a reserve. It runs first in the window, before the jobs that delete. Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy the repair directory in your config folder (/config/repairs by default) as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.",
     confirm: "Writes a copy about the size of the database's used space. Imports and playback keep running.",
     noun: "backup",
   },
@@ -565,18 +565,18 @@ function Runs({ runs }: { runs: Schemas["MaintenanceRun"][] }) {
 
 /** The running maintenance job in the sidebar, from the live view. */
 export function MaintenanceNow({ live }: { live: Schemas["LiveMaintenance"] }) {
-  const percent = live.total ? Math.round((live.done / live.total) * 100) : null;
+  const amount = live.total ? `${Math.round((live.done / live.total) * 100)}%` : progress(live.job, live);
   return (
     <Link
       to={live.job === "backup-database" ? "/settings/backups" : "/settings/maintenance"}
       className="hover:bg-sidebar-accent/60 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs"
     >
       <Loader2 className="text-primary size-3.5 shrink-0 animate-spin" />
-      <span className="min-w-0 flex-1 truncate" title={`${jobCopy[live.job].title} · ${live.step}`}>
+      <span className="min-w-0 flex-1" title={`${jobCopy[live.job].title} · ${live.step}`}>
         {jobCopy[live.job].title}
-        <span className="text-muted-foreground"> · {live.step}</span>
+        <span className="text-muted-foreground block">{live.step}</span>
       </span>
-      {percent != null && <span className="text-muted-foreground tabular-nums">{percent}%</span>}
+      {amount && <span className="text-muted-foreground shrink-0 tabular-nums">{amount}</span>}
     </Link>
   );
 }

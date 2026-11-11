@@ -108,8 +108,9 @@ fn live(root: &Path, suffix: &str) -> PathBuf {
     root.join(format!("infinidysk.sqlite{suffix}"))
 }
 
-/// Serves an install whose database is `root/infinidysk.sqlite` and mount `root/mnt`.
-async fn launch(root: &Path) -> (SocketAddr, Server, CancellationToken) {
+/// Serves an install whose database is `root/infinidysk.sqlite`, with `mount` as the mount
+/// folder when set.
+async fn launch(root: &Path, mount: Option<&Path>) -> (SocketAddr, Server, CancellationToken) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let boot = Boot {
@@ -121,19 +122,21 @@ async fn launch(root: &Path) -> (SocketAddr, Server, CancellationToken) {
         trace_minutes: 0,
         metrics_path: root.join("metrics.sqlite"),
         log_dir: root.join("logs"),
+        home: root.to_owned(),
         config_dir: root.to_owned(),
         ffprobe: "ffprobe".to_owned(),
     };
-    let vars = vec![
-        (
-            "INFINIDYSK__AUTH__API_KEY".to_owned(),
-            "adminkey".to_owned(),
-        ),
-        (
+    let mut vars = vec![(
+        "INFINIDYSK__AUTH__API_KEY".to_owned(),
+        "adminkey".to_owned(),
+    )];
+    vars.extend(closed_window());
+    if let Some(mount) = mount {
+        vars.push((
             "INFINIDYSK__MOUNT__DIR".to_owned(),
-            root.join("mnt").display().to_string(),
-        ),
-    ];
+            mount.display().to_string(),
+        ));
+    }
     let cancel = CancellationToken::new();
     let server = tokio::spawn({
         let cancel = cancel.clone();
@@ -142,9 +145,27 @@ async fn launch(root: &Path) -> (SocketAddr, Server, CancellationToken) {
     (addr, server, cancel)
 }
 
+/// A one-minute maintenance window half a day away, so a scheduled job never holds the slot.
+fn closed_window() -> [(String, String); 2] {
+    let start = jiff::Zoned::now()
+        .time()
+        .wrapping_add(jiff::Span::new().hours(12));
+    let end = start.wrapping_add(jiff::Span::new().minutes(1));
+    [
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__START".to_owned(),
+            start.strftime("%H:%M").to_string(),
+        ),
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__END".to_owned(),
+            end.strftime("%H:%M").to_string(),
+        ),
+    ]
+}
+
 /// [`launch`], once the server answers.
 async fn start(root: &Path) -> (SocketAddr, Server, CancellationToken) {
-    let (addr, server, cancel) = launch(root).await;
+    let (addr, server, cancel) = launch(root, Some(&root.join("mnt"))).await;
     backups(addr).await;
     (addr, server, cancel)
 }
@@ -342,6 +363,7 @@ async fn future_backup(root: &Path) -> Vec<u8> {
         root,
         "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
          SELECT max(version) + 1, 'future', 1, x'00', 0 FROM _sqlx_migrations",
+        None,
     )
     .await
 }
@@ -351,11 +373,24 @@ async fn broken_settings_backup(root: &Path) -> Vec<u8> {
     edited_backup(
         root,
         "INSERT INTO config (key, value) VALUES ('health', 'not json')",
+        None,
     )
     .await
 }
 
-async fn edited_backup(root: &Path, sql: &'static str) -> Vec<u8> {
+/// A backup copy whose saved mount folder is `root`, the config folder, so it would hold the
+/// default disk cache.
+async fn mount_over_config_backup(root: &Path) -> Vec<u8> {
+    let mount = json!({ "dir": root.display().to_string() });
+    edited_backup(
+        root,
+        "INSERT OR REPLACE INTO config (key, value) VALUES ('mount', $1)",
+        Some(mount.to_string()),
+    )
+    .await
+}
+
+async fn edited_backup(root: &Path, sql: &'static str, bind: Option<String>) -> Vec<u8> {
     use sqlx::ConnectOptions as _;
     let (addr, server, cancel) = start(root).await;
     let name = back_up(addr).await;
@@ -366,7 +401,11 @@ async fn edited_backup(root: &Path, sql: &'static str) -> Vec<u8> {
         .connect()
         .await
         .unwrap();
-    sqlx::query(sql).execute(&mut conn).await.unwrap();
+    let mut query = sqlx::query(sql);
+    if let Some(value) = bind {
+        query = query.bind(value);
+    }
+    query.execute(&mut conn).await.unwrap();
     sqlx::Connection::close(conn).await.unwrap();
     fs::read(path).unwrap()
 }
@@ -377,11 +416,12 @@ fn junk() -> Vec<u8> {
 
 #[tokio::test]
 async fn an_open_failure_records_a_rollback_and_restarts() {
-    for case in ["junk", "future", "settings"] {
+    for case in ["junk", "future", "settings", "mount"] {
         let root = root();
         let restored = match case {
             "future" => future_backup(&root).await,
             "settings" => broken_settings_backup(&root).await,
+            "mount" => mount_over_config_backup(&root).await,
             _ => {
                 let (_, server, cancel) = start(&root).await;
                 stop(server, &cancel).await;
@@ -393,7 +433,8 @@ async fn an_open_failure_records_a_rollback_and_restarts() {
             .map(|s| fs::read(live(&root, s)).ok())
             .collect();
         stage(&root, &restored);
-        let (_, server, _) = launch(&root).await;
+        let mnt = root.join("mnt");
+        let (_, server, _) = launch(&root, (case != "mount").then_some(mnt.as_path())).await;
         assert_eq!(ended(server).await, Exit::Restart, "case: {case}");
         let i = intent(&root).unwrap();
         assert_eq!(i["phase"], "rolling-back", "{i}");

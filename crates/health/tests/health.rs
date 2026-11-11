@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,7 +21,7 @@ use infinidysk_queue::{Queue, Submission};
 use infinidysk_testkit::{Article, LoopbackServer, post};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 
 const ARTICLE: usize = 16 << 10;
 
@@ -71,6 +71,90 @@ fn nzb(articles: &[Article], len: usize, name: &str) -> Vec<u8> {
 }
 
 type Log = Arc<(Mutex<Vec<String>>, AtomicBool)>;
+
+#[tokio::test]
+async fn a_check_discards_observations_when_repairs_change_during_provider_reads() {
+    use infinidysk_core::{FileMeta, blob};
+    for metadata_change in [true, false] {
+        let (articles, len) = mkv("health-publication");
+        let server = LoopbackServer::start(articles.clone()).await.unwrap();
+        let (db, item, _) = import(&server, &articles, len).await;
+        let (_arr_tx, arr) = watch::channel(Vec::new());
+        let (_settings_tx, settings) = watch::channel(Settings::default());
+        let health = Health::new(db.clone(), client(&server), arr, settings)
+            .unwrap()
+            .with_par2();
+        let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+        status.state = HealthState::Unchecked;
+        status.last_check = None;
+        status.next_check = Some(0);
+        db.set_health(item.id, &status, Recheck::None)
+            .await
+            .unwrap();
+        server.stall_article(&articles[0].message_id, 1, Duration::from_millis(500));
+        let checking = tokio::spawn(async move { health.step().await.unwrap() });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while server.stalled(&articles[0].message_id) == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+            .await
+            .unwrap();
+        let meta_id = item.meta_blob.unwrap();
+        let raw = db.blob(meta_id).await.unwrap().unwrap();
+        let mut metadata = blob::decode_meta(&raw).unwrap();
+        let FileMeta::Nzb(file) = &mut metadata else {
+            panic!("plain file")
+        };
+        if metadata_change {
+            file.segments.items[0]
+                .fallbacks
+                .push("after-publication@loopback".into());
+            db.update_blob(meta_id, &blob::encode_meta(&metadata).unwrap())
+                .await
+                .unwrap();
+        } else {
+            let source = db
+                .repair_source(infinidysk_db::repair::Owner::Item(item.id))
+                .await
+                .unwrap()
+                .unwrap();
+            let patch = infinidysk_core::repair::Patch {
+                id: infinidysk_core::PatchId::new(),
+                source: infinidysk_core::repair::Source {
+                    set: [1; 16],
+                    file: [2; 16],
+                    range: infinidysk_core::ByteRange {
+                        start: 0,
+                        end: ARTICLE as u64,
+                    },
+                    file_length: len as u64,
+                    message_id: Some(articles[0].message_id.clone()),
+                    part: Some(1),
+                    total: Some(u32::try_from(articles.len()).unwrap()),
+                },
+                sha256: [3; 32],
+            };
+            // Only the SQL publication boundary is exercised; this client never reads the patch.
+            assert!(db.publish_patches(&source, &[patch]).await.unwrap());
+        }
+        drop(paused);
+        assert!(checking.await.unwrap());
+        let (_, result) = db.health(item.id).await.unwrap().unwrap();
+        assert_eq!(
+            result.last_check, None,
+            "an old observation must not become a current check"
+        );
+        assert_eq!(result.state, HealthState::Unchecked);
+        assert_eq!(
+            blob::decode_meta(&db.blob(meta_id).await.unwrap().unwrap()).unwrap(),
+            metadata
+        );
+    }
+}
 
 #[tokio::test]
 async fn pending_par2_repair_defers_arr_replacement_and_releases_write_admission() {
@@ -588,6 +672,90 @@ async fn open_file_is_not_repaired() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_repair_waiting_on_the_arr_lets_compaction_pause_writes() {
+    // `sonarr`, holding the blocklist response until `release` once it has `arrived`.
+    async fn gated(
+        State((log, arrived, release)): State<(Log, Arc<Notify>, Arc<Notify>)>,
+        req: Request,
+    ) -> Json<Value> {
+        if req.uri().path() == "/api/v3/history/failed/11" {
+            arrived.notify_one();
+            release.notified().await;
+        }
+        sonarr(State(log), req).await
+    }
+
+    let (articles, len) = mkv("w");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, job) = import(&server, &articles, len).await;
+    db.record_owner(
+        uuid::Uuid::nil(),
+        item.id,
+        Some(7),
+        "/tv/Show/S01E01.strm",
+        Some(job),
+    )
+    .await
+    .unwrap();
+    let (arrived, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let log = Log::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new().fallback(gated).with_state((
+        Arc::clone(&log),
+        Arc::clone(&arrived),
+        Arc::clone(&release),
+    ));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let (_arr_tx, arr) = watch::channel(vec![Arr {
+        id: uuid::Uuid::nil(),
+        name: "sonarr".to_owned(),
+        profile: Profile::Sonarr,
+        url,
+        api_key: "k".to_owned(),
+    }]);
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_arr_wait(Duration::ZERO);
+
+    assert!(health.request_repair(item.id).await.unwrap());
+    let mut repair = tokio::spawn(async move { health.step().await.unwrap() });
+    tokio::time::timeout(Duration::from_secs(10), arrived.notified())
+        .await
+        .expect("the repair blocklists the grab");
+    let paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+        .await
+        .expect("a repair waiting on the Arr holds no write permit");
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !log
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == "POST /api/v3/command")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the repair asks the Arr to search");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), &mut repair)
+            .await
+            .is_err(),
+        "the repair's result waits for the pause"
+    );
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Repairing);
+    drop(paused);
+    assert!(repair.await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Hidden);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn carried_over_file_is_repaired_through_its_recorded_download() {
     let (articles, len) = mkv("g");
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
@@ -894,6 +1062,157 @@ async fn a_co_owner_that_cannot_repair_does_not_stop_one_that_can() {
         calls.iter().any(|c| c == "POST /api/v3/command"),
         "{calls:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
+    resumed_repair(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_repair_without_a_grab_deletes_and_searches() {
+    resumed_repair(false).await;
+}
+
+async fn resumed_repair(grabbed: bool) {
+    // Phase 0 runs, phase 1 fails, phase 2 ends with no grab or one failed and one pending.
+    async fn slow(
+        State((log, phase, grabbed)): State<(Log, Arc<AtomicU8>, bool)>,
+        req: Request,
+    ) -> Result<Json<Value>, axum::http::StatusCode> {
+        let call = format!("{} {}", req.method(), req.uri());
+        if call == "POST /api/v3/command" {
+            let body = axum::body::to_bytes(req.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            let command: Value = serde_json::from_slice(&body).unwrap();
+            log.0.lock().unwrap().push(format!("{call} {command}"));
+            return Ok(Json(json!({})));
+        }
+        let phase = phase.load(Ordering::Relaxed);
+        let answer = match call.as_str() {
+            "GET /api/v3/command" if phase == 1 => {
+                log.0.lock().unwrap().push(format!("{call} 503"));
+                return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+            }
+            "GET /api/v3/command" => {
+                let status = if phase == 0 { "started" } else { "completed" };
+                json!([{ "id": 1, "name": "SeasonSearch", "status": status,
+                         "body": { "seriesId": 9, "seasonNumber": 1 } }])
+            }
+            "GET /api/v3/episode/5" => {
+                json!({ "episodeFileId": 7, "seriesId": 9, "seasonNumber": 1 })
+            }
+            c if c.contains("eventType=3") => {
+                let records = [5, 6].map(|episode| json!({
+                    "id": 20 + episode, "episodeId": episode,
+                    "data": { "droppedPath": "/data/strm/tv/job/job.strm", "importedPath": "/tv/Show/a.strm" },
+                }));
+                json!({ "records": records })
+            }
+            c if c.ends_with("&episodeId=5") && phase == 2 && grabbed => {
+                json!({ "records": [{ "id": 31, "downloadId": "failed", "data": {} }] })
+            }
+            c if c.ends_with("&episodeId=6") && phase == 2 && grabbed => {
+                json!({ "records": [{ "id": 30, "downloadId": "pending", "data": {} }] })
+            }
+            "GET /api/v3/history?downloadId=failed&eventType=4&pageSize=1" => {
+                json!({ "records": [{ "id": 32, "downloadId": "failed", "data": {} }] })
+            }
+            "GET /api/v3/history?downloadId=pending&eventType=4&pageSize=1" => {
+                json!({ "records": [] })
+            }
+            _ => return Ok(sonarr(State(log), req).await),
+        };
+        log.0.lock().unwrap().push(call);
+        Ok(Json(answer))
+    }
+
+    let (articles, len) = mkv("r");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, job) = import(&server, &articles, len).await;
+    db.record_owner(
+        uuid::Uuid::nil(),
+        item.id,
+        Some(7),
+        "/tv/Show/S01E01.strm",
+        Some(job),
+    )
+    .await
+    .unwrap();
+    let log: Log = Arc::default();
+    let phase: Arc<AtomicU8> = Arc::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new().fallback(slow).with_state((
+        Arc::clone(&log),
+        Arc::clone(&phase),
+        grabbed,
+    ));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let (_arr_tx, arr) = watch::channel(vec![Arr {
+        id: uuid::Uuid::nil(),
+        name: "sonarr".to_owned(),
+        profile: Profile::Sonarr,
+        url,
+        api_key: "k".to_owned(),
+    }]);
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_arr_wait(Duration::from_secs(1));
+
+    // The running search spends an attempt; the unavailable command list does not.
+    let count = |f: fn(&str) -> bool| log.0.lock().unwrap().iter().filter(|c| f(c)).count();
+    let blocklist = |c: &str| c.starts_with("POST /api/v3/history/failed/");
+    let poll = |c: &str| c == "GET /api/v3/command";
+    let failed = |c: &str| c.ends_with(" 503");
+    assert!(health.request_repair(item.id).await.unwrap());
+    for next in 1..=2 {
+        assert!(health.step().await.unwrap());
+        let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+        assert_eq!(
+            (status.state, status.repair_attempts),
+            (HealthState::Repairing, 1)
+        );
+        if next == 1 {
+            assert!(count(poll) > 0, "phase 0 polled the command list");
+        }
+        assert_eq!(
+            (count(blocklist), count(failed)),
+            (1, usize::from(next - 1))
+        );
+        status.next_check = Some(0);
+        db.set_health(item.id, &status, Recheck::None)
+            .await
+            .unwrap();
+        phase.store(next, Ordering::Relaxed);
+    }
+
+    let polled = count(poll);
+    assert!(health.step().await.unwrap());
+    assert_eq!(count(poll), polled + 1);
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Hidden);
+    let calls = log.0.lock().unwrap().clone();
+    assert_eq!(count(blocklist), 1, "{calls:?}");
+    assert_eq!(
+        count(|call| call == "DELETE /api/v3/episodefile/7"),
+        usize::from(!grabbed),
+        "{calls:?}"
+    );
+    assert_eq!(
+        count(|call| call.starts_with("POST /api/v3/command ")),
+        usize::from(!grabbed),
+        "{calls:?}"
+    );
+    if !grabbed {
+        let command = json!({ "name": "EpisodeSearch", "episodeIds": [5, 6] });
+        assert!(
+            calls.contains(&format!("POST /api/v3/command {command}")),
+            "{calls:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

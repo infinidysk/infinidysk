@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.0.0-beta.7](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.6...v2.0.0-beta.7) (2026-11-10)
+
+
+### Features
+
+* **queue:** import NZBs that contain another NZB ([#1875](https://github.com/infinidysk/infinidysk/issues/1875)) ([db91586](https://github.com/infinidysk/infinidysk/commit/db915861fa075483721e9cf1fd7ef6983e7016c2))
+* **ui:** remind you to remove 1.x data after the upgrade, with its estimated disk usage ([#1876](https://github.com/infinidysk/infinidysk/issues/1876)) ([eebad20](https://github.com/infinidysk/infinidysk/commit/eebad20e14e0e7739a50757a22e68000db5b99da))
+* **ui:** the queue no longer shows failed imports older than a day unless you filter for them ([#1865](https://github.com/infinidysk/infinidysk/issues/1865)) ([2db9609](https://github.com/infinidysk/infinidysk/commit/2db96096a071f31edf0ce38ee0be21bd3175b30c))
+
+
+### Bug Fixes
+
+* **arr:** Radarr and other Arrs save the infinidysk webhook even when they cannot reach it yet ([#1861](https://github.com/infinidysk/infinidysk/issues/1861)) ([e3e0507](https://github.com/infinidysk/infinidysk/commit/e3e0507366d9e17abda275018644d3aa92f069f2))
+* **deps:** Bump fuse3 from 0.9.0 to 0.10.0 ([#1873](https://github.com/infinidysk/infinidysk/issues/1873)) ([6ef351a](https://github.com/infinidysk/infinidysk/commit/6ef351a177ab9e950ddaf4e6e8229990c56cdcf5))
+* **deps:** Bump the cargo-minor-patch group with 4 updates ([#1872](https://github.com/infinidysk/infinidysk/issues/1872)) ([fc62ad5](https://github.com/infinidysk/infinidysk/commit/fc62ad52f375ac8dd5773a977a171986c66d1cf3))
+* **deps:** Bump the npm-minor-patch group in /ui with 4 updates ([#1869](https://github.com/infinidysk/infinidysk/issues/1869)) ([6bb8e3a](https://github.com/infinidysk/infinidysk/commit/6bb8e3a56d213f1a6e0364241e6a7b72b45e1136))
+* **health:** hold the write permit only while health work writes ([#1868](https://github.com/infinidysk/infinidysk/issues/1868)) ([07a61e5](https://github.com/infinidysk/infinidysk/commit/07a61e5c2edf9b2009357f587b46fc7c841b1ee5))
+* **health:** repairs follow the Arr's own search instead of always waiting two minutes ([#1867](https://github.com/infinidysk/infinidysk/issues/1867)) ([9b6ae7a](https://github.com/infinidysk/infinidysk/commit/9b6ae7a7758499d692d1181573784a83a5c40dec))
+* **import:** measure a pending volume when a known size cannot fit its articles ([#1878](https://github.com/infinidysk/infinidysk/issues/1878)) ([180f9ab](https://github.com/infinidysk/infinidysk/commit/180f9abf1eddd581a6257da7a5e8ca021a19ea92))
+* **import:** the import report shows progress instead of a silent console ([#1877](https://github.com/infinidysk/infinidysk/issues/1877)) ([b29bc25](https://github.com/infinidysk/infinidysk/commit/b29bc257bd0ecf55b025fc8027f74a4e41e963ea))
+* **mount:** distinguish failed tuning writes from external tuning ([#1866](https://github.com/infinidysk/infinidysk/issues/1866)) ([3bee375](https://github.com/infinidysk/infinidysk/commit/3bee3758d2602bc8a003b93298c453550c114883))
+* **ui:** clearer status and failure reasons on phones, and a missing-articles rate that reflects playback ([#1874](https://github.com/infinidysk/infinidysk/issues/1874)) ([6b6dcad](https://github.com/infinidysk/infinidysk/commit/6b6dcad9092a08f0a3792e879fd27e6737fd9b7d))
+
+## [2.0.0-beta.6](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.5...v2.0.0-beta.6) (2026-11-06)
+
+
+### Features
+
+* **db:** choose where infinidysk keeps its database and files ([#1858](https://github.com/infinidysk/infinidysk/issues/1858)) ([c1f6f93](https://github.com/infinidysk/infinidysk/commit/c1f6f936462bd2e2a003971ff67c88dd28e331fe))
+* **ui:** the Queue link shows when a download needs you in the Arr ([#1849](https://github.com/infinidysk/infinidysk/issues/1849)) ([2c1a095](https://github.com/infinidysk/infinidysk/commit/2c1a0953d2aa2a3c06f1044a8255c07dad959b22))
+
+
+### Bug Fixes
+
+* **api:** link the update notice to the release notes of the newer tag ([#1860](https://github.com/infinidysk/infinidysk/issues/1860)) ([005812a](https://github.com/infinidysk/infinidysk/commit/005812a4248f4d5685257dd76dbb429181e4aff2))
+* **ui:** open tabs no longer flood the server with refreshes during large cleanups ([#1850](https://github.com/infinidysk/infinidysk/issues/1850)) ([ae1b19c](https://github.com/infinidysk/infinidysk/commit/ae1b19ca39a4d3abddc81484a7fadd74177393c5))
+
+
+### Performance Improvements
+
+* **db:** index the health summary count ([#1851](https://github.com/infinidysk/infinidysk/issues/1851)) ([ca5c4d0](https://github.com/infinidysk/infinidysk/commit/ca5c4d03437eb343890301a542ec8d17d3932675))
+* **queue:** imports into large categories no longer read every existing folder ([#1856](https://github.com/infinidysk/infinidysk/issues/1856)) ([3402409](https://github.com/infinidysk/infinidysk/commit/340240947b71cd7f5c99e8fb5fd66dfa8c1b4e88))
+
+
+### Build System
+
+* publish Linux binary archives with each release ([#1859](https://github.com/infinidysk/infinidysk/issues/1859)) ([cdedc4b](https://github.com/infinidysk/infinidysk/commit/cdedc4b4deb7fef5abed4b15c907cddda8870759))
+
 ## [2.0.0-beta.5](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.4...v2.0.0-beta.5) (2026-11-06)
 
 

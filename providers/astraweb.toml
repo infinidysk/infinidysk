@@ -1,0 +1,8 @@
+schema = 1
+name = "Astraweb"
+website = "https://www.astraweb.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.astraweb.com"

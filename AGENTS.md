@@ -171,3 +171,9 @@ We cannot verify which media is public domain. **Never** write movie, show, epis
 ## Never merge pull requests
 
 Agents never merge PRs, in this repo or any infinidysk repo: no `gh pr merge`, no UI/API merge, no auto-merge. Opening the PR and reporting its URL ends the handoff. Never force-push shared branches or amend pushed commits.
+
+## Addressing CodeRabbit reviews
+
+When you address a CodeRabbit review, reply to every comment with what you fixed (with the commit) or why you skipped or declined it. Then resolve **every** CodeRabbit thread, including the ones you skipped or declined, so CodeRabbit can review again. After resolving, check that no CodeRabbit thread is still open, for example with the `reviewThreads { isResolved }` GraphQL query and `resolveReviewThread`. Also check the PR review state before handoff: resolving threads does not dismiss a changes-requested review. If it still blocks the PR, request another review or report the blocker for an authorized maintainer to address. Never dismiss a review just to bypass protection.
+
+In the same pass, address every GitHub Code Quality and Advanced Security (code scanning) finding reported on the PR. Wait for the current commit's quality and security analyses to finish, then list all open alerts with `gh api --paginate "repos/<owner>/<repo>/code-scanning/alerts?ref=refs/pull/<n>/merge&state=open"` and read the PR's review threads from the GitHub bots. Fix each finding, or dismiss it with a stated reason when it is a false positive or will not be fixed. Then resolve its PR thread, when present. After pushing fixes, wait for that commit's analyses and repeat triage. If analysis cannot finish, report the pass as incomplete.

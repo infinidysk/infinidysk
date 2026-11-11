@@ -571,6 +571,8 @@ pub struct HistoryQuery<'a> {
     pub search: Option<&'a str>,
     /// As reported: a completed job whose folder is gone counts as failed.
     pub status: Option<JobStatus>,
+    /// Leaves out jobs stored as failed that were created before this (Unix ms).
+    pub failed_since: Option<i64>,
     pub offset: usize,
     /// `None` means all.
     pub limit: Option<usize>,
@@ -584,7 +586,7 @@ pub struct HealthFilter<'a> {
     pub result: Option<HealthResult>,
 }
 
-/// `FROM … WHERE …` of [`Db::history_page`], then `$extra`; binds `$1`-`$3`.
+/// `FROM … WHERE …` of [`Db::history_page`], then `$extra`; binds `$1`-`$4`.
 macro_rules! history_filter {
     ($extra:literal) => {
         concat!(
@@ -593,7 +595,8 @@ macro_rules! history_filter {
              AND ($2 IS NULL OR LOWER(h.job_name) LIKE $2 ESCAPE '\\' \
                   OR LOWER(h.file_name) LIKE $2 ESCAPE '\\') \
              AND ($3 IS NULL \
-                  OR (CASE WHEN h.status = 1 AND i.id IS NOT NULL THEN 1 ELSE 2 END) = $3)",
+                  OR (CASE WHEN h.status = 1 AND i.id IS NOT NULL THEN 1 ELSE 2 END) = $3) \
+             AND ($4 IS NULL OR h.created_at >= $4 OR h.status <> 2)",
             $extra
         )
     };
@@ -975,7 +978,8 @@ macro_rules! release_nzb {
 pub(crate) use release_nzb;
 
 /// Deletes item `$id` (a `Uuid`), its subtree, the job folders this leaves empty, and the
-/// blobs nothing references anymore, in `$tx`.
+/// blobs nothing references anymore, in `$tx`. Evaluates to how many of `$id` and the
+/// folders above it went.
 macro_rules! delete_subtree {
     ($db:expr, $tx:ident, $id:expr) => {{
         let id: Uuid = $id;
@@ -989,10 +993,11 @@ macro_rules! delete_subtree {
                 .fetch_optional(&mut *$tx)
                 .await?
                 .flatten();
-        sqlx::query("DELETE FROM items WHERE id = $1")
+        let mut removed = sqlx::query("DELETE FROM items WHERE id = $1")
             .bind(id)
             .execute(&mut *$tx)
-            .await?;
+            .await?
+            .rows_affected();
         let (mut meta, mut nzbs): (Vec<Uuid>, Vec<Uuid>) = (Vec::new(), Vec::new());
         for (m, n) in refs {
             meta.extend(m);
@@ -1001,6 +1006,7 @@ macro_rules! delete_subtree {
         // Climb empty folders to the job folder (the one carrying the NZB) and delete it
         // with them; an empty chain that ends anywhere else (a category) stays.
         let mut below = id;
+        let mut climbed = 0;
         while let Some(dir) = parent {
             let empty: Option<(Option<Uuid>, Option<Uuid>)> = sqlx::query_as(EMPTY_DIR)
                 .bind(dir)
@@ -1008,12 +1014,14 @@ macro_rules! delete_subtree {
                 .fetch_optional(&mut *$tx)
                 .await?;
             let Some((up, nzb)) = empty else { break };
+            climbed += 1;
             if let Some(nzb) = nzb {
                 sqlx::query("DELETE FROM items WHERE id = $1")
                     .bind(dir)
                     .execute(&mut *$tx)
                     .await?;
                 nzbs.push(nzb);
+                removed += climbed;
                 break;
             }
             (below, parent) = (dir, up);
@@ -1031,6 +1039,7 @@ macro_rules! delete_subtree {
         for blob in nzbs {
             release_nzb!($db, $tx, blob);
         }
+        removed
     }};
 }
 
@@ -1225,6 +1234,12 @@ impl Db {
         let rows: Vec<ItemRow> =
             on!(self, pool => sqlx::query_as(sql).bind(parent.0).fetch_all(pool).await?);
         rows.into_iter().map(Item::try_from).collect()
+    }
+
+    /// Names of the children of `parent`, in no particular order.
+    pub async fn child_names(&self, parent: ItemId) -> Result<Vec<String>, Error> {
+        let sql = "SELECT name FROM items WHERE parent_id = $1";
+        Ok(on!(self, pool => sqlx::query_scalar(sql).bind(parent.0).fetch_all(pool).await?))
     }
 
     /// Files (not directories) with ids in `start..end`, ordered by id.
@@ -1807,10 +1822,11 @@ impl Db {
             let mut rows: Vec<HistoryListRow> = Vec::with_capacity(ids.len());
             on!(self, pool => for id in ids {
                 rows.extend(
-                    sqlx::query_as(select!(" AND h.id = $4"))
+                    sqlx::query_as(select!(" AND h.id = $5"))
                         .bind(q.category)
                         .bind(search.as_deref())
                         .bind(status)
+                        .bind(q.failed_since)
                         .bind(id.0)
                         .fetch_optional(pool)
                         .await?,
@@ -1823,13 +1839,14 @@ impl Db {
             let rows = rows.into_iter().skip(q.offset).take(limit).collect();
             (rows, total)
         } else {
-            let page = select!(" ORDER BY h.created_at DESC, h.id LIMIT $4 OFFSET $5");
+            let page = select!(" ORDER BY h.created_at DESC, h.id LIMIT $5 OFFSET $6");
             let count = concat!("SELECT COUNT(*) ", history_filter!(""));
             let (rows, total): (Vec<HistoryListRow>, i64) = on!(self, pool => {
                 let rows = sqlx::query_as(page)
                     .bind(q.category)
                     .bind(search.as_deref())
                     .bind(status)
+                    .bind(q.failed_since)
                     .bind(i64::try_from(limit).unwrap_or(i64::MAX))
                     .bind(i64::try_from(q.offset).unwrap_or(i64::MAX))
                     .fetch_all(pool)
@@ -1838,6 +1855,7 @@ impl Db {
                     .bind(q.category)
                     .bind(search.as_deref())
                     .bind(status)
+                    .bind(q.failed_since)
                     .fetch_one(pool)
                     .await?;
                 (rows, total)
@@ -2015,37 +2033,30 @@ impl Db {
         Ok(deleted)
     }
 
-    /// Deletes the empty folders below `/content/<category>` created before `before`
-    /// that no download in history holds, and the folders that leaves empty up to their
-    /// job folder. Returns how many folders it found empty.
+    /// Deletes one batch of the empty folders below `/content/<category>` created before
+    /// `before` that no download in history holds, and the folders that leaves empty up to
+    /// their job folder. Returns how many folders went; 0 once none is left.
     pub async fn delete_empty_dirs(&self, before: i64) -> Result<u64, Error> {
-        let mut removed = 0;
-        loop {
-            let found = on!(self, pool => {
-                let any: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
-                    .bind(before)
-                    .fetch_all(pool)
-                    .await?;
-                if any.is_empty() {
-                    0
-                } else {
-                    let mut tx = pool.begin_with(self.begin_write()).await?;
-                    let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
-                        .bind(before)
-                        .fetch_all(&mut *tx)
-                        .await?;
-                    for &dir in &dirs {
-                        delete_subtree!(self, tx, dir);
-                    }
-                    tx.commit().await?;
-                    dirs.len() as u64
-                }
-            });
-            if found == 0 {
-                break;
+        let removed = on!(self, pool => {
+            let any: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                .bind(before)
+                .fetch_all(pool)
+                .await?;
+            if any.is_empty() {
+                return Ok(0);
             }
-            removed += found;
-        }
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                .bind(before)
+                .fetch_all(&mut *tx)
+                .await?;
+            let mut removed = 0;
+            for &dir in &dirs {
+                removed += delete_subtree!(self, tx, dir);
+            }
+            tx.commit().await?;
+            removed
+        });
         if removed > 0 {
             self.notify(Change::History);
         }
@@ -2074,8 +2085,8 @@ impl Db {
         Ok(())
     }
 
-    /// Changes after every [`Db::update_blob`] in this process, so a blob read under one
-    /// epoch may be cached under it. Blobs are otherwise immutable.
+    /// Changes after blob updates or repair publication in this process. Cached metadata
+    /// and health observations must be refreshed when their epoch changes.
     pub fn blob_epoch(&self) -> u64 {
         self.blob_epoch.load(Ordering::Acquire)
     }

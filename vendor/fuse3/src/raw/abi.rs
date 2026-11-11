@@ -521,7 +521,7 @@ pub const FUSE_FORGET_ONE_SIZE: usize = mem::size_of::<fuse_forget_one>();
 #[repr(C)]
 pub struct fuse_forget_one {
     pub nodeid: u64,
-    pub(crate) _nlookup: u64,
+    pub(crate) nlookup: u64,
 }
 
 #[derive(Debug, FromBytes, KnownLayout, Immutable)]

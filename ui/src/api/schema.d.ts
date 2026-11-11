@@ -1495,6 +1495,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/upgrade/leftovers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The 1.x data still on disk after an import from 1.x, with the last measurement. */
+        get: operations["get_leftovers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/upgrade/leftovers/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Hides the Overview notice about 1.x data; the System page still lists it. */
+        post: operations["post_leftovers_dismiss"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/upgrade/leftovers/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Measures the 1.x data again, or waits for the measurement already running. */
+        post: operations["post_leftovers_scan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/upgrade/report": {
         parameters: {
             query?: never;
@@ -1866,9 +1917,15 @@ export interface components {
         BreakerView: {
             /** Format: int64 */
             at: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description How long it stayed open; up to now while it still is.
+             */
             open_ms: number;
+            /** @description Display name when it opened. */
             provider: string;
+            /** @description The provider's key; none on outages stored before keys were. */
+            provider_key?: string | null;
         };
         /** @description Counters since start; sizes are bytes. */
         CacheView: {
@@ -2023,6 +2080,8 @@ export interface components {
             /** @description `INFINIDYSK_DATABASE_URL` selects the database; it cannot be moved here. */
             env_managed: boolean;
             migration?: components["schemas"]["MigrationView"] | null;
+            /** @description The SQLite file in use; absent on PostgreSQL. */
+            sqlite_path?: string | null;
             /** @description `user@host:port/database` of the PostgreSQL database in use or being copied to. */
             target?: string | null;
         };
@@ -2372,6 +2431,58 @@ export interface components {
             failed?: string | null;
             /** @description Why an undo did not open; the restored database stayed. */
             undo_failed?: string | null;
+        };
+        Leftover: {
+            /**
+             * Format: int64
+             * @description Estimated disk usage: allocated blocks, hard links counted once.
+             */
+            bytes?: number | null;
+            /** @description `false` when part of it could not be read; `bytes` is then too low. */
+            complete: boolean;
+            /** @description A path inside this installation. */
+            path: string;
+            reason?: components["schemas"]["LeftoverReason"] | null;
+            status: components["schemas"]["LeftoverStatus"];
+        };
+        /** @enum {string} */
+        LeftoverReason: "live_data" | "symlink" | "unreadable" | "changed";
+        LeftoverScan: {
+            /**
+             * Format: int64
+             * @description Unix milliseconds.
+             */
+            at_ms: number;
+            /**
+             * Format: int64
+             * @description Estimated disk usage of every measured item.
+             */
+            bytes: number;
+            /** @description Every item is missing. */
+            gone: boolean;
+            items: components["schemas"]["Leftover"][];
+        };
+        /** @enum {string} */
+        LeftoverSource: "sqlite" | "postgres" | "unknown";
+        /** @enum {string} */
+        LeftoverStatus: "present" | "not_assessed" | "missing";
+        LeftoversView: {
+            dismissed: boolean;
+            /** @description This install finished an import from 1.x; everything else is empty when not. */
+            imported: boolean;
+            /** @description Why infinidysk still reads the 1.x data; absent once it no longer does. */
+            in_use?: string | null;
+            /** @description Some 1.x data is still on disk; a quick check without sizes. */
+            present: boolean;
+            scan?: components["schemas"]["LeftoverScan"] | null;
+            /** @description Why the last measurement failed; `scan` is then older. */
+            scan_error?: string | null;
+            /**
+             * Format: int64
+             * @description Unix milliseconds.
+             */
+            scan_failed_at_ms?: number | null;
+            source?: components["schemas"]["LeftoverSource"] | null;
         };
         /** @description 1.x backup folders under `<config dir>/backups`. */
         LegacyBackups: {
@@ -3415,6 +3526,11 @@ export interface components {
             missing: number;
             /** Format: int64 */
             requests: number;
+            /**
+             * Format: int64
+             * @description Circuit breaker openings.
+             */
+            trips: number;
         };
         ProviderScore: {
             /**
@@ -4248,7 +4364,7 @@ export interface components {
         /** @enum {string} */
         UnownedAction: "delete" | "action_needed";
         Update: {
-            /** @description The image's package page. */
+            /** @description The GitHub release notes of that release. */
             url: string;
             /** @description Image tag of the newer release. */
             version: string;
@@ -5867,6 +5983,8 @@ export interface operations {
                 /** @description Case-insensitive part of the job or file name. */
                 search?: string;
                 status?: components["schemas"]["HistoryStatus"];
+                /** @description Hides old stored failures without deleting them; missing-folder completed jobs still match `status=failed` at any age but return `completed`. */
+                failed_max_age_ms?: number;
             };
             header?: never;
             path?: never;
@@ -7173,6 +7291,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_leftovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LeftoversView"];
+                };
+            };
+        };
+    };
+    post_leftovers_dismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    post_leftovers_scan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LeftoversView"];
                 };
             };
         };

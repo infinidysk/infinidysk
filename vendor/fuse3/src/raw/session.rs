@@ -686,8 +686,11 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
         let data_size = in_header.len as usize - FUSE_IN_HEADER_SIZE;
         let data_ref = &data_buffer[..data_size];
 
-        self.handle_init(request, data_ref, fuse_connection, fs)
-            .await
+        let max_write = self
+            .handle_init(request, data_ref, fuse_connection, fs)
+            .await?;
+        fs.ready(self.get_notify()).await;
+        Ok(max_write)
     }
 
     #[instrument(level = "debug", skip(self, header_buffer, data_buffer), ret)]
@@ -775,7 +778,6 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
         let fs = self.filesystem.take().expect("filesystem not init");
 
         let max_write = self.init_filesystem(&fs, &fuse_connection).await?.get() as usize;
-        fs.ready(self.get_notify()).await;
         let buffer_size = (max_write + FUSE_WRITE_IN_SIZE).max(FUSE_MIN_READ_BUFFER_SIZE);
 
         let mut header_buffer = vec![0; FUSE_IN_HEADER_SIZE];
@@ -1318,8 +1320,10 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
             minor: FUSE_KERNEL_MINOR_VERSION,
             max_readahead: init_in.max_readahead,
             flags: reply_flags,
-            max_background: DEFAULT_MAX_BACKGROUND,
-            congestion_threshold: DEFAULT_CONGESTION_THRESHOLD,
+            max_background: reply.max_background.unwrap_or(DEFAULT_MAX_BACKGROUND),
+            congestion_threshold: reply
+                .congestion_threshold
+                .unwrap_or(DEFAULT_CONGESTION_THRESHOLD),
             max_write: reply.max_write.get(),
             time_gran: DEFAULT_TIME_GRAN,
             max_pages: DEFAULT_MAX_PAGES,
@@ -2620,7 +2624,7 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
 
                     let out_header = fuse_out_header {
                         len: (FUSE_OUT_HEADER_SIZE + FUSE_GETXATTR_OUT_SIZE) as u32,
-                        error: libc::ERANGE,
+                        error: 0,
                         unique: request.unique,
                     };
 
@@ -2954,7 +2958,8 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
 
                 let padding_size = get_padding_size(dir_entry_size);
 
-                if entry_data.len() + dir_entry_size > max_size {
+                // the padding is sent too, so it must fit as well
+                if !dir_entry_fits(entry_data.len(), dir_entry_size, max_size) {
                     break;
                 }
 
@@ -3655,7 +3660,7 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
         spawn(debug_span!("fuse_batch_forget"), async move {
             let inodes = forgets
                 .into_iter()
-                .map(|forget_one| forget_one.nodeid)
+                .map(|forget_one| (forget_one.nodeid, forget_one.nlookup))
                 .collect::<Vec<_>>();
 
             debug!("batch_forget unique {} inodes {:?}", request.unique, inodes);
@@ -3799,7 +3804,8 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
 
                 let padding_size = get_padding_size(dir_entry_size);
 
-                if entry_data.len() + dir_entry_size > max_size {
+                // the padding is sent too, so it must fit as well
+                if !dir_entry_fits(entry_data.len(), dir_entry_size, max_size) {
                     break;
                 }
 
@@ -4073,6 +4079,15 @@ impl<FS: Filesystem + Send + Sync + 'static> Session<FS> {
     }
 }
 
+/// Run `fut` in the background on the runtime of the session.
+pub(crate) fn spawn_task<F>(fut: F)
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    spawn(debug_span!("fuse3_task"), fut)
+}
+
 #[inline]
 fn spawn<F>(span: Span, fut: F)
 where
@@ -4118,9 +4133,7 @@ mod notification_tests {
             if self.1 {
                 return Err(libc::EIO.into());
             }
-            Ok(ReplyInit {
-                max_write: NonZeroU32::MIN.saturating_add(4095),
-            })
+            Ok(ReplyInit::new(NonZeroU32::MIN.saturating_add(4095)))
         }
         async fn ready(&self, notify: Notify) {
             assert_eq!(self.0.swap(2, Ordering::SeqCst), 1);

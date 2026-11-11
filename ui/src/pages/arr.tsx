@@ -159,10 +159,10 @@ function Summary({ status }: { status?: ArrStatus }) {
   const webhook = status.webhook_error ? "webhook not registered" : status.delivery_error ? "last webhook delivery failed" : null;
   const issue = webhook ?? (status.warnings.length > 0 ? "a setting needs changing" : null);
   return (
-    <div className="flex min-w-0 items-center gap-2 text-xs">
+    <div className="flex min-w-0 items-start gap-2 text-xs">
       <Status tone={issue || here === 0 ? "warning" : "success"}>Connected</Status>
-      <span className="text-muted-foreground truncate">
-        {here === 0 ? "add InfiniDysk as a SABnzbd download client in this Arr" : `sends to InfiniDysk through ${here} download client${here === 1 ? "" : "s"}`}
+      <span className="text-muted-foreground min-w-0 text-pretty">
+        {here === 0 ? "add infinidysk as a SABnzbd download client in this Arr" : `sends to infinidysk through ${here} download client${here === 1 ? "" : "s"}`}
         {issue && ` · ${issue}`}
       </span>
     </div>

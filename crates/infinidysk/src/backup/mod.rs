@@ -30,7 +30,7 @@ const STALE_AFTER_MS: i64 = 3 * DAY_MS;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const NOTE_MAX: usize = 500;
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
-pub const POSTGRES: &str = "Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy /config/repairs as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.";
+pub const POSTGRES: &str = "Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy the repair directory in your config folder (/config/repairs by default) as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.";
 const CHANGED: &str = "The file changed since it was made (checksum differs); it may be damaged.";
 const STAGED_CHANGED: &str =
     "The backup file changed since it was made (checksum differs); it may be damaged.";
@@ -282,7 +282,7 @@ impl Backups {
     }
 
     /// The configured or default folder, not created.
-    async fn resolve_dir(&self) -> Result<PathBuf, String> {
+    pub(crate) async fn resolve_dir(&self) -> Result<PathBuf, String> {
         let live = self.parts.live.as_deref().ok_or(POSTGRES)?;
         let dir = self.settings().await.maintenance.backup.dir;
         Ok(if dir.is_empty() {

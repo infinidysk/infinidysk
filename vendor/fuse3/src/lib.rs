@@ -18,7 +18,7 @@
 //!
 //! You must enable `async-io-runtime` or `tokio-runtime` feature.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(target_os = "macos")]
 use std::io::ErrorKind;

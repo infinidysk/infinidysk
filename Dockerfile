@@ -36,6 +36,10 @@ ARG COMMIT=""
 RUN INFINIDYSK_COMMIT="$COMMIT" cargo build --release --locked -p infinidysk \
     && cp target/release/infinidysk /usr/local/bin/infinidysk
 
+# Only the binary, for the release archives (`--target binary --output type=local,dest=<dir>`).
+FROM scratch AS binary
+COPY --from=build /usr/local/bin/infinidysk /infinidysk
+
 FROM ubuntu:26.04
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg fuse3 \

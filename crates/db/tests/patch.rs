@@ -730,6 +730,41 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert_eq!(changed.generation(), 1);
         assert_eq!(raw, b"new NZB");
         assert_ne!(changed, source);
+        assert!(
+            !fixture
+                .db
+                .replace_queued_repair_nzb(&source, b"inner NZB", 200, "inner.nzb")
+                .await
+                .unwrap()
+        );
+        assert!(
+            fixture
+                .db
+                .replace_queued_repair_nzb(&changed, b"inner NZB", 200, "inner.nzb")
+                .await
+                .unwrap()
+        );
+        let queued = fixture.db.queue().await.unwrap();
+        let current = queued.iter().find(|queued| queued.id == job.id).unwrap();
+        assert_ne!(current.nzb_blob, job.nzb_blob);
+        assert_eq!(current.file_name, "inner.nzb");
+        assert_eq!(current.total_bytes, 200);
+        let (inner, bytes) = fixture
+            .db
+            .queued_repair_nzb(job.id, current.nzb_blob)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(bytes, b"inner NZB");
+        assert_eq!(inner.nzb(), current.nzb_blob);
+        assert_eq!(inner.generation(), 0);
+        assert!(
+            !fixture
+                .db
+                .replace_queued_repair_nzb(&changed, b"stale replacement", 300, "stale.nzb")
+                .await
+                .unwrap()
+        );
         fixture
             .execute("DELETE FROM queue", "DELETE FROM queue")
             .await;

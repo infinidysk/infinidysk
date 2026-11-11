@@ -50,6 +50,9 @@ async fn exercise(db: &Db) {
         .map(|i| i.name)
         .collect();
     assert_eq!(names, ["a.mkv", "b.mkv"]);
+    let mut names = db.child_names(dir.id).await.expect("query");
+    names.sort();
+    assert_eq!(names, ["a.mkv", "b.mkv"]);
     let ids = |items: Vec<Item>| items.into_iter().map(|i| i.id).collect::<Vec<_>>();
     assert_eq!(
         ids(db.files_in_id_range(dir.id, None).await.expect("query")),
@@ -505,7 +508,7 @@ async fn exercise(db: &Db) {
     assert_eq!(db.queue().await.expect("query"), []);
     assert_eq!(
         db.history_entry(job.id).await.expect("query"),
-        Some(history)
+        Some(history.clone())
     );
     assert_eq!(
         db.completed_dirs(ItemId::CONTENT).await.expect("query"),
@@ -531,6 +534,64 @@ async fn exercise(db: &Db) {
         ..all
     };
     assert_eq!(history_ids(db, failed).await, (vec![gone], 1));
+    // The cutoff drops stored failures only; a missing folder cannot be retried.
+    let stored_failure = JobId::new();
+    db.add_history(
+        &HistoryEntry {
+            id: stored_failure,
+            status: JobStatus::Failed,
+            download_dir: None,
+            ..history.clone()
+        },
+        &[],
+        &[],
+    )
+    .await
+    .expect("history");
+    let recent = HistoryQuery {
+        failed_since: Some(i64::MAX),
+        ..all
+    };
+    assert_eq!(history_ids(db, recent).await, (both.clone(), 2));
+    let recent_ids = HistoryQuery {
+        ids: Some(&[stored_failure, gone]),
+        ..recent
+    };
+    assert_eq!(history_ids(db, recent_ids).await, (vec![gone], 1));
+    let recent_failed = HistoryQuery {
+        status: Some(JobStatus::Failed),
+        ..recent
+    };
+    assert_eq!(history_ids(db, recent_failed).await, (vec![gone], 1));
+    let recent_failed_ids = HistoryQuery {
+        ids: Some(&[stored_failure, gone]),
+        ..recent_failed
+    };
+    assert_eq!(history_ids(db, recent_failed_ids).await, (vec![gone], 1));
+    let old = HistoryQuery {
+        failed_since: Some(i64::MIN),
+        ..all
+    };
+    assert_eq!(history_ids(db, old).await.1, 3);
+    let at_cutoff = HistoryQuery {
+        failed_since: Some(history.created_at),
+        ..all
+    };
+    let (rows, total) = history_ids(db, at_cutoff).await;
+    assert_eq!(total, 3);
+    assert!(rows.contains(&stored_failure));
+    let at_cutoff_ids = HistoryQuery {
+        ids: Some(&[stored_failure]),
+        ..at_cutoff
+    };
+    assert_eq!(
+        history_ids(db, at_cutoff_ids).await,
+        (vec![stored_failure], 1)
+    );
+    assert_eq!(
+        db.delete_history(&[stored_failure]).await.expect("delete"),
+        1
+    );
     let by_id = HistoryQuery {
         ids: Some(&[gone, JobId::new(), job.id]),
         offset: 1,
@@ -937,7 +998,8 @@ async fn unlinked(db: &Db) {
     loose.nzb_blob = Some(loose_nzb);
     let kept_file = Item::child(&kept, "a.mkv", ItemKind::NzbFile).expect("valid");
     let loose_file = Item::child(&loose, "b.mkv", ItemKind::NzbFile).expect("valid");
-    let empty = Item::child(&loose, "sub", ItemKind::Directory).expect("valid");
+    let mid = Item::child(&loose, "mid", ItemKind::Directory).expect("valid");
+    let empty = Item::child(&mid, "sub", ItemKind::Directory).expect("valid");
     db.insert(
         &[
             cat.clone(),
@@ -945,6 +1007,7 @@ async fn unlinked(db: &Db) {
             loose.clone(),
             kept_file.clone(),
             loose_file.clone(),
+            mid,
             empty.clone(),
         ],
         &[(kept_nzb, b"nzb"), (loose_nzb, b"nzb")],
@@ -991,11 +1054,33 @@ async fn unlinked(db: &Db) {
             .await
             .expect("delete")
     );
-    assert!(db.delete_empty_dirs(before).await.expect("sweep") >= 1);
+    assert_eq!(
+        db.delete_empty_dirs(before).await.expect("sweep"),
+        3,
+        "sub, mid and the job folder"
+    );
+    assert_eq!(db.delete_empty_dirs(before).await.expect("sweep"), 0);
     assert_eq!(db.item(loose.id).await.expect("query"), None);
     assert!(db.item(kept.id).await.expect("query").is_some());
     assert!(db.item(cat.id).await.expect("query").is_some());
     assert_eq!(db.blob(loose_nzb).await.expect("query"), None);
+
+    let folders: Vec<_> = (0..501)
+        .map(|index| {
+            let mut folder =
+                Item::child(&cat, &format!("empty-{index}"), ItemKind::Directory).expect("valid");
+            folder.created_at = 1;
+            folder
+        })
+        .collect();
+    db.insert(&folders, &[]).await.expect("insert");
+    assert_eq!(
+        db.delete_empty_dirs(before).await.expect("first batch"),
+        500
+    );
+    assert_eq!(db.children(cat.id).await.expect("remaining").len(), 2);
+    assert_eq!(db.delete_empty_dirs(before).await.expect("second batch"), 1);
+    assert_eq!(db.delete_empty_dirs(before).await.expect("finished"), 0);
 }
 
 async fn restored_nzb_links(db: &Db) {
