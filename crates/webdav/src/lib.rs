@@ -18,6 +18,7 @@ use axum::http::{Extensions, HeaderMap, HeaderName, HeaderValue, Method, StatusC
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use futures_util::TryStreamExt as _;
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use infinidysk_queue::{Queue, Submission, service};
 use infinidysk_vfs::{Delivery, Kind, Node, Origin, Vfs};
@@ -673,7 +674,11 @@ async fn get(
         )
             .into_response();
     }
-    let body = Body::from_stream(ReaderStream::with_capacity(body, CHUNK));
+    let body = Body::from_stream(
+        ReaderStream::with_capacity(body, CHUNK).inspect_err(|error| {
+            tracing::warn!(reason = %error, "webdav read failed mid-stream");
+        }),
+    );
     (status, out, body).into_response()
 }
 

@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use axum::Router;
@@ -23,12 +23,23 @@ use infinidysk_vfs::Vfs;
 use infinidysk_webdav::{Access, Auth, WebDav, router, sign_view, strm_key};
 use sha2::{Digest as _, Sha256};
 use tower::ServiceExt;
+use tracing::Level;
+use tracing::field::{Field, Visit};
+use tracing::instrument::WithSubscriber as _;
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
 const ARTICLE: usize = 4096;
 /// `user:pass`.
 const BASIC: &str = "Basic dXNlcjpwYXNz";
 
 async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2]) {
+    setup_timed(data, Duration::from_secs(5)).await
+}
+
+async fn setup_timed(
+    data: &[u8],
+    timeout: Duration,
+) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2]) {
     let articles = post("a", "a.mkv", data, ARTICLE);
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
     let endpoint = Endpoint::new(
@@ -36,7 +47,7 @@ async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2
         server.addr().port(),
         TlsMode::Plain,
         None,
-        Duration::from_secs(5),
+        timeout,
     )
     .unwrap();
     let config = PoolConfig {
@@ -439,4 +450,62 @@ async fn unreachable_providers_answer_retryable_503_before_the_body() {
         assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE, "{range:?}");
         assert_eq!(r.headers()[header::RETRY_AFTER], "5");
     }
+}
+
+/// Reasons of `webdav read failed mid-stream` warnings.
+#[derive(Clone, Default)]
+struct MidStream(Arc<Mutex<Vec<String>>>);
+
+impl<S: tracing::Subscriber> Layer<S> for MidStream {
+    fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+        #[derive(Default)]
+        struct Fields {
+            message: String,
+            reason: Option<String>,
+        }
+        impl Visit for Fields {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                match field.name() {
+                    "message" => self.message = format!("{value:?}"),
+                    "reason" => self.reason = Some(format!("{value:?}")),
+                    _ => {}
+                }
+            }
+        }
+        let mut fields = Fields::default();
+        event.record(&mut fields);
+        if *event.metadata().level() == Level::WARN
+            && fields.message == "webdav read failed mid-stream"
+            && let Some(reason) = fields.reason
+        {
+            self.0.lock().unwrap().push(reason);
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_read_failure_mid_body_logs_one_warning() {
+    let data: Vec<u8> = (0..3 * ARTICLE)
+        .map(|i| u8::try_from(i % 251).unwrap())
+        .collect();
+    let (server, app, _, _) = setup_timed(&data, Duration::from_millis(200)).await;
+    let last = post("a", "a.mkv", &data, ARTICLE).pop().unwrap().message_id;
+    server.stall_article(&last, usize::MAX, Duration::from_secs(30));
+    let path = "/content/tv/my%20job/a.mkv";
+    let r = send(&app, "GET", path, &[("authorization", BASIC)], Vec::new()).await;
+    assert_eq!(r.status(), StatusCode::OK);
+
+    let warnings = MidStream::default();
+    let subscriber = tracing_subscriber::registry().with(warnings.clone());
+    let result = r.into_body().collect().with_subscriber(subscriber).await;
+    assert!(result.is_err(), "the body is cut short");
+    assert!(
+        server.stalled(&last) > 0,
+        "the failure came from the stalled article"
+    );
+    assert_eq!(
+        warnings.0.lock().unwrap().len(),
+        1,
+        "one warning with a reason"
+    );
 }
