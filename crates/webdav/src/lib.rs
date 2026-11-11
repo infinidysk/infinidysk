@@ -18,7 +18,7 @@ use axum::http::{Extensions, HeaderMap, HeaderName, HeaderValue, Method, StatusC
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use futures_util::TryStreamExt as _;
+use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use infinidysk_queue::{Queue, Submission, service};
 use infinidysk_vfs::{Delivery, Kind, Node, Origin, Vfs};
@@ -26,7 +26,7 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_perc
 use quick_xml::escape::escape;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
 pub use ipnet::IpNet;
@@ -665,20 +665,21 @@ async fn get(
     // The first chunk is read before the status line, so providers that cannot serve it
     // yield a retryable 503 instead of a body cut short. Missing articles never fail
     // here: they are zero-filled and reported to health.
-    let mut body = BufReader::with_capacity(CHUNK, reader.take(end - start));
-    if let Err(error) = body.fill_buf().await {
-        tracing::warn!(reason = %error, "webdav read failed before the response started");
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [(header::RETRY_AFTER, HeaderValue::from_static("5"))],
-        )
-            .into_response();
-    }
-    let body = Body::from_stream(
-        ReaderStream::with_capacity(body, CHUNK).inspect_err(|error| {
-            tracing::warn!(reason = %error, "webdav read failed mid-stream");
-        }),
-    );
+    let mut body = ReaderStream::with_capacity(reader.take(end - start), CHUNK);
+    let first = match body.next().await {
+        Some(Err(error)) => {
+            tracing::warn!(reason = %error, "webdav read failed before the response started");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, HeaderValue::from_static("5"))],
+            )
+                .into_response();
+        }
+        first => first,
+    };
+    let body = Body::from_stream(stream::iter(first).chain(body).inspect_err(|error| {
+        tracing::warn!(reason = %error, "webdav read failed mid-stream");
+    }));
     (status, out, body).into_response()
 }
 
