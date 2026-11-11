@@ -67,6 +67,8 @@ pub struct Pool {
     live: Arc<AtomicUsize>,
     state: Arc<Mutex<State>>,
     changed: Arc<Notify>,
+    /// Counts every failed connect, background ones included.
+    stats: Arc<Stats>,
     stream_wait: Duration,
     /// `weight-large` experiment: articles of [`LARGE_ARTICLE`] or more weigh a full depth.
     weight_large: bool,
@@ -317,9 +319,14 @@ impl Pool {
             live: Arc::default(),
             state: Arc::default(),
             changed: Arc::default(),
+            stats: Arc::default(),
             stream_wait: STREAM_WAIT,
             weight_large: false,
         })
+    }
+
+    pub(crate) fn set_stats(&mut self, stats: Arc<Stats>) {
+        self.stats = stats;
     }
 
     #[cfg(test)]
@@ -676,11 +683,13 @@ impl Pool {
         let (endpoint, config) = (self.endpoint.clone(), self.config);
         let usage = endpoint.usage().cloned();
         let live = Arc::clone(&self.live);
+        let stats = Arc::clone(&self.stats);
         async move {
             let started = Instant::now();
             let conn = match Connection::connect_staged(&endpoint).await {
                 Ok(conn) => conn,
                 Err((stage, error)) => {
+                    stats.connect_failed();
                     let mut state = connecting.lock();
                     let live = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
                     // Excludes this attempt, whose slot `connecting` still holds.
