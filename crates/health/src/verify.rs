@@ -62,6 +62,19 @@ impl Health {
         cancel: &CancellationToken,
         probe: Option<infinidysk_core::trace::Probe>,
     ) -> Result<Verification, Error> {
+        self.verify_existing_bounded(id, cancel, probe, 256_000_000, 100_000_000_000)
+            .await
+    }
+
+    /// Respect the worker's per-attempt source allowance even with a stored proof.
+    pub async fn verify_existing_bounded(
+        &self,
+        id: ItemId,
+        cancel: &CancellationToken,
+        probe: Option<infinidysk_core::trace::Probe>,
+        memory_bytes: usize,
+        decoded_bytes: u64,
+    ) -> Result<Verification, Error> {
         let cancel = cancel.child_token();
         let _cancel_on_drop = cancel.clone().drop_guard();
         let permit = tokio::select! {
@@ -82,12 +95,19 @@ impl Health {
             return Ok(Verification::Unavailable("file metadata is unavailable"));
         };
         let source = self.omitted_source(&item, blob_id, &meta).await?;
+        let admitted = memory_bytes.saturating_sub(96_000_000) / infinidysk_nntp::MAX_DECODED_LEN;
+        if admitted == 0 {
+            return Ok(Verification::Unavailable(
+                "working memory allowance cannot admit a source article",
+            ));
+        }
         let concurrency = if (self.streaming)() {
             CONCURRENCY_STREAMING
         } else {
             CONCURRENCY_IDLE
         }
-        .min(4); // Full verification can retain a maximum-sized article per request.
+        .min(4)
+        .min(admitted); // Full verification can retain a maximum-sized article per request.
         let client = Arc::clone(&self.client);
         let stopped = cancel.clone();
         let runtime = tokio::runtime::Handle::current();
@@ -99,7 +119,8 @@ impl Health {
                 source,
                 meter: probe.as_ref(),
             };
-            let result = runtime.block_on(run(&articles, &meta, concurrency, &stopped));
+            let result =
+                runtime.block_on(run(&articles, &meta, concurrency, decoded_bytes, &stopped));
             // Cancellation keeps the publication barrier with the actual reader task.
             (meta, result, writing)
         })
@@ -130,6 +151,7 @@ async fn run(
     articles: &dyn Articles,
     meta: &FileMeta,
     concurrency: usize,
+    decoded_bytes: u64,
     cancel: &CancellationToken,
 ) -> Verification {
     let FileMeta::Nzb(file) = meta else {
@@ -146,10 +168,12 @@ async fn run(
     if count != proof.slice_crc32.len()
         || count > 32_768
         || file.segments.items.len() > 100_000
-        || proof.file_length > 100_000_000_000
         || proof.file_length != file.segments.size()
     {
         return Verification::Unavailable("stored proof or article layout is inconsistent");
+    }
+    if proof.file_length > decoded_bytes {
+        return Verification::Unavailable("source read allowance exceeded");
     }
     let mut slices = Vec::new();
     if slices.try_reserve_exact(count).is_err() {

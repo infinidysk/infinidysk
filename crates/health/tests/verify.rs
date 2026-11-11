@@ -291,6 +291,13 @@ async fn verifies_a_stored_file_without_an_original_nzb() {
     let before = db.health(item.id).await.unwrap();
     let cancel = CancellationToken::new();
     assert!(matches!(
+        health
+            .verify_existing_bounded(item.id, &cancel, None, 256_000_000, 99_999)
+            .await
+            .unwrap(),
+        Verification::Unavailable("source read allowance exceeded")
+    ));
+    assert!(matches!(
         health.verify_existing(item.id, &cancel).await.unwrap(),
         Verification::Verified {
             bytes: 100_000,

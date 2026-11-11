@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use infinidysk_core::ItemId;
 use infinidysk_db::{repair::Owner, repair_jobs::Job};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -21,11 +21,15 @@ pub struct Par2Job {
     state: &'static str,
     reason: String,
     attempts: i32,
+    verify_only: bool,
     transferred_bytes: i64,
     stored_bytes: i64,
     updated_at: i64,
     duration_ms: i64,
     verified_bytes: i64,
+    item_id: Option<Uuid>,
+    file_path: Option<String>,
+    next_at: i64,
 }
 
 impl From<Job> for Par2Job {
@@ -38,17 +42,28 @@ impl From<Job> for Par2Job {
                 2 => "verified",
                 3 => "repaired",
                 4 => "deferred",
+                5 if job.reason.starts_with("Retry limit reached:") => "failed",
                 5 => "unavailable",
                 6 => "cancelled",
                 _ => "failed",
             },
             reason: job.reason,
             attempts: job.attempts,
+            verify_only: job.verify_only,
             transferred_bytes: job.transferred_bytes,
             stored_bytes: job.stored_bytes,
             updated_at: job.updated_at,
-            duration_ms: job.duration_ms,
+            duration_ms: job.duration_ms.saturating_add(
+                job.started_at
+                    .filter(|_| job.state == 1)
+                    .map_or(0, |started| {
+                        infinidysk_db::now_ms().saturating_sub(started).max(0)
+                    }),
+            ),
             verified_bytes: job.verified_bytes,
+            item_id: job.item_id,
+            file_path: job.file_path,
+            next_at: job.next_at,
         }
     }
 }
@@ -158,6 +173,16 @@ pub struct Par2ScanStatus {
     enabled: bool,
     pending_jobs: i64,
     scan: Option<super::scan::Scan>,
+    jobs: Vec<Par2Job>,
+    counts: Vec<Par2Count>,
+    storage_used_bytes: u64,
+    limits: crate::config::Repair,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct Par2Count {
+    state: i16,
+    count: i64,
 }
 
 #[utoipa::path(get, path = "/api/v1/health/par2-scan", tag = "health",
@@ -169,12 +194,44 @@ pub async fn get_par2_scan(State(admin): State<Arc<Admin>>) -> Result<Json<Par2S
         scan: super::scan::load(admin.queue.db())
             .await
             .map_err(|e| Fail::Failed(e.to_string()))?,
+        jobs: admin
+            .queue
+            .db()
+            .par2_jobs()
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        counts: admin
+            .queue
+            .db()
+            .par2_counts()
+            .await?
+            .into_iter()
+            .map(|(state, count)| Par2Count { state, count })
+            .collect(),
+        storage_used_bytes: admin
+            .repairs
+            .used_bytes()
+            .await
+            .map_err(|e| Fail::Failed(e.to_string()))?,
+        limits: admin.config.read().await.settings().repair.clone(),
     }))
 }
 
+#[derive(Default, Deserialize)]
+pub struct ScanOptions {
+    #[serde(default)]
+    repair: bool,
+}
+
 #[utoipa::path(post, path = "/api/v1/health/par2-scan", tag = "health",
+    params(("repair" = Option<bool>, Query, description = "Check and repair source sets instead of read-only verification")),
     responses((status = 202), (status = 409, body = ApiError)))]
-pub async fn post_par2_scan(State(admin): State<Arc<Admin>>) -> Result<StatusCode, Fail> {
+pub async fn post_par2_scan(
+    State(admin): State<Arc<Admin>>,
+    Query(options): Query<ScanOptions>,
+) -> Result<StatusCode, Fail> {
     if !infinidysk_core::experiment("par2-repair") {
         return Err(Fail::Conflict(
             "Enable PAR2 repair in Settings → Experiments and restart first.".into(),
@@ -187,18 +244,51 @@ pub async fn post_par2_scan(State(admin): State<Arc<Admin>>) -> Result<StatusCod
     {
         return Ok(StatusCode::ACCEPTED);
     }
+    let requested_at = infinidysk_db::now_ms();
+    let boundary = admin.queue.db().par2_scan_boundary().await?;
+    let total_files = if let Some(boundary) = boundary {
+        Some(
+            u64::try_from(
+                admin
+                    .queue
+                    .db()
+                    .par2_scan_total(boundary, requested_at)
+                    .await?,
+            )
+            .unwrap_or(0),
+        )
+    } else {
+        Some(0)
+    };
     let scan = super::scan::Scan {
-        boundary: admin.queue.db().par2_scan_boundary().await?,
+        boundary,
         cursor: None,
-        requested_at: infinidysk_db::now_ms(),
+        requested_at,
         scanned_files: 0,
         complete: false,
         cancelled: false,
+        repair: options.repair,
+        total_files,
+        skipped_files: 0,
     };
     super::scan::save(admin.queue.db(), &scan)
         .await
         .map_err(|e| Fail::Failed(e.to_string()))?;
     Ok(StatusCode::ACCEPTED)
+}
+
+#[utoipa::path(delete, path = "/api/v1/health/par2-jobs/{id}", tag = "health",
+    params(("id" = Uuid, Path)), responses((status = 204), (status = 500, body = ApiError)))]
+pub async fn delete_par2_job(
+    State(admin): State<Arc<Admin>>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, Fail> {
+    admin
+        .queue
+        .db()
+        .cancel_par2(id, infinidysk_db::now_ms())
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(delete, path = "/api/v1/health/par2-scan", tag = "health",
@@ -219,6 +309,37 @@ pub async fn delete_par2_scan(State(admin): State<Arc<Admin>>) -> Result<StatusC
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn exhausted_retries_are_failed_and_terminal_duration_stops_growing() {
+        for (reason, expected) in [
+            ("Retry limit reached: provider timed out", "failed"),
+            ("repair unavailable: no recovery data", "unavailable"),
+        ] {
+            let view = super::Par2Job::from(infinidysk_db::repair_jobs::Job {
+                id: uuid::Uuid::nil(),
+                nzb_blob: None,
+                item_id: None,
+                meta_blob: None,
+                meta_generation: None,
+                generation: 0,
+                verify_only: false,
+                state: 5,
+                attempts: 3,
+                reason: reason.into(),
+                transferred_bytes: 0,
+                stored_bytes: 0,
+                updated_at: 1,
+                duration_ms: 100,
+                verified_bytes: 0,
+                started_at: Some(0),
+                next_at: 1,
+                file_path: None,
+            });
+            assert_eq!(view.state, expected);
+            assert_eq!(view.duration_ms, 100);
+        }
+    }
+
     #[test]
     fn repair_api_keeps_operation_names_unique_and_preserves_server_status() {
         let spec: serde_json::Value =

@@ -26,13 +26,57 @@ pub struct Job {
     pub updated_at: i64,
     pub duration_ms: i64,
     pub verified_bytes: i64,
+    pub started_at: Option<i64>,
+    pub next_at: i64,
+    #[sqlx(default)]
+    pub file_path: Option<String>,
 }
 
 macro_rules! columns {
-    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes" };
+    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at" };
 }
 
 impl Db {
+    /// All pending work, followed by the twenty most recent results.
+    pub async fn par2_jobs(&self) -> Result<Vec<Job>, Error> {
+        Ok(
+            on!(self, pool => sqlx::query_as(concat!("SELECT ", columns!(),
+            ", (SELECT path FROM items WHERE id = repair_jobs.item_id OR (repair_jobs.item_id IS NULL AND nzb_blob = repair_jobs.nzb_blob AND kind <> 1) ORDER BY id LIMIT 1) AS file_path FROM repair_jobs WHERE state IN (0, 1, 4) OR id IN (SELECT id FROM repair_jobs WHERE state NOT IN (0, 1, 4) ORDER BY updated_at DESC, id LIMIT 20) ORDER BY CASE WHEN state = 1 THEN 0 WHEN state IN (0, 4) THEN 1 ELSE 2 END, updated_at DESC, id"))
+            .fetch_all(pool).await?),
+        )
+    }
+
+    pub async fn par2_counts(&self) -> Result<Vec<(i16, i64)>, Error> {
+        Ok(
+            on!(self, pool => sqlx::query_as("SELECT state, COUNT(*) FROM repair_jobs GROUP BY state ORDER BY state")
+            .fetch_all(pool).await?),
+        )
+    }
+
+    /// Persist live progress without overwriting a cancellation or completed result.
+    pub async fn update_par2_progress(
+        &self,
+        id: Uuid,
+        phase: &str,
+        transferred: i64,
+        stored: i64,
+        now: i64,
+    ) -> Result<(), Error> {
+        if transferred < 0 || stored < 0 || phase.len() > 128 {
+            return Err(Error::RepairBounds("job progress"));
+        }
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET reason = $2, transferred_bytes = $3, stored_bytes = $4, updated_at = $5 WHERE id = $1 AND state = 1")
+            .bind(id).bind(phase).bind(transferred).bind(stored).bind(now).execute(pool).await?.rows_affected());
+        Ok(())
+    }
+
+    pub async fn par2_scan_total(&self, boundary: ItemId, before: i64) -> Result<i64, Error> {
+        Ok(
+            on!(self, pool => sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE kind <> 1 AND meta_blob IS NOT NULL AND id <= $1 AND created_at <= $2")
+            .bind(boundary.0).bind(before).fetch_one(pool).await?),
+        )
+    }
+
     pub async fn set_par2_verified(&self, id: Uuid, bytes: i64) -> Result<(), Error> {
         if bytes < 0 {
             return Err(Error::RepairBounds("verified byte count"));

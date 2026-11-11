@@ -4,6 +4,46 @@ use infinidysk::config::{
 use infinidysk_db::Db;
 
 #[tokio::test]
+async fn par2_limits_persist_validate_and_respect_environment_locks() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let mut store = ConfigStore::load(db.clone(), []).await.unwrap();
+    let mut settings = store.settings().clone();
+    settings.repair.memory_mb = 512;
+    settings.repair.transfer_gb = 200;
+    settings.repair.storage_gb = 50;
+    settings.repair.timeout_minutes = 120;
+    settings.repair.attempts = 5;
+    store.save(settings.clone()).await.unwrap();
+    let reloaded = ConfigStore::load(db.clone(), []).await.unwrap();
+    assert_eq!(reloaded.settings().repair, settings.repair);
+    for (key, value) in [
+        ("memory_mb", 95),
+        ("memory_mb", 65537),
+        ("transfer_gb", 0),
+        ("storage_gb", 0),
+        ("timeout_minutes", 0),
+        ("attempts", 0),
+        ("attempts", 11),
+    ] {
+        let mut invalid = serde_json::to_value(&settings).unwrap();
+        invalid["repair"][key] = value.into();
+        let error = store
+            .save(serde_json::from_value(invalid).unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(error.path(), Some(format!("repair.{key}").as_str()));
+    }
+    let mut locked =
+        ConfigStore::load(db, [("INFINIDYSK__REPAIR__STORAGE_GB".into(), "75".into())])
+            .await
+            .unwrap();
+    assert_eq!(locked.settings().repair.storage_gb, 75);
+    let mut change = locked.settings().clone();
+    change.repair.storage_gb = 100;
+    assert!(matches!(locked.save(change).await, Err(Error::Locked(p)) if p == "repair.storage_gb"));
+}
+
+#[tokio::test]
 async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
     let path =
         std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));

@@ -19,6 +19,12 @@ pub struct Scan {
     pub complete: bool,
     #[serde(default)]
     pub cancelled: bool,
+    #[serde(default)]
+    pub repair: bool,
+    #[serde(default)]
+    pub total_files: Option<u64>,
+    #[serde(default)]
+    pub skipped_files: u64,
 }
 
 pub async fn load(db: &Db) -> Result<Option<Scan>> {
@@ -59,10 +65,14 @@ pub async fn step(db: &Db) -> Result<()> {
     }
     for id in files {
         let now = infinidysk_db::now_ms();
-        let request = db.request_par2(Owner::Item(id), true, now).await?;
+        let verify = !scan.repair;
+        let request = db.request_par2(Owner::Item(id), verify, now).await?;
+        if request.is_none() {
+            scan.skipped_files += 1;
+        }
         if let Some(request) = request
             && db
-                .par2_result(Owner::Item(id), true)
+                .par2_result(Owner::Item(id), verify)
                 .await?
                 .is_some_and(|job| {
                     job.updated_at < scan.requested_at && matches!(job.state, 2 | 3 | 5 | 6)
@@ -135,6 +145,12 @@ mod tests {
             requested_at: infinidysk_db::now_ms() + 1,
             ..Scan::default()
         };
+        assert_eq!(
+            db.par2_scan_total(scan.boundary.unwrap(), scan.requested_at)
+                .await
+                .unwrap(),
+            20
+        );
         save(&db, &scan).await.unwrap();
         step(&db).await.unwrap();
         assert_eq!(load(&db).await.unwrap().unwrap().scanned_files, 16);
@@ -161,5 +177,46 @@ mod tests {
         assert!(load(&db).await.unwrap().unwrap().cancelled);
         assert_eq!(db.par2_pending().await.unwrap(), 19);
         db.close().await;
+    }
+
+    #[tokio::test]
+    async fn repair_backlog_deduplicates_source_sets_and_resumes_older_scan_documents() {
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+        let nzb = infinidysk_core::BlobId::new();
+        let mut items = Vec::new();
+        let mut blobs = vec![(nzb, b"nzb".as_slice())];
+        for n in 0..3 {
+            let mut item = infinidysk_db::Item::child(
+                &parent,
+                &format!("source-{n}.bin"),
+                infinidysk_core::ItemKind::NzbFile,
+            )
+            .unwrap();
+            let meta = infinidysk_core::BlobId::new();
+            item.meta_blob = Some(meta);
+            blobs.push((meta, b"metadata".as_slice()));
+            item.nzb_blob = (n < 2).then_some(nzb);
+            items.push(item);
+        }
+        db.insert(&items, &blobs).await.unwrap();
+        let scan = Scan {
+            boundary: db.par2_scan_boundary().await.unwrap(),
+            requested_at: infinidysk_db::now_ms() + 1,
+            repair: true,
+            ..Scan::default()
+        };
+        save(&db, &scan).await.unwrap();
+        step(&db).await.unwrap();
+        step(&db).await.unwrap();
+        assert_eq!(load(&db).await.unwrap().unwrap().scanned_files, 3);
+        assert_eq!(load(&db).await.unwrap().unwrap().skipped_files, 1);
+        let jobs = db.par2_jobs().await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(!jobs[0].verify_only);
+        assert_eq!(jobs[0].nzb_blob, Some(nzb.0));
+        let old: Scan = serde_json::from_str(r#"{"boundary":null,"cursor":null,"requested_at":0,"scanned_files":0,"complete":false}"#).unwrap();
+        assert!(!old.repair);
+        assert_eq!(old.total_files, None);
     }
 }

@@ -1,7 +1,7 @@
 //! One durable worker. Source reads and CPU/storage admission are independent of playback.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
@@ -17,20 +17,43 @@ use tokio_util::sync::CancellationToken;
 
 use super::{Publisher, Repairs};
 
-const MEMORY: usize = 256_000_000;
-const TRANSFER: u64 = 100_000_000_000;
-const CAPACITY: u64 = 10_000_000_000;
 const HASH_ONLY: &str =
     "Whole-file hashes matched. Some files have no slice checksums for locating damage.";
 
 #[derive(Default)]
 pub(super) struct Progress {
+    limits: crate::config::Repair,
+    phase: Mutex<&'static str>,
     watch: Arc<infinidysk_core::wait::Watch>,
     stored: AtomicU64,
     verified: AtomicU64,
 }
 
 impl Progress {
+    pub(super) fn new(limits: crate::config::Repair) -> Self {
+        Self {
+            limits,
+            ..Self::default()
+        }
+    }
+    fn phase(&self, phase: &'static str) {
+        *self.phase.lock().unwrap_or_else(PoisonError::into_inner) = phase;
+    }
+
+    fn transferred(&self) -> u64 {
+        self.watch.supplied().iter().map(|s| s.bytes).sum()
+    }
+
+    fn counters(&self, job: &Job) -> (i64, i64) {
+        (
+            job.transferred_bytes
+                .saturating_add(i64::try_from(self.transferred()).unwrap_or(i64::MAX)),
+            job.stored_bytes.saturating_add(
+                i64::try_from(self.stored.load(Ordering::Relaxed)).unwrap_or(i64::MAX),
+            ),
+        )
+    }
+
     fn probe(&self) -> infinidysk_core::trace::Probe {
         infinidysk_core::trace::Probe {
             trace: None,
@@ -49,6 +72,7 @@ impl Repairs {
         client: Arc<Client>,
         publisher: Publisher,
         health: Arc<infinidysk_health::Health>,
+        config: Arc<tokio::sync::RwLock<crate::config::ConfigStore>>,
         cancel: CancellationToken,
     ) {
         while let Err(error) = self.db.resume_par2(now_ms()).await {
@@ -67,10 +91,10 @@ impl Repairs {
             match result {
                 Ok(Some(job)) => {
                     let stopped = cancel.child_token();
-                    let progress = Progress::default();
+                    let progress = Progress::new(config.read().await.settings().repair.clone());
                     let _stop = stopped.clone().drop_guard();
                     let work = tokio::time::timeout(
-                        Duration::from_secs(3600),
+                        Duration::from_secs(u64::from(progress.limits.timeout_minutes) * 60),
                         self.perform(&client, &publisher, &health, &job, &stopped, &progress),
                     );
                     tokio::pin!(work);
@@ -78,22 +102,30 @@ impl Repairs {
                         result = &mut work => result,
                         () = async {
                             loop {
-                                tokio::select! { () = cancel.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(1)) => {} }
+                                tokio::select! { () = cancel.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(2)) => {} }
                                 if self.db.par2_cancelled(job.id).await.unwrap_or(false) { break; }
+                                let phase = *progress.phase.lock().unwrap_or_else(PoisonError::into_inner);
+                                let (transferred, stored) = progress.counters(&job);
+                                if let Err(error) = self.db.update_par2_progress(job.id, phase, transferred, stored, now_ms()).await {
+                                    tracing::warn!(job = %job.id, reason = %error, "repair progress could not be saved");
+                                }
                             }
                         } => { stopped.cancel(); work.await },
                     };
                     let (state, reason, retry) = match result {
                         Ok(Ok((state, reason))) => (state, reason.to_owned(), None),
                         other => {
-                            let reason = match other {
+                            let mut reason = match other {
                                 Ok(Err(error)) => error.to_string(),
                                 Err(_) => "repair time limit reached".to_owned(),
                                 Ok(Ok(_)) => unreachable!(),
                             };
                             // Resource/metadata/content failures are terminal; provider/storage failures retry.
-                            let transient =
-                                !reason.starts_with("repair unavailable:") && job.attempts < 3;
+                            let transient = !reason.starts_with("repair unavailable:")
+                                && job.attempts < i32::from(progress.limits.attempts);
+                            if !transient && !reason.starts_with("repair unavailable:") {
+                                reason = format!("Retry limit reached: {reason}");
+                            }
                             tracing::warn!(job = %job.id, reason = %reason, "repair did not finish");
                             (
                                 if transient { 4 } else { 5 },
@@ -102,20 +134,7 @@ impl Repairs {
                             )
                         }
                     };
-                    let transferred = job.transferred_bytes.saturating_add(
-                        i64::try_from(
-                            progress
-                                .watch
-                                .supplied()
-                                .iter()
-                                .map(|s| s.bytes)
-                                .sum::<u64>(),
-                        )
-                        .unwrap_or(i64::MAX),
-                    );
-                    let stored = job.stored_bytes.saturating_add(
-                        i64::try_from(progress.stored.load(Ordering::Relaxed)).unwrap_or(i64::MAX),
-                    );
+                    let (transferred, stored) = progress.counters(&job);
                     let verified = if matches!(state, 2 | 3) {
                         i64::try_from(progress.verified.load(Ordering::Relaxed)).unwrap_or(i64::MAX)
                     } else {
@@ -182,6 +201,12 @@ impl Repairs {
         cancel: &CancellationToken,
         progress: &Progress,
     ) -> Result<(i16, &'static str)> {
+        let capacity = u64::from(progress.limits.storage_gb) * 1_000_000_000;
+        let transfer = u64::from(progress.limits.transfer_gb) * 1_000_000_000;
+        let memory = usize::try_from(progress.limits.memory_mb)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(1_000_000);
+        progress.phase("Checking stored proof");
         let legacy = self
             .db
             .config()
@@ -198,10 +223,12 @@ impl Repairs {
                 "repair unavailable: verification source changed"
             );
             match health
-                .verify_existing_with_probe(
+                .verify_existing_bounded(
                     infinidysk_core::ItemId(id),
                     cancel,
                     Some(progress.probe()),
+                    memory,
+                    transfer,
                 )
                 .await?
             {
@@ -301,12 +328,15 @@ impl Repairs {
         let checking = Arc::clone(&self.lifecycle).lock_owned().await;
         let remaining_storage = tokio::task::spawn_blocking(move || -> Result<u64> {
             let _checking = checking;
-            Ok(CAPACITY.saturating_sub(repairs.store(CAPACITY)?.used_bytes()?))
+            Ok(capacity.saturating_sub(repairs.store(capacity)?.used_bytes()?))
         })
         .await??;
         let stopped = cancel.clone();
         let runtime = tokio::runtime::Handle::current();
         let discovery_context = context.clone();
+        let decoded_bytes = transfer.saturating_sub(progress.transferred());
+        let memory_bytes = memory.saturating_sub(96_000_000);
+        progress.phase("Discovering PAR2 files");
         let (nzb, reader, mut limits) = tokio::task::spawn_blocking(move || -> Result<_> {
             let decoded = blob::decode_nzb_limited(&raw, 16_000_000).context(
                 "repair unavailable: original NZB exceeds its allowance or is unreadable",
@@ -317,8 +347,8 @@ impl Repairs {
             // Covers compressed/XML buffers, parsed NZB strings and the pending stored metadata.
             let limits = Limits {
                 requests: 100_000,
-                decoded_bytes: TRANSFER,
-                memory_bytes: MEMORY - 96_000_000,
+                decoded_bytes,
+                memory_bytes,
                 comparisons: 10_000_000,
                 retained_bytes: remaining_storage,
             };
@@ -337,6 +367,7 @@ impl Repairs {
         let mut repaired = false;
         let mut hash_only = false;
         for set in reader.sets() {
+            progress.phase("Verifying source files and reconstructing damage");
             let result = repair::execute(
                 client,
                 Arc::clone(&nzb),
@@ -362,6 +393,7 @@ impl Repairs {
                     repair::refresh_metadata(metadata, &result.sources, &mut covered);
             }
             if !result.patches.is_empty() {
+                progress.phase("Saving and publishing repaired articles");
                 let staging = Arc::clone(&self.lifecycle).lock_owned().await;
                 let repairs = Arc::clone(self);
                 let stopped = cancel.clone();
@@ -372,7 +404,7 @@ impl Repairs {
                     .sum::<u64>();
                 let receipts = tokio::task::spawn_blocking(move || -> Result<_> {
                     let _staging = staging;
-                    let store = repairs.store(CAPACITY)?;
+                    let store = repairs.store(capacity)?;
                     result
                         .patches
                         .into_iter()

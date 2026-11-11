@@ -199,6 +199,69 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
         assert_eq!(dav.as_ref(), from_mount);
         assert_eq!(<[u8; 32]>::from(Sha256::digest(&from_mount)), expected);
     }
+    let settings = http
+        .get(format!("{base}/api/v1/settings"))
+        .header("X-Api-Key", "fixture-admin")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let mut settings = settings["settings"].clone();
+    settings["repair"]["memory_mb"] = json!(512);
+    settings["repair"]["storage_gb"] = json!(20);
+    let saved = http
+        .put(format!("{base}/api/v1/settings"))
+        .header("X-Api-Key", "fixture-admin")
+        .json(&settings)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(saved["settings"]["repair"]["storage_gb"], 20);
+    assert_eq!(saved["restart_required"], false);
+    assert_eq!(
+        http.post(format!("{base}/api/v1/health/par2-scan?repair=true"))
+            .header("X-Api-Key", "fixture-admin")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::ACCEPTED
+    );
+    let backlog = http
+        .get(format!("{base}/api/v1/health/par2-scan"))
+        .header("X-Api-Key", "fixture-admin")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(backlog["scan"]["repair"], true);
+    assert!(backlog["scan"]["total_files"].as_u64().unwrap() >= 2);
+    assert_eq!(backlog["limits"]["memory_mb"], 512);
+    assert_eq!(backlog["limits"]["storage_gb"], 20);
+    assert!(backlog["storage_used_bytes"].as_u64().unwrap() >= (2 * ARTICLE) as u64);
+    assert!(backlog["jobs"][0]["id"].is_string());
+    assert_eq!(
+        http.delete(format!("{base}/api/v1/health/par2-scan"))
+            .header("X-Api-Key", "fixture-admin")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NO_CONTENT
+    );
     db.close().await;
     let pid = app.id().unwrap().to_string();
     assert!(

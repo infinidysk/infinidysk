@@ -655,6 +655,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/health/par2-jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete_par2_job"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/par2-scan": {
         parameters: {
             query?: never;
@@ -3202,13 +3218,24 @@ export interface components {
             workloads: components["schemas"]["WorkloadView"][];
             writer_error?: string | null;
         };
+        Par2Count: {
+            /** Format: int64 */
+            count: number;
+            /** Format: int32 */
+            state: number;
+        };
         Par2Job: {
             /** Format: int32 */
             attempts: number;
             /** Format: int64 */
             duration_ms: number;
+            file_path?: string | null;
             /** Format: uuid */
             id: string;
+            /** Format: uuid */
+            item_id?: string | null;
+            /** Format: int64 */
+            next_at: number;
             reason: string;
             state: string;
             /** Format: int64 */
@@ -3219,12 +3246,18 @@ export interface components {
             updated_at: number;
             /** Format: int64 */
             verified_bytes: number;
+            verify_only: boolean;
         };
         Par2ScanStatus: {
+            counts: components["schemas"]["Par2Count"][];
             enabled: boolean;
+            jobs: components["schemas"]["Par2Job"][];
+            limits: components["schemas"]["Repair"];
             /** Format: int64 */
             pending_jobs: number;
             scan?: components["schemas"]["Scan"] | null;
+            /** Format: int64 */
+            storage_used_bytes: number;
         };
         Par2Status: {
             enabled: boolean;
@@ -3470,7 +3503,7 @@ export interface components {
             /**
              * Format: uuid
              * @description Stable across edits, so masked secrets can be matched back.
-             * @default 01a1c70b-ad44-757d-a103-7e33d42546df
+             * @default 01a1cbcf-e2ad-741d-818a-199036d98538
              */
             id: string;
             /**
@@ -3834,6 +3867,34 @@ export interface components {
             links: string[];
             path: string;
         };
+        /** @description Per-attempt admission and retained repair storage. Applied at the next attempt. */
+        Repair: {
+            /**
+             * Format: int32
+             * @default 3
+             */
+            attempts: number;
+            /**
+             * Format: int32
+             * @default 256
+             */
+            memory_mb: number;
+            /**
+             * Format: int32
+             * @default 10
+             */
+            storage_gb: number;
+            /**
+             * Format: int32
+             * @default 60
+             */
+            timeout_minutes: number;
+            /**
+             * Format: int32
+             * @default 100
+             */
+            transfer_gb: number;
+        };
         RescueView: {
             /** Format: int64 */
             count: number;
@@ -3972,10 +4033,15 @@ export interface components {
             complete: boolean;
             /** Format: uuid */
             cursor?: string | null;
+            repair?: boolean;
             /** Format: int64 */
             requested_at: number;
             /** Format: int64 */
             scanned_files: number;
+            /** Format: int64 */
+            skipped_files?: number;
+            /** Format: int64 */
+            total_files?: number | null;
         };
         /** @description A file waiting for health work. */
         ScheduledCheck: {
@@ -4133,6 +4199,16 @@ export interface components {
              *     }
              */
             queue: components["schemas"]["Queue"];
+            /**
+             * @default {
+             *       "attempts": 3,
+             *       "memory_mb": 256,
+             *       "storage_gb": 10,
+             *       "timeout_minutes": 60,
+             *       "transfer_gb": 100
+             *     }
+             */
+            repair: components["schemas"]["Repair"];
             /**
              * @default {
              *       "api_key": "",
@@ -5840,6 +5916,33 @@ export interface operations {
             };
         };
     };
+    delete_par2_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     get_par2_scan: {
         parameters: {
             query?: never;
@@ -5869,7 +5972,10 @@ export interface operations {
     };
     post_par2_scan: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Check and repair source sets instead of read-only verification */
+                repair?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;

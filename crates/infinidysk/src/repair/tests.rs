@@ -15,6 +15,24 @@ use super::*;
 const DATA: &[u8] = b"repaired article";
 
 #[tokio::test]
+async fn raising_capacity_reuses_the_store_lease_without_retaining_the_old_limit() {
+    let f = Fixture::new().await;
+    let client = infinidysk_nntp::Client::new(vec![]);
+    let repairs = install(&client, f.db.clone(), f.root.join("capacity"));
+    let small = repairs.store(1).unwrap();
+    assert!(small.write(&f.patch, DATA, || false).is_err());
+    let raised = repairs.store(1_000_000).unwrap();
+    let receipt = raised.write(&f.patch, DATA, || false).unwrap();
+    assert_eq!(raised.read(&f.patch).unwrap().data.as_ref(), DATA);
+    assert!(small.used_bytes().unwrap() > 1);
+    drop(receipt);
+    drop(raised);
+    drop(small);
+    drop(repairs);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs() {
     use infinidysk_nntp::{Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
     use infinidysk_testkit::{LoopbackServer, post};
@@ -99,6 +117,7 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     )
     .await
     .unwrap();
+    let missing_article = a[3].message_id.clone();
     let server = LoopbackServer::start(
         a.into_iter()
             .enumerate()
@@ -174,6 +193,23 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         0
     );
     let repair_job = f.db.claim_par2(i64::MAX).await.unwrap().unwrap();
+    let limited = worker::Progress::new(crate::config::Repair {
+        memory_mb: 128,
+        ..crate::config::Repair::default()
+    });
+    let error = repairs
+        .perform(
+            &client,
+            &publisher,
+            &health,
+            &repair_job,
+            &tokio_util::sync::CancellationToken::new(),
+            &limited,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("memory"), "{error}");
+    assert_eq!(f.db.article_repairs(&missing_article).await.unwrap(), []);
     let (state, reason) = repairs
         .perform(
             &client,
@@ -244,7 +280,92 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
             .as_ref(),
         &data(100_000)[21_000..28_000]
     );
-    drop(publisher);
+    f.db.finish_par2(job.id, state, "", 0, 0, infinidysk_db::now_ms(), None)
+        .await
+        .unwrap();
+    server.stall_article(&file.segments.items[1].id, 1, Duration::from_secs(10));
+    let verification =
+        f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())
+            .await
+            .unwrap()
+            .unwrap();
+    let config = Arc::new(tokio::sync::RwLock::new(
+        crate::config::ConfigStore::load(f.db.clone(), [])
+            .await
+            .unwrap(),
+    ));
+    let stop = tokio_util::sync::CancellationToken::new();
+    let running = tokio::spawn(Arc::clone(&repairs).run(
+        Arc::clone(&client),
+        publisher,
+        Arc::new(health),
+        Arc::clone(&config),
+        stop.clone(),
+    ));
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let current =
+                f.db.par2_result(Owner::Item(item.id), true)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            if current.state == 1
+                && current.reason == "Checking stored proof"
+                && current.transferred_bytes > 0
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("live phase and provider bytes are saved before completion");
+    f.db.cancel_par2(verification, infinidysk_db::now_ms())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if f.db
+                .par2_jobs()
+                .await
+                .unwrap()
+                .iter()
+                .find(|job| job.id == verification)
+                .unwrap()
+                .started_at
+                .is_none()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("cancellation stops the active attempt");
+    let mut settings = config.read().await.settings().clone();
+    settings.repair.memory_mb = 128;
+    config.write().await.save(settings).await.unwrap();
+    f.db.restart_par2(verification, infinidysk_db::now_ms())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let current =
+                f.db.par2_result(Owner::Item(item.id), true)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            if current.state == 5 {
+                assert!(current.reason.contains("memory"), "{}", current.reason);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("saved worker limits apply to the next attempt without restarting");
+    stop.cancel();
+    running.await.unwrap();
     drop(repairs);
     drop(client);
     f.close().await;

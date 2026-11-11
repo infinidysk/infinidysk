@@ -876,6 +876,9 @@ Sign-in, first-run setup and the upgrade-failed screen sit outside the app shell
 - Disable duplicate requests while pending. Offer cancellation with an accurate “Cancellation requested” response; accepted publication may still finish.
 - Health's library verification queues small resumable batches only after explicit confirmation. Stopping enumeration leaves already queued checks visible and cancellable in file details.
 - Reuse existing outline buttons, confirmation dialogs and settings experiments. Actions and status rows wrap on mobile.
+- Settings → PAR2 repair exposes validated worker limits and storage capacity, applied at the next attempt. Keep the page and Health's backlog visible while the experiment is disabled, with an enable-and-restart link.
+- Separate read-only library verification from check-and-repair. Show enumeration progress against its snapshot file count, independently of queued job completion. Never imply that files considered equal files verified.
+- Show storage use against capacity, all pending jobs and the latest twenty results. Each job identifies its file or source set, phase/reason, attempts, retry time, live provider/saved bytes and elapsed time. Allow cancellation from this list. Keep unknown per-job progress indeterminate; do not invent a percentage.
 
 ## Copywriting
 

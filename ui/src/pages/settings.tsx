@@ -60,6 +60,7 @@ import {
 import { ArrInstances } from "./arr";
 import { PerformanceSettings } from "./performance";
 import { Providers } from "./providers";
+import { Par2Scan } from "../par2";
 
 const strategies: { value: Schemas["ImportStrategy"]; title: string; blurb: string }[] = [
   { value: "symlinks", title: "Symlinks", blurb: "Plex, or any media server that sees the mount" },
@@ -125,6 +126,12 @@ const categories = [
     slug: "health",
     title: "Health monitoring",
     description: "Checks that imported files are still complete at your providers, and what happens when they are not",
+  },
+  {
+    group: "Automation",
+    slug: "repair",
+    title: "PAR2 repair",
+    description: "Worker limits, saved repair capacity and checks for an existing dataset",
   },
   {
     group: "Automation",
@@ -1036,6 +1043,82 @@ export function Settings() {
                     checked={draft.health.degraded_tolerance}
                     onChange={(degraded_tolerance) => patch("health", { degraded_tolerance })}
                   />
+                </SettingsPanel>
+              </Section>
+            )}
+
+            {category.slug === "repair" && (
+              <Section category={category}>
+                <SettingsPanel title="Worker limits">
+                  <p className="text-muted-foreground text-sm">
+                    Save changes to apply limits at the next attempt. One repair job runs at a time. The 16 MB
+                    NZB/metadata allowance is included in working memory. Provider retries and transport overhead can
+                    add traffic.
+                  </p>
+                  {(
+                    [
+                      [
+                        "memory_mb",
+                        "Working memory (MB)",
+                        128,
+                        65536,
+                        "Maximum admitted working memory per attempt, including metadata and reconstruction.",
+                      ],
+                      [
+                        "transfer_gb",
+                        "Source reads per attempt (GB)",
+                        1,
+                        100000,
+                        "Decoded source read allowance, including PAR2 data. Repeated passes count again.",
+                      ],
+                      [
+                        "timeout_minutes",
+                        "Time per attempt (minutes)",
+                        1,
+                        10080,
+                        "Stops an attempt when its time limit is reached. Accepted publication may still finish.",
+                      ],
+                      [
+                        "attempts",
+                        "Maximum attempts",
+                        1,
+                        10,
+                        "Transient provider and storage errors retry after one minute, then two, and so on. Content and resource limits stop immediately.",
+                      ],
+                      [
+                        "storage_gb",
+                        "Repair storage capacity (GB)",
+                        1,
+                        100000,
+                        "Saved articles in /config/repairs. Lowering capacity preserves existing bytes and blocks new writes when full. Backups and other config files need additional space.",
+                      ],
+                    ] as const
+                  ).map(([key, title, min, max, hint]) => (
+                    <Field
+                      key={key}
+                      id={`repair-${key}`}
+                      layout="row"
+                      label={label(title, `repair.${key}`)}
+                      hint={hint}
+                      error={invalid(`repair.${key}`)}
+                    >
+                      <Input
+                        id={`repair-${key}`}
+                        type="number"
+                        className="w-28"
+                        min={min}
+                        max={max}
+                        step={1}
+                        required
+                        disabled={locked(`repair.${key}`)}
+                        value={draft.repair[key]}
+                        onChange={(e) => patch("repair", { [key]: Number(e.target.value) })}
+                      />
+                    </Field>
+                  ))}
+                </SettingsPanel>
+                <SettingsPanel title="Existing library and worker status">
+                  <Par2Scan />
                 </SettingsPanel>
               </Section>
             )}

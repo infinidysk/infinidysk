@@ -61,6 +61,7 @@ pub struct Admin {
     pub client: Arc<Client>,
     pub vfs: Arc<Vfs>,
     pub health: Arc<Health>,
+    pub repairs: Arc<crate::repair::Repairs>,
     pub live: Live,
     pub metrics: Arc<Metrics>,
     pub arr: Arc<arr::Discovery>,
@@ -122,6 +123,7 @@ pub struct Admin {
         crate::repair::api::get_par2_scan,
         crate::repair::api::post_par2_scan,
         crate::repair::api::delete_par2_scan,
+        crate::repair::api::delete_par2_job,
         files::post_analyze,
         files::get_nzb,
         files::get_removal,
@@ -290,6 +292,10 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         )
         .route("/api/v1/files/{id}/check", post(files::post_check))
         .route("/api/v1/files/{id}/repair", post(files::post_repair))
+        .route(
+            "/api/v1/health/par2-jobs/{id}",
+            delete(crate::repair::api::delete_par2_job),
+        )
         .route("/api/v1/files/{id}/analyze", post(files::post_analyze))
         .route("/api/v1/files/{id}/nzb", get(files::get_nzb))
         .route("/api/v1/files/{id}/removal", get(files::get_removal))

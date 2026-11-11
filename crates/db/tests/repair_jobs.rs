@@ -33,6 +33,16 @@ async fn durable_requests(db: &Db) {
     assert_eq!(first, duplicate);
     let job = db.claim_par2(12).await.unwrap().unwrap();
     assert_eq!(job.id, first);
+    db.update_par2_progress(first, "Discovering PAR2 files", 40, 0, 13)
+        .await
+        .unwrap();
+    let listed = db.par2_jobs().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].transferred_bytes, listed[0].started_at),
+        (40, Some(12))
+    );
+    assert_eq!(db.par2_counts().await.unwrap(), vec![(1, 1)]);
     assert!(db.claim_par2(12).await.unwrap().is_none());
     db.resume_par2(13).await.unwrap();
     assert_eq!(db.claim_par2(13).await.unwrap().unwrap().id, first);
@@ -51,6 +61,10 @@ async fn durable_requests(db: &Db) {
     db.restart_par2(first, 16).await.unwrap();
     assert_eq!(db.claim_par2(16).await.unwrap().unwrap().id, first);
     db.cancel_par2(first, 17).await.unwrap();
+    db.update_par2_progress(first, "Late progress", 999, 0, 18)
+        .await
+        .unwrap();
+    assert_eq!(db.par2_jobs().await.unwrap()[0].reason, "cancelled");
     db.finish_par2(first, 3, "late completion", 200, 50, 18, None)
         .await
         .unwrap();
@@ -88,6 +102,36 @@ async fn durable_requests(db: &Db) {
     );
     db.cancel_par2(first, 21).await.unwrap();
     assert!(db.blob(nzb).await.unwrap().is_none());
+    let items = (0..25)
+        .map(|n| {
+            let mut item =
+                Item::child(&root, &format!("status-{n}.bin"), ItemKind::NzbFile).unwrap();
+            item.meta_blob = Some(BlobId::new());
+            item
+        })
+        .collect::<Vec<_>>();
+    let blobs = items
+        .iter()
+        .map(|item| (item.meta_blob.unwrap(), b"meta".as_slice()))
+        .collect::<Vec<_>>();
+    db.insert(&items, &blobs).await.unwrap();
+    for (n, item) in items.iter().enumerate() {
+        db.request_par2(Owner::Item(item.id), true, 30)
+            .await
+            .unwrap();
+        if n < 22 {
+            let job = db.claim_par2(31).await.unwrap().unwrap();
+            db.finish_par2(job.id, 2, "", 0, 0, 32, None).await.unwrap();
+        }
+    }
+    let jobs = db.par2_jobs().await.unwrap();
+    assert_eq!(
+        jobs.len(),
+        23,
+        "all three pending jobs and the latest twenty results"
+    );
+    assert_eq!(jobs.iter().filter(|job| job.state == 0).count(), 3);
+    assert!(jobs.iter().all(|job| job.file_path.is_some()));
 }
 
 #[tokio::test]

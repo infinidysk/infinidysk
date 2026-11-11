@@ -10,8 +10,12 @@
     import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
     import { MemoryRouter } from "react-router";
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+    });
     const root = createRoot(document.getElementById("root"));
+    const originalFetch = globalThis.fetch;
+    let submitted = 0;
     const check = (condition, message) => {
       if (!condition) throw new Error(message);
     };
@@ -25,8 +29,12 @@
       updated_at: 1,
     };
     try {
-      const { Par2Actions } = await import("/src/par2.tsx");
-      client.setQueryData(["par2", "file"], { enabled: true, repair: job, verification: null });
+      const { Par2Actions, Par2Scan } = await import("/src/par2.tsx");
+      client.setQueryData(["par2", "file"], {
+        enabled: true,
+        repair: job,
+        verification: null,
+      });
       await act(async () =>
         root.render(
           createElement(
@@ -55,16 +63,102 @@
         "Completion must replace running state",
       );
       await act(async () =>
-        client.setQueryData(["par2", "file"], { enabled: false, repair: null, verification: null }),
+        client.setQueryData(["par2", "file"], {
+          enabled: false,
+          repair: null,
+          verification: null,
+        }),
       );
       check(button("Verify with PAR2")?.disabled, "Disabled execution must disable verification");
       check(document.querySelector('a[href="/settings/experiments"]'), "Explain how to enable PAR2 work");
+      client.setQueryData(["par2-scan"], {
+        enabled: true,
+        pending_jobs: 1,
+        scan: {
+          scanned_files: 16,
+          total_files: 30,
+          complete: false,
+          cancelled: false,
+          repair: true,
+        },
+        jobs: [
+          {
+            ...job,
+            reason: "Discovering PAR2 files",
+            transferred_bytes: 7000,
+            duration_ms: 3000,
+            file_path: "/content/source.bin",
+          },
+        ],
+        counts: [{ state: 1, count: 1 }],
+        storage_used_bytes: 1000000000,
+        limits: {
+          storage_gb: 10,
+          memory_mb: 256,
+          transfer_gb: 100,
+          timeout_minutes: 60,
+          attempts: 3,
+        },
+      });
+      await act(async () =>
+        root.render(
+          createElement(
+            QueryClientProvider,
+            { client },
+            createElement(
+              MemoryRouter,
+              null,
+              createElement(
+                "form",
+                {
+                  onSubmit: (event) => {
+                    event.preventDefault();
+                    submitted++;
+                  },
+                },
+                createElement(Par2Scan),
+              ),
+            ),
+          ),
+        ),
+      );
+      check(button("Check and repair existing library")?.disabled, "An active backlog must prevent duplicate scans");
+      check(
+        document.querySelector('progress[aria-label="Library enumeration"]')?.value === 16,
+        "Show enumeration progress separately from completed checks",
+      );
+      check(document.body.textContent.includes("Discovering PAR2 files"), "Show live worker phase");
+      check(document.body.textContent.includes("source.bin"), "Identify queued files");
+      check(document.body.textContent.includes("1.0 GB of 10.0 GB"), "Show storage use and capacity");
+      check(button("Cancel job"), "Allow cancellation from the backlog");
+      globalThis.fetch = async (request) =>
+        request.method === "DELETE"
+          ? new Response(null, { status: 204 })
+          : new Response(JSON.stringify(client.getQueryData(["par2-scan"])), {
+              headers: { "Content-Type": "application/json" },
+            });
+      await act(async () => button("Cancel job").click());
+      check(submitted === 0, "Cancelling a job must not save the settings form");
+      await act(async () => button("Stop adding files").click());
+      check(submitted === 0, "Stopping enumeration must not save the settings form");
+      await act(async () =>
+        client.setQueryData(["par2-scan"], {
+          ...client.getQueryData(["par2-scan"]),
+          enabled: false,
+        }),
+      );
+      check(
+        button("Check and repair existing library")?.disabled,
+        "Disabled experiment must disable backlog admission",
+      );
+      check(document.querySelector('a[href="/settings/experiments"]'), "Keep disabled backlog discoverable");
       document.getElementById("result").textContent = "PASS";
     } catch (error) {
       document.getElementById("result").textContent = `FAIL: ${error.message}`;
     } finally {
       await act(async () => root.unmount());
       client.clear();
+      globalThis.fetch = originalFetch;
       delete globalThis.IS_REACT_ACT_ENVIRONMENT;
     }
   </script>

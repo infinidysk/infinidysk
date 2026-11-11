@@ -57,6 +57,17 @@ fn same_body(a: &Patch, b: &Patch) -> bool {
 }
 
 impl Repairs {
+    pub async fn used_bytes(self: &Arc<Self>) -> anyhow::Result<u64> {
+        let repairs = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            if !repairs.path.try_exists()? {
+                return Ok(0);
+            }
+            Ok(repairs.store(u64::MAX)?.used_bytes()?)
+        })
+        .await?
+    }
+
     /// Blocking: obtain a writer without opening a second directory lease.
     pub fn store(&self, capacity: u64) -> Result<Store, infinidysk_nntp::patch::Error> {
         let mut opened = self
@@ -64,7 +75,8 @@ impl Repairs {
             .lock()
             .map_err(|_| infinidysk_nntp::patch::Error::Recovery)?;
         if opened.is_none() {
-            *opened = Some(Store::open(&self.path, capacity)?);
+            // Writers receive a per-attempt quota; keep the shared lease free of stale limits.
+            *opened = Some(Store::open(&self.path, u64::MAX)?);
         }
         opened.as_ref().expect("opened above").limited(capacity)
     }

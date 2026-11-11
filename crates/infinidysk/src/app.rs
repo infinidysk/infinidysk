@@ -634,6 +634,7 @@ pub async fn serve(
             Arc::clone(&client),
             publisher,
             Arc::clone(&health),
+            Arc::clone(&config),
             cancel.clone(),
         )))
     } else {
@@ -706,6 +707,7 @@ pub async fn serve(
         client,
         vfs,
         health,
+        repairs,
         live,
         metrics,
         arr: discovery,
