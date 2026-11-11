@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["vendor/fuse3"]
+
+[patch.crates-io]
+# Keep checked kernel invalidation local until upstream exposes its write result.
+fuse3 = { path = "vendor/fuse3" }
 
 [workspace.package]
 # ponytail: crate versions stay 0.0.0; release-please owns the product version in version.txt.
