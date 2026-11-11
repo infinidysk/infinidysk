@@ -104,9 +104,11 @@ impl Health {
         let concurrency = if (self.streaming)() {
             CONCURRENCY_STREAMING
         } else {
-            CONCURRENCY_IDLE
+            self.client
+                .free_permits()
+                .unwrap_or(CONCURRENCY_IDLE)
+                .max(1)
         }
-        .min(4)
         .min(admitted); // Full verification can retain a maximum-sized article per request.
         let client = Arc::clone(&self.client);
         let stopped = cancel.clone();

@@ -23,7 +23,13 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const ARTICLE: usize = 512 * KIB;
 const LOST: usize = 16;
-const MODES: [&str; 4] = ["par2-idle", "par2-active", "par2-cancelled", "par2-failing"];
+const MODES: [&str; 5] = [
+    "par2-idle",
+    "par2-active",
+    "par2-cancelled",
+    "par2-failing",
+    "par2-verify",
+];
 const LIMITS: repair::Limits = repair::Limits {
     requests: 10_000,
     decoded_bytes: 1_000_000_000,
@@ -101,7 +107,7 @@ impl Fixture {
                     i + 1,
                     article.message_id
                 )?;
-                if name != "source.bin" || i != LOST {
+                if mode == "par2-verify" || name != "source.bin" || i != LOST {
                     posted.push(article);
                 }
             }
@@ -124,7 +130,7 @@ pub(super) fn run(
     let fixture = Fixture::generate(&root.0)?;
     let scenario = super::Scenario {
         impairment: Impairment {
-            response_delay: Duration::from_millis(3),
+            response_delay: Duration::from_millis(if filter == "par2-verify" { 20 } else { 3 }),
             ..super::PLAIN
         },
         ..plain("par2", 128, ARTICLE, 8, 4, 32, None)
@@ -148,6 +154,23 @@ pub(super) fn run(
                 let permits = client.free_permits();
                 let cpu = usage::cpu();
                 let stop = CancellationToken::new();
+                if mode == "par2-verify" {
+                    let started = Instant::now();
+                    let result = execute(Arc::clone(&client), Arc::clone(&nzb), &stop, true).await?;
+                    assert_eq!(result.verified_bytes, fixture.bytes.len() as u64);
+                    assert_eq!(result.patches.len(), 0);
+                    let seconds = started.elapsed().as_secs_f64();
+                    let provider_bytes = client.stats()[0].workloads[Workload::Health as usize].bytes;
+                    return Ok(json!({
+                        "verificationMs": seconds * 1000.0,
+                        "verifiedMbPerS": result.verified_bytes as f64 / seconds / 1e6,
+                        "providerBytes": provider_bytes,
+                        "sourcePassEquivalent": provider_bytes as f64 / fixture.bytes.len() as f64,
+                        "verifiedBytes": result.verified_bytes,
+                        "cpuMs": usage::cpu_ms_since(cpu), "maxRssBytes": usage::max_rss_bytes(),
+                        "permitsRestored": client.free_permits() == permits,
+                    }));
+                }
                 let store = root.0.join("repairs");
                 let repair = (mode != "par2-idle").then(|| {
                     let client = Arc::clone(&client);
@@ -156,7 +179,7 @@ pub(super) fn run(
                     let store = store.clone();
                     tokio::spawn(async move {
                         let started = Instant::now();
-                        let outcome = execute(client, nzb, &stop).await;
+                        let outcome = execute(client, nzb, &stop, false).await;
                         (outcome, started.elapsed(), store)
                     })
                 });
@@ -231,6 +254,7 @@ async fn execute(
     client: Arc<Client>,
     nzb: Arc<nzb::Nzb>,
     cancel: &CancellationToken,
+    verify_only: bool,
 ) -> std::result::Result<repair::Execution, repair::Error> {
     let runtime = Handle::current();
     let (reader, limits, _) = tokio::task::spawn_blocking({
@@ -247,7 +271,7 @@ async fn execute(
         Arc::new(reader),
         set,
         limits,
-        false,
+        verify_only,
         repair::Context::default(),
         cancel,
     )

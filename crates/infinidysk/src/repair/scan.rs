@@ -64,9 +64,10 @@ pub async fn step(db: &Db) -> Result<()> {
         scan.complete = true;
     }
     for id in files {
-        let now = infinidysk_db::now_ms();
         let verify = !scan.repair;
-        let request = db.request_par2(Owner::Item(id), verify, now).await?;
+        let request = db
+            .request_par2(Owner::Item(id), verify, scan.requested_at)
+            .await?;
         if request.is_none() {
             scan.skipped_files += 1;
         }
@@ -78,7 +79,7 @@ pub async fn step(db: &Db) -> Result<()> {
                     job.updated_at < scan.requested_at && matches!(job.state, 2 | 3 | 5 | 6)
                 })
         {
-            db.restart_par2(request, now).await?;
+            db.restart_par2(request, scan.requested_at).await?;
         }
         scan.cursor = Some(id);
         scan.scanned_files += 1;

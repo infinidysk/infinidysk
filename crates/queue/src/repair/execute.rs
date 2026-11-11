@@ -1,6 +1,6 @@
 //! Bounded streaming passes over complete protected sources; never uses playback filler.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, LazyLock};
 
 use infinidysk_core::{
@@ -82,6 +82,34 @@ async fn run(
     };
     let (layouts, mut budget) = resolve_budget(client, nzb, &set, limits, context, cancel).await?;
     budget.cancel = cancel.clone();
+    if layouts.iter().all(|layout| layout.verified) && budget.legacy_ids.is_empty() {
+        for source in set
+            .sources()
+            .iter()
+            .filter(|source| source.file.length == 0)
+        {
+            Verifier::new(
+                0,
+                source.file.hash,
+                set.slice_size() as u64,
+                &source.file.slices,
+            )?
+            .finish(|| cancel.is_cancelled())?;
+        }
+        let sources = layouts
+            .iter()
+            .map(|layout| VerifiedSource::new(&set, layout))
+            .collect::<Result<Vec<_>, _>>()?;
+        let verified_bytes = set.sources().iter().map(|source| source.file.length).sum();
+        budget.limits.memory_bytes = limits.memory_bytes;
+        return Ok(Execution {
+            patches: Vec::new(),
+            verified_bytes,
+            transferred_bytes: budget.network_bytes,
+            remaining: budget.limits,
+            sources,
+        });
+    }
     let cached_article = layouts
         .iter()
         .flat_map(super::Layout::articles)
@@ -102,32 +130,57 @@ async fn run(
             .checked_mul(32)
             .ok_or(Error::Limit("slice metadata"))?,
     )?;
+    let mut fetching = Fetch {
+        width: 1,
+        source: usize::MAX,
+        ready: VecDeque::new(),
+    };
     let mut missing = Vec::new();
     let mut damaged = BTreeSet::new();
     let mut cached = None;
     for index in 0..set.inputs().len() {
-        match slice(client, &set, &layouts, index, &mut budget, &mut cached).await? {
-            Some(bytes)
-                if set.inputs()[index]
+        let (source, _) = set
+            .source(index)
+            .ok_or(Error::Unavailable("source slice"))?;
+        let layout = layouts
+            .iter()
+            .find(|layout| layout.source() == source)
+            .ok_or(Error::Unavailable("source layout"))?;
+        let local = index - set.sources()[source].slices.start;
+        if !layout.checked.get(local).copied().unwrap_or(false) {
+            // Missing posted ranges may already have a committed local replacement.
+            if slice(
+                client,
+                &set,
+                &layouts,
+                index,
+                &mut budget,
+                &mut cached,
+                &mut fetching,
+            )
+            .await?
+            .is_some_and(|bytes| {
+                set.inputs()[index]
                     .checksum
-                    .matches(set.slice_size() as u64, &bytes) => {}
-            _ => {
-                missing.push(index);
-                let (source, _) = set
-                    .source(index)
-                    .ok_or(Error::Unavailable("source slice"))?;
-                let layout = layouts
-                    .iter()
-                    .find(|l| l.source() == source)
-                    .ok_or(Error::Unavailable("source layout"))?;
-                let spans = layout.spans(&set, index)?;
-                let known = spans
-                    .iter()
-                    .any(|(article, _)| layout.articles()[*article].damage.is_some());
-                for (article, _) in spans {
-                    if !known || layout.articles()[article].damage.is_some() {
-                        damaged.insert((source, article));
-                    }
+                    .matches(set.slice_size() as u64, &bytes)
+            }) {
+                continue;
+            }
+            missing.push(index);
+            let (source, _) = set
+                .source(index)
+                .ok_or(Error::Unavailable("source slice"))?;
+            let layout = layouts
+                .iter()
+                .find(|l| l.source() == source)
+                .ok_or(Error::Unavailable("source layout"))?;
+            let spans = layout.spans(&set, index)?;
+            let known = spans
+                .iter()
+                .any(|(article, _)| layout.articles()[*article].damage.is_some());
+            for (article, _) in spans {
+                if !known || layout.articles()[article].damage.is_some() {
+                    damaged.insert((source, article));
                 }
             }
         }
@@ -200,7 +253,9 @@ async fn run(
         ));
     }
     let mut recovered = Vec::new();
-    if !missing.is_empty() {
+    if missing.is_empty() {
+        fetching.width = budget.admit_reads(client, 0)?;
+    } else {
         let supplemental;
         let rows;
         let recovery = if set.recovery().len() < missing.len() {
@@ -224,13 +279,23 @@ async fn run(
             budget.limits.memory_bytes,
             || cancel.is_cancelled(),
         )?;
+        budget.metadata(solver.workspace_bytes())?;
+        fetching.width = budget.admit_reads(client, 0)?;
         for index in 0..set.inputs().len() {
             if missing.binary_search(&index).is_ok() {
                 continue;
             }
-            let bytes = slice(client, &set, &layouts, index, &mut budget, &mut cached)
-                .await?
-                .ok_or(Error::Changed("another article became unavailable"))?;
+            let bytes = slice(
+                client,
+                &set,
+                &layouts,
+                index,
+                &mut budget,
+                &mut cached,
+                &mut fetching,
+            )
+            .await?
+            .ok_or(Error::Changed("another article became unavailable"))?;
             solver
                 .feed(index, &bytes, || cancel.is_cancelled())
                 .map_err(|error| {
@@ -258,7 +323,8 @@ async fn run(
                 .find(|layout| layout.file_id() == file.id)
                 .ok_or(Error::Unavailable("source layout"))?;
             for position in 0..layout.articles().len() {
-                let body = fetch_article(client, &set, layout, position, &mut budget)
+                let body = fetching
+                    .body(client, &set, layout, position, &mut budget)
                     .await?
                     .ok_or(Error::Unavailable(
                         "complete source verification could not read an article",
@@ -277,11 +343,19 @@ async fn run(
             let bytes = if let Some(repaired) = recovered.iter().find(|r| r.index == index) {
                 &repaired.data
             } else {
-                fresh = slice(client, &set, &layouts, index, &mut budget, &mut cached)
-                    .await?
-                    .ok_or(Error::Changed(
-                        "an article disappeared during final verification",
-                    ))?;
+                fresh = slice(
+                    client,
+                    &set,
+                    &layouts,
+                    index,
+                    &mut budget,
+                    &mut cached,
+                    &mut fetching,
+                )
+                .await?
+                .ok_or(Error::Changed(
+                    "an article disappeared during final verification",
+                ))?;
                 &fresh
             };
             verifier.push(bytes, || cancel.is_cancelled())?;
@@ -340,6 +414,7 @@ async fn slice(
     index: usize,
     budget: &mut Budget,
     cached: &mut Option<(usize, usize, Body)>,
+    fetching: &mut Fetch,
 ) -> Result<Option<Vec<u8>>, Error> {
     let (source, _) = set
         .source(index)
@@ -356,7 +431,7 @@ async fn slice(
             .as_ref()
             .is_none_or(|(file, part, _)| *file != source || *part != position)
         {
-            let Some(body) = fetch_article(client, set, layout, position, budget).await? else {
+            let Some(body) = fetching.body(client, set, layout, position, budget).await? else {
                 return Ok(None);
             };
             *cached = Some((source, position, body));
@@ -365,6 +440,72 @@ async fn slice(
         data.extend_from_slice(&body.data[range]);
     }
     Ok(Some(data))
+}
+
+struct Fetch {
+    width: usize,
+    source: usize,
+    ready: VecDeque<(usize, Option<Body>)>,
+}
+
+impl Fetch {
+    async fn body(
+        &mut self,
+        client: &Client,
+        set: &RepairSet<'_>,
+        layout: &Layout,
+        position: usize,
+        budget: &mut Budget,
+    ) -> Result<Option<Body>, Error> {
+        budget.check()?;
+        if self.source == layout.source() {
+            while self.ready.front().is_some_and(|(next, _)| *next < position) {
+                self.ready.pop_front();
+            }
+        }
+        if self.source != layout.source()
+            || self.ready.front().is_none_or(|(next, _)| *next != position)
+        {
+            self.ready.clear();
+            self.source = layout.source();
+            let end = (position + self.width).min(layout.articles().len());
+            let ids = layout.articles()[position..end]
+                .iter()
+                .filter_map(|article| article.id.as_deref())
+                .collect::<Vec<_>>();
+            let mut bodies = budget.bodies(client, &ids).await?.into_iter();
+            for index in position..end {
+                let article = &layout.articles()[index];
+                let body = if article.id.is_some() {
+                    match bodies.next().expect("one result per requested article") {
+                        Ok(body) => Some(body),
+                        Err(Error::Source(
+                            ReadError::NotFound
+                            | ReadError::Yenc(_)
+                            | ReadError::CrcMismatch { .. }
+                            | ReadError::TooLarge,
+                        )) => None,
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    fetch_article(client, set, layout, index, budget).await?
+                };
+                if body.as_ref().is_some_and(|body| {
+                    body.offset != article.range.start
+                        || body.data.len() as u64 != article.range.end - article.range.start
+                        || body.file_size != set.sources()[layout.source()].file.length
+                }) {
+                    return Err(Error::Changed("article layout changed"));
+                }
+                self.ready.push_back((index, body));
+            }
+        }
+        Ok(self
+            .ready
+            .pop_front()
+            .expect("requested article queued above")
+            .1)
+    }
 }
 
 async fn fetch_article(

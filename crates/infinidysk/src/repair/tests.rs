@@ -15,6 +15,70 @@ use super::*;
 const DATA: &[u8] = b"repaired article";
 
 #[tokio::test]
+async fn ready_jobs_do_not_wait_for_the_idle_poll_between_attempts() {
+    use tokio::sync::watch;
+    let f = Fixture::new().await;
+    let client = Arc::new(infinidysk_nntp::Client::new([]));
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    let vfs = Arc::new(infinidysk_vfs::Vfs::new(
+        f.db.clone(),
+        Arc::clone(&client),
+        infinidysk_stream::Budget::new(1_000_000),
+        0,
+        "/mnt",
+    ));
+    let publisher = Publisher::new(Arc::clone(&repairs), vfs).unwrap();
+    let (_arr_tx, arr) = watch::channel(vec![]);
+    let (_health_tx, settings) = watch::channel(infinidysk_health::Settings::default());
+    let health = Arc::new(
+        infinidysk_health::Health::new(f.db.clone(), client.clone(), arr, settings).unwrap(),
+    );
+    let parent = f.db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    for n in 0..2 {
+        let mut item =
+            Item::child(&parent, &format!("pending-{n}.bin"), ItemKind::NzbFile).unwrap();
+        let meta = BlobId::new();
+        item.meta_blob = Some(meta);
+        let data = blob::encode_meta(&FileMeta::Nzb(infinidysk_core::NzbFile {
+            segments: Segments {
+                items: vec![],
+                sizes_trusted: true,
+                missing: vec![],
+                corrupt: vec![],
+            },
+            proof: None,
+        }))
+        .unwrap();
+        f.db.insert(&[item.clone()], &[(meta, &data)])
+            .await
+            .unwrap();
+        f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())
+            .await
+            .unwrap();
+    }
+    let config = Arc::new(tokio::sync::RwLock::new(
+        crate::config::ConfigStore::load(f.db.clone(), [])
+            .await
+            .unwrap(),
+    ));
+    let stop = tokio_util::sync::CancellationToken::new();
+    let task = tokio::spawn(repairs.run(client, publisher, health, config, stop.clone()));
+    let drained = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while f.db.par2_pending().await.unwrap() != 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    stop.cancel();
+    task.await.unwrap();
+    assert!(
+        drained.is_ok(),
+        "queued work should start immediately after the previous job finishes"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
 async fn raising_capacity_reuses_the_store_lease_without_retaining_the_old_limit() {
     let f = Fixture::new().await;
     let client = infinidysk_nntp::Client::new(vec![]);
@@ -246,6 +310,17 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         .unwrap()
         .unwrap();
     let job = f.db.claim_par2(1).await.unwrap().unwrap();
+    let mut sibling = Item::child(&parent, "same-source.bin", ItemKind::NzbFile).unwrap();
+    let sibling_meta = BlobId::new();
+    sibling.nzb_blob = Some(nzb);
+    sibling.meta_blob = Some(sibling_meta);
+    sibling.size = item.size;
+    f.db.insert(&[sibling.clone()], &[(sibling_meta, &metadata)])
+        .await
+        .unwrap();
+    f.db.request_par2(Owner::Item(sibling.id), true, infinidysk_db::now_ms() - 1)
+        .await
+        .unwrap();
     let (state, _) = repairs
         .perform(
             &client,
@@ -283,6 +358,80 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     f.db.finish_par2(job.id, state, "", 0, 0, infinidysk_db::now_ms(), None)
         .await
         .unwrap();
+    let other_owner =
+        f.db.par2_owner(BlobId(repair_job.nzb_blob.unwrap()))
+            .await
+            .unwrap()
+            .unwrap();
+    let other =
+        f.db.request_par2(other_owner, false, 0)
+            .await
+            .unwrap()
+            .unwrap();
+    f.db.restart_par2(other, 0).await.unwrap();
+    let interleaved =
+        f.db.claim_par2(infinidysk_db::now_ms())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(interleaved.id, other);
+    let (state, reason) = repairs
+        .perform(
+            &client,
+            &publisher,
+            &health,
+            &interleaved,
+            &tokio_util::sync::CancellationToken::new(),
+            &worker::Progress::default(),
+        )
+        .await
+        .unwrap();
+    f.db.finish_par2(
+        interleaved.id,
+        state,
+        reason,
+        0,
+        0,
+        infinidysk_db::now_ms(),
+        None,
+    )
+    .await
+    .unwrap();
+    let alias_job =
+        f.db.claim_par2(infinidysk_db::now_ms())
+            .await
+            .unwrap()
+            .unwrap();
+    let before = server.body_commands();
+    let (state, reason) = repairs
+        .perform(
+            &client,
+            &publisher,
+            &health,
+            &alias_job,
+            &tokio_util::sync::CancellationToken::new(),
+            &worker::Progress::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(state, 2);
+    assert!(reason.contains("already checked"), "{reason}");
+    assert_eq!(
+        server.body_commands(),
+        before,
+        "a queued sibling must share the complete source check"
+    );
+    f.db.finish_par2(
+        alias_job.id,
+        state,
+        reason,
+        0,
+        0,
+        infinidysk_db::now_ms(),
+        None,
+    )
+    .await
+    .unwrap();
     server.stall_article(&file.segments.items[1].id, 1, Duration::from_secs(10));
     let verification =
         f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())

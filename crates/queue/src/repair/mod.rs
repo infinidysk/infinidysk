@@ -125,8 +125,9 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock};
 
+use futures_util::{StreamExt as _, stream};
 use infinidysk_nntp::{Body, Client, MAX_DECODED_LEN, Workload};
-use infinidysk_par2::{File, Id, RepairSet};
+use infinidysk_par2::{File, Id, RepairSet, Verifier};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
@@ -205,6 +206,8 @@ pub struct Layout {
     set_id: Id,
     file_id: Id,
     articles: Vec<Article>,
+    verified: bool,
+    checked: Vec<bool>,
 }
 
 impl Layout {
@@ -243,18 +246,36 @@ impl Layout {
                 "slice does not belong to this protected source",
             ));
         }
-        let mut lengths = Vec::new();
-        lengths
-            .try_reserve_exact(self.articles.len())
-            .map_err(|_| Error::Allocation)?;
-        for article in &self.articles {
-            lengths.push(
-                u32::try_from(article.range.end - article.range.start)
-                    .expect("validated articles fit MAX_DECODED_LEN"),
-            );
+        let (_, range) = set
+            .source(index)
+            .ok_or(Error::Unavailable("source slice"))?;
+        let first = self
+            .articles
+            .partition_point(|article| article.range.end <= range.start);
+        let mut spans = Vec::new();
+        let mut covered = range.start;
+        for (position, article) in self.articles.iter().enumerate().skip(first) {
+            if article.range.start >= range.end {
+                break;
+            }
+            let start = article.range.start.max(range.start);
+            let end = article.range.end.min(range.end);
+            if start != covered {
+                return Err(Error::Unavailable("inconsistent source layout"));
+            }
+            spans.push((
+                position,
+                usize::try_from(start - article.range.start)
+                    .map_err(|_| Error::Limit("article range"))?
+                    ..usize::try_from(end - article.range.start)
+                        .map_err(|_| Error::Limit("article range"))?,
+            ));
+            covered = end;
         }
-        set.articles(index, &lengths)
-            .map_err(|_| Error::Unavailable("inconsistent source layout"))
+        if covered != range.end {
+            return Err(Error::Unavailable("inconsistent source layout"));
+        }
+        Ok(spans)
     }
 }
 
@@ -322,6 +343,84 @@ struct Budget {
 }
 
 impl Budget {
+    fn admit_reads(&mut self, client: &Client, scratch: usize) -> Result<usize, Error> {
+        // Snapshot already admits one maximum-sized body. Additional responses stay bounded.
+        let width = (self.limits.memory_bytes.saturating_sub(scratch) / MAX_DECODED_LEN + 1)
+            .min(client.free_permits().unwrap_or(16).max(1))
+            .min(self.limits.requests.max(1))
+            .min(
+                usize::try_from(self.limits.decoded_bytes / MAX_DECODED_LEN as u64)
+                    .unwrap_or(usize::MAX)
+                    .max(1),
+            );
+        self.metadata((width - 1) * MAX_DECODED_LEN)?;
+        Ok(width)
+    }
+
+    async fn bodies(
+        &mut self,
+        client: &Client,
+        ids: &[&str],
+    ) -> Result<Vec<Result<Body, Error>>, Error> {
+        self.check()?;
+        let mut output = Vec::new();
+        let mut at = 0;
+        while at < ids.len() {
+            let width = (ids.len() - at).min(self.limits.requests.max(1)).min(
+                usize::try_from(self.limits.decoded_bytes / MAX_DECODED_LEN as u64)
+                    .unwrap_or(usize::MAX)
+                    .max(1),
+            );
+            let chunk = &ids[at..at + width];
+            let results = stream::iter(chunk.iter().map(|id| {
+                let mut read = Self {
+                    limits: Limits {
+                        requests: self.limits.requests.min(1),
+                        decoded_bytes: self.limits.decoded_bytes.min(MAX_DECODED_LEN as u64),
+                        ..self.limits
+                    },
+                    scratch: 0,
+                    cancel: self.cancel.clone(),
+                    network_bytes: 0,
+                    source: self.source,
+                    candidates: self.candidates.clone(),
+                    probe: self.probe.clone(),
+                    legacy_ids: std::collections::BTreeSet::new(),
+                };
+                async move {
+                    let limits = read.limits;
+                    let result = read.body(client, id).await;
+                    (result, read, limits)
+                }
+            }))
+            .buffered(chunk.len())
+            .collect::<Vec<_>>()
+            .await;
+            for (result, read, limits) in results {
+                self.limits.requests = self
+                    .limits
+                    .requests
+                    .checked_sub(limits.requests - read.limits.requests)
+                    .ok_or(Error::Limit("request"))?;
+                self.limits.decoded_bytes = self
+                    .limits
+                    .decoded_bytes
+                    .checked_sub(limits.decoded_bytes - read.limits.decoded_bytes)
+                    .ok_or(Error::Limit("decoded byte"))?;
+                self.network_bytes += read.network_bytes;
+                for id in read.legacy_ids {
+                    if !self.legacy_ids.contains(&id) {
+                        self.metadata(id.len() + 128)?;
+                        self.legacy_ids.insert(id);
+                    }
+                }
+                output.push(result);
+            }
+            at += width;
+        }
+        Ok(output)
+    }
+
     fn check(&self) -> Result<(), Error> {
         if self.cancel.is_cancelled() {
             Err(Error::Cancelled)
@@ -498,7 +597,8 @@ async fn run(
         budget.scratch(0)?;
         budget.limits.memory_bytes = memory;
         match result {
-            Ok(Some((source, articles))) => {
+            Ok(Some((source, articles, verified, checked))) => {
+                budget.metadata(checked.len())?;
                 budget.metadata(
                     articles
                         .len()
@@ -516,6 +616,8 @@ async fn run(
                     set_id,
                     file_id: sources[source].id,
                     articles,
+                    verified,
+                    checked,
                 });
             }
             Ok(None) => {}
@@ -539,34 +641,104 @@ async fn observe(
     sources: &[File],
     size: usize,
     budget: &mut Budget,
-) -> Result<Option<(usize, Vec<Article>)>, Error> {
+) -> Result<Option<(usize, Vec<Article>, bool, Vec<bool>)>, Error> {
     let mut slots = Slots::new(file, budget)?;
-    let mut identity = Identity::new(sources, size);
-    for i in 0..slots.len() {
-        let Some(id) = slots.id(i) else {
-            continue;
-        };
-        match budget.body(client, id).await {
-            Ok(body) => {
-                slots.observe(i, &body, budget)?;
-                if !sources.iter().any(|source| source.length == body.file_size) {
-                    return Ok(None);
+    let mut identity = Identity::new(sources, size, budget)?;
+    let width = budget.admit_reads(client, size)?;
+    budget.metadata(PREFIX)?;
+    let mut prefix = Vec::new();
+    let mut verifier = None;
+    let mut intact = true;
+    let mut offset = 0;
+    let mut at = 0;
+    while at < slots.len() {
+        let end = (at + width).min(slots.len());
+        let ids = (at..end).filter_map(|i| slots.id(i)).collect::<Vec<_>>();
+        let results = budget.bodies(client, &ids).await?;
+        let mut results = results.into_iter();
+        for i in at..end {
+            if slots.id(i).is_none() {
+                intact = false;
+                verifier = None;
+                prefix.clear();
+                continue;
+            }
+            match results.next().expect("one result per requested article") {
+                Ok(body) => {
+                    slots.observe(i, &body, budget)?;
+                    if !sources.iter().any(|source| source.length == body.file_size) {
+                        return Ok(None);
+                    }
+                    identity.feed(&body, budget)?;
+                    if body.offset != offset {
+                        intact = false;
+                        verifier = None;
+                        prefix.clear();
+                    }
+                    if intact {
+                        if verifier.is_none()
+                            && let Some(source) = identity.proven()
+                        {
+                            let file = &sources[source];
+                            let mut check =
+                                Verifier::new(file.length, file.hash, size as u64, &[])?;
+                            if check
+                                .push(&prefix, || budget.cancel.is_cancelled())
+                                .is_err()
+                            {
+                                intact = false;
+                            }
+                            prefix.clear();
+                            verifier = Some(check);
+                        }
+                        if let Some(check) = &mut verifier {
+                            if check
+                                .push(&body.data, || budget.cancel.is_cancelled())
+                                .is_err()
+                            {
+                                intact = false;
+                                verifier = None;
+                            }
+                        } else if prefix.len() + body.data.len() < PREFIX {
+                            prefix.extend_from_slice(&body.data);
+                        } else {
+                            intact = false;
+                            prefix.clear();
+                        }
+                    }
+                    offset = body.offset + body.data.len() as u64;
                 }
-                identity.feed(&body, budget)?;
+                Err(Error::Source(infinidysk_nntp::Error::NotFound)) => {
+                    slots.damage(i, Damage::Missing);
+                    intact = false;
+                    verifier = None;
+                    prefix.clear();
+                }
+                Err(Error::Source(
+                    infinidysk_nntp::Error::Yenc(_)
+                    | infinidysk_nntp::Error::CrcMismatch { .. }
+                    | infinidysk_nntp::Error::TooLarge,
+                )) => {
+                    slots.damage(i, Damage::Corrupt);
+                    intact = false;
+                    verifier = None;
+                    prefix.clear();
+                }
+                Err(error) => return Err(error),
             }
-            Err(Error::Source(infinidysk_nntp::Error::NotFound)) => {
-                slots.damage(i, Damage::Missing);
-            }
-            Err(Error::Source(
-                infinidysk_nntp::Error::Yenc(_)
-                | infinidysk_nntp::Error::CrcMismatch { .. }
-                | infinidysk_nntp::Error::TooLarge,
-            )) => slots.damage(i, Damage::Corrupt),
-            Err(error) => return Err(error),
         }
+        at = end;
     }
-    let Some(source) = identity.finish()? else {
+    let Some((source, checked)) = identity.finish()? else {
         return Ok(None);
     };
-    Ok(Some((source, slots.finish(sources[source].length)?)))
+    let verified = verifier
+        .is_some_and(|verifier| intact && verifier.finish(|| budget.cancel.is_cancelled()).is_ok());
+    budget.check()?;
+    Ok(Some((
+        source,
+        slots.finish(sources[source].length)?,
+        verified && checked.iter().all(|checked| *checked),
+        checked,
+    )))
 }

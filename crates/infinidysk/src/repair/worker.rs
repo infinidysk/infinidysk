@@ -20,6 +20,14 @@ use super::{Publisher, Repairs};
 const HASH_ONLY: &str =
     "Whole-file hashes matched. Some files have no slice checksums for locating damage.";
 
+pub(super) struct Checked {
+    nzb: BlobId,
+    generation: i64,
+    completed_at: i64,
+    bytes: usize,
+    sources: Box<[repair::VerifiedSource]>,
+}
+
 #[derive(Default)]
 pub(super) struct Progress {
     limits: crate::config::Repair,
@@ -104,6 +112,9 @@ impl Repairs {
                             loop {
                                 tokio::select! { () = cancel.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(2)) => {} }
                                 if self.db.par2_cancelled(job.id).await.unwrap_or(false) { break; }
+                                if let Err(error) = super::scan::step(&self.db).await {
+                                    tracing::warn!(reason = %error, "library verification scan will retry later");
+                                }
                                 let phase = *progress.phase.lock().unwrap_or_else(PoisonError::into_inner);
                                 let (transferred, stored) = progress.counters(&job);
                                 if let Err(error) = self.db.update_par2_progress(job.id, phase, transferred, stored, now_ms()).await {
@@ -164,6 +175,7 @@ impl Repairs {
                         }
                         tokio::select! { () = cancel.cancelled() => return, () = tokio::time::sleep(Duration::from_secs(5)) => {} }
                     }
+                    continue;
                 }
                 Ok(None) => {
                     let full_pass = super::scan::load(&self.db)
@@ -203,9 +215,25 @@ impl Repairs {
     ) -> Result<(i16, &'static str)> {
         let capacity = u64::from(progress.limits.storage_gb) * 1_000_000_000;
         let transfer = u64::from(progress.limits.transfer_gb) * 1_000_000_000;
+        let (checked, held_bytes) = {
+            let mut recent = self.checked.lock().unwrap_or_else(PoisonError::into_inner);
+            let held = recent.iter().map(|entry| entry.bytes).sum::<usize>();
+            let matched = recent.iter().position(|entry| {
+                job.nzb_blob == Some(entry.nzb.0)
+                    && job.generation == entry.generation
+                    && job.next_at < entry.completed_at
+            });
+            let checked = matched.and_then(|index| recent.remove(index));
+            if let Some(checked) = &checked {
+                recent.push_front(Arc::clone(checked));
+            }
+            drop(recent);
+            (checked, held)
+        };
         let memory = usize::try_from(progress.limits.memory_mb)
             .unwrap_or(usize::MAX)
-            .saturating_mul(1_000_000);
+            .saturating_mul(1_000_000)
+            .saturating_sub(held_bytes);
         progress.phase("Checking stored proof");
         let legacy = self
             .db
@@ -222,6 +250,75 @@ impl Repairs {
                     .is_some_and(|current| current.id == job.id),
                 "repair unavailable: verification source changed"
             );
+            if let Some(checked) = &checked
+                && job.nzb_blob == Some(checked.nzb.0)
+                && job.generation == checked.generation
+                && job.next_at < checked.completed_at
+            {
+                let source = self
+                    .db
+                    .repair_source(owner)
+                    .await?
+                    .context("repair unavailable: source disappeared")?;
+                let item = self
+                    .db
+                    .item(infinidysk_core::ItemId(id))
+                    .await?
+                    .context("repair unavailable: file disappeared")?;
+                let raw = self
+                    .db
+                    .repair_blob(
+                        item.meta_blob
+                            .context("repair unavailable: metadata missing")?,
+                        16_000_000,
+                    )
+                    .await?
+                    .context("repair unavailable: metadata missing")?;
+                let mut metadata = blob::decode_meta_limited(&raw, 16_000_000)?;
+                let mut covered = Vec::new();
+                let changed =
+                    repair::refresh_metadata(&mut metadata, &checked.sources, &mut covered);
+                if !covered.is_empty()
+                    && covered.iter().all(|covered| *covered)
+                    && source.nzb() == checked.nzb
+                    && source.generation() == checked.generation
+                {
+                    anyhow::ensure!(
+                        !cancel.is_cancelled(),
+                        "repair cancelled before result reuse"
+                    );
+                    anyhow::ensure!(
+                        self.db.repair_source(owner).await?.as_ref() == Some(&source),
+                        "repair unavailable: source changed during result reuse"
+                    );
+                    if changed {
+                        anyhow::ensure!(
+                            publisher
+                                .metadata(source, blob::encode_meta(&metadata)?)
+                                .await?,
+                            "repair unavailable: source changed during result reuse"
+                        );
+                    }
+                    progress.verified.store(
+                        checked
+                            .sources
+                            .iter()
+                            .map(|source| source.proof.file_length)
+                            .sum(),
+                        Ordering::Relaxed,
+                    );
+                    return Ok((
+                        2,
+                        if checked.sources.iter().any(|source| {
+                            source.proof.file_length > 0 && source.proof.slice_md5.is_empty()
+                        }) {
+                            "Verified with the source set already checked for this request. Only whole-file hashes were available."
+                        } else {
+                            "Verified with the source set already checked for this request."
+                        },
+                    ));
+                }
+            }
             match health
                 .verify_existing_bounded(
                     infinidysk_core::ItemId(id),
@@ -366,8 +463,15 @@ impl Repairs {
         .await??;
         let mut repaired = false;
         let mut hash_only = false;
+        let mut checked_sources = Vec::new();
+        let mut checked_bytes = 0;
+        let mut reusable = true;
         for set in reader.sets() {
-            progress.phase("Verifying source files and reconstructing damage");
+            progress.phase(if job.verify_only {
+                "Verifying source files"
+            } else {
+                "Verifying source files and reconstructing damage"
+            });
             let result = repair::execute(
                 client,
                 Arc::clone(&nzb),
@@ -391,6 +495,19 @@ impl Repairs {
             if let Some(metadata) = &mut metadata {
                 metadata_changed |=
                     repair::refresh_metadata(metadata, &result.sources, &mut covered);
+            }
+            let bytes = result
+                .sources
+                .iter()
+                .map(repair::VerifiedSource::memory_bytes)
+                .sum::<usize>();
+            // Keep proof reuse inside the metadata allowance; it never retains article bytes.
+            if reusable && checked_bytes + bytes <= 16_000_000 {
+                checked_bytes += bytes;
+                checked_sources.extend(result.sources);
+            } else {
+                reusable = false;
+                checked_sources.clear();
             }
             if !result.patches.is_empty() {
                 progress.phase("Saving and publishing repaired articles");
@@ -449,6 +566,26 @@ impl Repairs {
         self.db.wake_par2(source.nzb(), now_ms()).await?;
         if legacy {
             self.db.retire_legacy_repairs().await?;
+        }
+        if reusable && !checked_sources.is_empty() {
+            let mut recent = self.checked.lock().unwrap_or_else(PoisonError::into_inner);
+            recent.retain(|entry| entry.nzb != source.nzb());
+            let mut used = recent.iter().map(|entry| entry.bytes).sum::<usize>();
+            // shortcut: at most 32 sets / 16 MB; use persisted receipts if larger scans need longer reuse.
+            while used + checked_bytes > 16_000_000 || recent.len() >= 32 {
+                if let Some(old) = recent.pop_back() {
+                    used -= old.bytes;
+                } else {
+                    break;
+                }
+            }
+            recent.push_front(Arc::new(Checked {
+                nzb: source.nzb(),
+                generation: source.generation(),
+                completed_at: now_ms(),
+                bytes: checked_bytes,
+                sources: checked_sources.into_boxed_slice(),
+            }));
         }
         Ok((
             if repaired { 3 } else { 2 },

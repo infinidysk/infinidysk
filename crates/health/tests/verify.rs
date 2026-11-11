@@ -13,6 +13,44 @@ use tokio_util::sync::CancellationToken;
 
 const ARTICLE: usize = 7000;
 
+#[tokio::test]
+async fn idle_verification_parallelism_follows_its_admitted_memory() {
+    for (memory, expected_more_than_four) in [(256_000_000, false), (512_000_000, true)] {
+        let (data, proof) = content();
+        let server = LoopbackServer::start_stalling(
+            post("verify", "a.bin", &data, ARTICLE),
+            0,
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+        let (_db, item, health) = stored(&server, &data, Some(proof)).await;
+        let cancel = CancellationToken::new();
+        let running = tokio::spawn({
+            let stop = cancel.clone();
+            async move {
+                health
+                    .verify_existing_bounded(item.id, &stop, None, memory, 1_000_000)
+                    .await
+            }
+        });
+        wait_for_body(&server).await;
+        let more = tokio::time::timeout(Duration::from_millis(300), async {
+            while server.body_commands() <= 4 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok();
+        cancel.cancel();
+        assert!(matches!(
+            running.await.unwrap().unwrap(),
+            Verification::Cancelled
+        ));
+        assert_eq!(more, expected_more_than_four);
+    }
+}
+
 fn content() -> (Vec<u8>, Par2Proof) {
     let index = infinidysk_par2::read(include_bytes!("../../par2/tests/fixtures/set.par2"));
     let file = index

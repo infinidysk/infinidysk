@@ -82,6 +82,125 @@ fn limits() -> Limits {
 }
 
 #[tokio::test]
+async fn healthy_verification_reads_each_posted_article_once() {
+    let a = post("single-pass-a", "a.bin", &data(100_000), 7000);
+    let b = post("single-pass-b", "b.bin", &data(8192), 3000);
+    let expected = a.len() + b.len();
+    let nzb = Arc::new(document(&[("one", &a), ("two", &b)]));
+    let server = LoopbackServer::start(a.into_iter().chain(b)).await.unwrap();
+    let reader = metadata();
+    let result = infinidysk_queue::repair::execute(
+        &client(&server),
+        nzb,
+        Arc::new(reader),
+        infinidysk_par2::read(INDEX).set_id.unwrap(),
+        limits(),
+        true,
+        infinidysk_queue::repair::Context::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.verified_bytes, 108_192);
+    assert_eq!(
+        server.body_commands(),
+        expected,
+        "layout discovery, slice checks and file hashing must share the same bytes"
+    );
+}
+
+#[tokio::test]
+async fn single_pass_verification_still_requires_the_whole_file_hash() {
+    let a = post("file-hash-a", "a.bin", &data(100_000), 7000);
+    let b = post("file-hash-b", "b.bin", &data(8192), 3000);
+    let nzb = Arc::new(document(&[("one", &a), ("two", &b)]));
+    let server = LoopbackServer::start(a.into_iter().chain(b)).await.unwrap();
+    let mut index = INDEX.to_vec();
+    let mut at = 0;
+    while at < index.len() {
+        let length = usize::try_from(u64::from_le_bytes(
+            index[at + 8..at + 16].try_into().unwrap(),
+        ))
+        .unwrap();
+        if &index[at + 48..at + 64] == b"PAR 2.0\0FileDesc" {
+            index[at + 80] ^= 1;
+            let hash = infinidysk_par2::hash_16k(&index[at + 32..at + length]);
+            index[at + 16..at + 32].copy_from_slice(&hash);
+            break;
+        }
+        at += length;
+    }
+    let mut reader = Reader::default();
+    reader.push(&index);
+    assert!(matches!(
+        infinidysk_queue::repair::execute(
+            &client(&server),
+            nzb,
+            Arc::new(reader),
+            infinidysk_par2::read(INDEX).set_id.unwrap(),
+            limits(),
+            true,
+            infinidysk_queue::repair::Context::default(),
+            &CancellationToken::new()
+        )
+        .await,
+        Err(Error::Content(infinidysk_par2::Error::FileChecksum))
+    ));
+}
+
+#[tokio::test]
+async fn source_reads_overlap_a_stalled_first_article_and_cancel_cleanly() {
+    let a = post("parallel-a", "a.bin", &data(100_000), 7000);
+    let b = post("parallel-b", "b.bin", &data(8192), 3000);
+    let nzb = document(&[("one", &a), ("two", &b)]);
+    let server = LoopbackServer::start_stalling(a.into_iter().chain(b), 0, Duration::from_secs(3))
+        .await
+        .unwrap();
+    let client = client(&server);
+    let parent = CancellationToken::new();
+    let running = tokio::spawn({
+        let client = Arc::clone(&client);
+        let cancel = parent.clone();
+        async move {
+            let reader = metadata();
+            let set = reader
+                .repair_set(infinidysk_par2::read(INDEX).set_id.unwrap())
+                .unwrap();
+            resolve(
+                &client,
+                &nzb,
+                &set,
+                Limits {
+                    memory_bytes: 256_000_000,
+                    ..limits()
+                },
+                &cancel,
+            )
+            .await
+        }
+    });
+    let overlap = tokio::time::timeout(Duration::from_millis(500), async {
+        while server.body_commands() < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    parent.cancel();
+    assert!(matches!(running.await.unwrap(), Err(Error::Cancelled)));
+    assert!(
+        overlap.is_ok(),
+        "another connection should fetch while the first article waits"
+    );
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while client.free_permits() != Some(32) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn resolves_obfuscated_whole_sources_without_using_subject_names() {
     let a = post("a", "obfuscated", &data(100_000), 7000);
     let b = post("b", "obfuscated", &data(8192), 3000);
@@ -157,6 +276,7 @@ async fn verification_can_use_whole_file_hashes_without_slice_packets() {
     let a = post("a", "obfuscated", &data(100_000), 7000);
     let b = post("b", "obfuscated", &data(8192), 3000);
     let nzb = document(&[("one", &a), ("two", &b)]);
+    let expected_reads = a.len() + b.len();
     let server = LoopbackServer::start(a.into_iter().chain(b)).await.unwrap();
     let mut reader = Reader::default();
     let mut packets = INDEX;
@@ -181,6 +301,7 @@ async fn verification_can_use_whole_file_hashes_without_slice_packets() {
     .await
     .unwrap();
     assert_eq!(result.verified_bytes, 108_192);
+    assert_eq!(server.body_commands(), expected_reads);
     assert_eq!(
         result.patches,
         [] as [(infinidysk_core::repair::Patch, Vec<u8>); 0]

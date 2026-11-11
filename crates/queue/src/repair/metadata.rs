@@ -10,6 +10,27 @@ pub struct VerifiedSource {
 }
 
 impl VerifiedSource {
+    pub fn memory_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.proof.slice_md5.capacity() * 16
+            + self.proof.slice_crc32.capacity() * 4
+            + self.segments.items.capacity() * size_of::<Segment>()
+            + self
+                .segments
+                .items
+                .iter()
+                .map(|segment| {
+                    segment.id.capacity()
+                        + segment.fallbacks.capacity() * size_of::<String>()
+                        + segment
+                            .fallbacks
+                            .iter()
+                            .map(String::capacity)
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+
     pub(super) fn new(set: &RepairSet<'_>, layout: &Layout) -> Result<Self, Error> {
         let file = &set.sources()[layout.source()].file;
         let proof = Par2Proof {

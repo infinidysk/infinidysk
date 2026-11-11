@@ -14,11 +14,30 @@ pub(super) struct Identity<'a> {
     slice: Vec<u8>,
     next: u64,
     start: u64,
+    checks: Vec<(usize, Slice)>,
 }
 
 impl<'a> Identity<'a> {
-    pub fn new(sources: &'a [File], size: usize) -> Self {
-        Self {
+    pub fn proven(&self) -> Option<usize> {
+        self.proven
+    }
+
+    pub fn new(sources: &'a [File], size: usize, budget: &mut Budget) -> Result<Self, Error> {
+        let count = sources
+            .iter()
+            .map(|source| source.slices.len())
+            .max()
+            .unwrap_or(0);
+        budget.metadata(
+            count
+                .checked_mul(size_of::<(usize, Slice)>())
+                .ok_or(Error::Limit("slice observations"))?,
+        )?;
+        let mut checks = Vec::new();
+        checks
+            .try_reserve_exact(count)
+            .map_err(|_| Error::Allocation)?;
+        Ok(Self {
             sources,
             size,
             length: None,
@@ -29,12 +48,13 @@ impl<'a> Identity<'a> {
             slice: Vec::new(),
             next: 0,
             start: 0,
-        }
+            checks,
+        })
     }
 
     pub fn feed(&mut self, body: &Body, budget: &mut Budget) -> Result<(), Error> {
         if self.proven.is_some() {
-            return Ok(());
+            return self.slices(body, budget);
         }
         let length = *self.length.get_or_insert(body.file_size);
         let prefix_len =
@@ -59,17 +79,15 @@ impl<'a> Identity<'a> {
                         self.proven = Some(i);
                     }
                 }
-                if self.proven.is_some() {
-                    return Ok(());
-                }
-            } else {
-                return Ok(());
             }
         }
         self.slices(body, budget)
     }
 
     fn slices(&mut self, body: &Body, budget: &mut Budget) -> Result<(), Error> {
+        if self.checks.capacity() == 0 {
+            return Ok(());
+        }
         let length = body.file_size;
         let size = self.size as u64;
         let mut offset = body.offset;
@@ -107,7 +125,16 @@ impl<'a> Identity<'a> {
                 let checksum = Slice::checksum(size, &self.slice).expect("buffer fits slice size");
                 let index =
                     usize::try_from(self.start / size).map_err(|_| Error::Limit("slice index"))?;
-                for (i, source) in self.sources.iter().enumerate() {
+                if self.checks.len() == self.checks.capacity() {
+                    return Err(Error::Limit("slice observations"));
+                }
+                self.checks.push((index, checksum));
+                for (i, source) in self
+                    .sources
+                    .iter()
+                    .enumerate()
+                    .filter(|_| self.proven.is_none())
+                {
                     budget.comparison()?;
                     if source.length == length && source.slices.get(index) == Some(&checksum) {
                         self.matched[i] = true;
@@ -119,22 +146,27 @@ impl<'a> Identity<'a> {
         Ok(())
     }
 
-    pub fn finish(self) -> Result<Option<usize>, Error> {
-        if self.proven.is_some() {
-            return Ok(self.proven);
-        }
+    pub fn finish(self) -> Result<Option<(usize, Vec<bool>)>, Error> {
         let mut matches = self
             .matched
             .iter()
             .enumerate()
             .filter(|(_, matched)| **matched)
             .map(|(i, _)| i);
-        let first = matches.next();
-        if matches.next().is_some() {
+        let first = self.proven.or_else(|| matches.next());
+        if self.proven.is_none() && matches.next().is_some() {
             return Err(Error::Ambiguous(
                 "slice evidence matches multiple protected sources",
             ));
         }
-        Ok(first)
+        Ok(first.map(|source| {
+            let mut checked = vec![false; self.sources[source].slices.len()];
+            for (index, checksum) in self.checks {
+                if self.sources[source].slices.get(index) == Some(&checksum) {
+                    checked[index] = true;
+                }
+            }
+            (source, checked)
+        }))
     }
 }

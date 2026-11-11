@@ -96,6 +96,7 @@ pub struct Repair<'a> {
     seen: Vec<bool>,
     remaining: usize,
     cancelled: bool,
+    workspace_bytes: usize,
 }
 
 impl<'a> Repair<'a> {
@@ -179,7 +180,13 @@ impl<'a> Repair<'a> {
             seen: filled(inputs.len(), false)?,
             remaining: inputs.len() - count,
             cancelled: false,
+            workspace_bytes: required,
         })
+    }
+
+    /// Conservative admitted storage, including simultaneous recovery output.
+    pub const fn workspace_bytes(&self) -> usize {
+        self.workspace_bytes
     }
 
     /// Verify one present slice before folding it. Cancellation makes this repair unusable.
