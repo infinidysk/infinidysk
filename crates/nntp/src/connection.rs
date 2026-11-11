@@ -31,8 +31,50 @@ const MAX_MESSAGE_ID_LEN: usize = 250;
 const MAX_REPLY_LEN: usize = 120;
 /// Extra decode capacity so `\r\n=yend` is reached without growing the body buffer.
 const DECODE_SLACK: usize = 64;
+/// Longest TCP connect to an address with another one after it; also at most half the
+/// time left, so a silent address cannot use up the connect deadline.
+const ADDRESS_WAIT: Duration = Duration::from_secs(5);
 
 type Stream = Either<TcpStream, TlsStream<TcpStream>>;
+
+/// Tries `addrs` in order, one at a time, until one connects by `deadline`. The last
+/// address gets all the time left.
+async fn connect_addresses<C, A>(
+    addrs: &[std::net::SocketAddr],
+    deadline: tokio::time::Instant,
+    mut connect: C,
+) -> Result<TcpStream, Error>
+where
+    C: FnMut(std::net::SocketAddr) -> A,
+    A: Future<Output = io::Result<TcpStream>>,
+{
+    let mut last = None;
+    for (i, &addr) in addrs.iter().enumerate() {
+        let now = tokio::time::Instant::now();
+        let Some(left) = deadline
+            .checked_duration_since(now)
+            .filter(|d| !d.is_zero())
+        else {
+            return Err(Error::Timeout);
+        };
+        let until = if i + 1 < addrs.len() {
+            now + ADDRESS_WAIT.min(left / 2)
+        } else {
+            deadline
+        };
+        match tokio::time::timeout_at(until, connect(addr)).await {
+            Ok(Ok(tcp)) => return Ok(tcp),
+            Ok(Err(error)) => last = Some(Error::Io(error)),
+            Err(_) => last = Some(Error::Timeout),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        Error::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "could not resolve to any address",
+        ))
+    }))
+}
 
 /// Counts the NNTP bytes read (after TLS) into the provider's [`Usage`] and the
 /// [`Bandwidth`] bill.
@@ -348,13 +390,19 @@ impl Connection {
         deadline: tokio::time::Instant,
     ) -> Result<Self, (Stage, Error)> {
         let mut stage = Stage::Resolve;
-        match tokio::time::timeout_at(deadline, Self::connect_at(endpoint, &mut stage)).await {
+        match tokio::time::timeout_at(deadline, Self::connect_at(endpoint, &mut stage, deadline))
+            .await
+        {
             Ok(result) => result.map_err(|error| (stage, error)),
             Err(_) => Err((stage, Error::Timeout)),
         }
     }
 
-    async fn connect_at(endpoint: &Endpoint, stage: &mut Stage) -> Result<Self, Error> {
+    async fn connect_at(
+        endpoint: &Endpoint,
+        stage: &mut Stage,
+        deadline: tokio::time::Instant,
+    ) -> Result<Self, Error> {
         let timeout_after = endpoint.timeout;
         let started = Instant::now();
         let addrs: Vec<_> = timeout(
@@ -366,9 +414,7 @@ impl Connection {
         .collect();
         let resolved = Instant::now();
         *stage = Stage::Tcp;
-        let tcp = timeout(timeout_after, TcpStream::connect(addrs.as_slice()))
-            .await
-            .map_err(|_| Error::Timeout)??;
+        let tcp = connect_addresses(&addrs, deadline, TcpStream::connect).await?;
         let connected = Instant::now();
         tcp.set_nodelay(true)?;
         SockRef::from(&tcp).set_tcp_keepalive(
@@ -802,4 +848,67 @@ fn parse_ypart(line: &[u8]) -> Option<(u64, usize)> {
     let end = field::<u64>(line, b"end")?;
     let len = end.checked_sub(begin)?.checked_add(1)?;
     Some((begin.checked_sub(1)?, usize::try_from(len).ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Dropped(Arc<AtomicBool>);
+
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_addresses_skips_a_stalled_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good = listener.local_addr().unwrap();
+        let stalled: std::net::SocketAddr = "192.0.2.1:119".parse().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let dropped_first = Arc::new(AtomicBool::new(false));
+        let start = tokio::time::Instant::now();
+        let deadline = start + Duration::from_secs(1);
+
+        let tcp = connect_addresses(&[stalled, good], deadline, |addr| {
+            let guard = (addr == stalled).then(|| Dropped(Arc::clone(&dropped)));
+            if addr == good {
+                dropped_first.store(dropped.load(Ordering::SeqCst), Ordering::SeqCst);
+            }
+            async move {
+                if let Some(_guard) = guard {
+                    std::future::pending::<()>().await;
+                }
+                TcpStream::connect(addr).await
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(tcp.peer_addr().unwrap(), good);
+        assert!(
+            dropped_first.load(Ordering::SeqCst),
+            "the stalled attempt ended first"
+        );
+        // Half the budget went to the stalled address, not all of it.
+        assert!(
+            start.elapsed() < Duration::from_millis(900),
+            "{:?}",
+            start.elapsed()
+        );
+
+        // A single address keeps the whole budget.
+        let tcp = connect_addresses(
+            &[good],
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            |addr| async move {
+                tokio::time::sleep(Duration::from_millis(700)).await;
+                TcpStream::connect(addr).await
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tcp.peer_addr().unwrap(), good);
+    }
 }
