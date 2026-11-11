@@ -18,7 +18,7 @@ These files are binding. Read each one only when the task needs it.
 | Writing a commit message, creating a PR or editing a PR title | [`.agents/skills/infinidysk-commits/SKILL.md`](.agents/skills/infinidysk-commits/SKILL.md) |
 | Addressing CodeRabbit, Code Quality or code scanning findings | [`.agents/skills/infinidysk-review-triage/SKILL.md`](.agents/skills/infinidysk-review-triage/SKILL.md) |
 | Adding or changing UI in `ui/` | [`DESIGN.md`](DESIGN.md) |
-| Writing or reviewing Rust, when `../rust-skills` exists | `../rust-skills/SKILL.md`, then only the relevant `rules/` files |
+| Writing or reviewing Rust, when the `rust-skills` skill is installed | Its `SKILL.md` once per session (it is one file behind several symlinked paths), then only the relevant `rules/` files |
 
 ## The C# 1.x code on `v1` (specification)
 
@@ -34,6 +34,8 @@ The C# 1.x code is on [branch `v1`](https://github.com/infinidysk/infinidysk/tre
 Policies, plans, research, benchmark results and the maintainer workflow live in the private [`infinidysk/infinidysk-lab`](https://github.com/infinidysk/infinidysk-lab) at `../infinidysk-lab`, cited as `infinidysk-lab:<path>`. When it is present, read its `AGENTS.md` too. Contributors without access can ignore those references.
 
 `scrap/` is gitignored scratch space for notes, logs and files that must not be committed.
+
+**Keep long command output out of the context.** Send cargo, test, docker and benchmark output to a log under `scrap/<task>/` and read back only the tail or the failing lines (`tail -40`, `grep -E '^(error|warning)|FAILED|panicked'`). This applies to background commands too: their full output returns when they finish.
 
 ## Scope rule
 
