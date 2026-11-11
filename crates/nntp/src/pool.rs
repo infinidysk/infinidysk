@@ -561,9 +561,10 @@ impl Pool {
                 Some(Err(Error::Timeout)) if stream => {
                     return Err(Failure::Request(Error::Timeout));
                 }
-                Some(Err(Error::Closed | Error::Io(_) | Error::Timeout))
-                    if failed < MAX_RETRIES =>
-                {
+                // A 400 ends the session (RFC 3977 §3.2.1); the server closes after it.
+                Some(Err(
+                    Error::Closed | Error::Io(_) | Error::Timeout | Error::Status { code: 400, .. },
+                )) if failed < MAX_RETRIES => {
                     failed += 1;
                 }
                 Some(result) => return result.map_err(Failure::Request),
