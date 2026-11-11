@@ -268,7 +268,7 @@ impl Endpoint {
         self
     }
 
-    /// `timeout` bounds the TCP connect, the TLS handshake and every single read or
+    /// `timeout` bounds the whole connect and login, and every later single read or
     /// write.
     pub fn new(
         host: impl Into<String>,
@@ -340,9 +340,19 @@ impl Connection {
 
     /// [`connect`](Self::connect), with the stage a failure happened in.
     pub(crate) async fn connect_staged(endpoint: &Endpoint) -> Result<Self, (Stage, Error)> {
+        Self::connect_staged_until(endpoint, tokio::time::Instant::now() + endpoint.timeout).await
+    }
+
+    /// [`connect_staged`](Self::connect_staged), with all of it ending by `deadline`.
+    pub(crate) async fn connect_staged_until(
+        endpoint: &Endpoint,
+        deadline: tokio::time::Instant,
+    ) -> Result<Self, (Stage, Error)> {
         let mut stage = Stage::Resolve;
-        let result = Self::connect_at(endpoint, &mut stage).await;
-        result.map_err(|error| (stage, error))
+        match tokio::time::timeout_at(deadline, Self::connect_at(endpoint, &mut stage)).await {
+            Ok(result) => result.map_err(|error| (stage, error)),
+            Err(_) => Err((stage, Error::Timeout)),
+        }
     }
 
     async fn connect_at(endpoint: &Endpoint, stage: &mut Stage) -> Result<Self, Error> {

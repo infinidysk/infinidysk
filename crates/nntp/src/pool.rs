@@ -381,7 +381,7 @@ impl Pool {
             reserved
         };
         // Dropping a new connection's load leaves it idle in the pool.
-        join_all((0..reserved).map(|_| self.open(self.connecting()))).await;
+        join_all((0..reserved).map(|_| self.open(self.connecting(), None))).await;
     }
 
     /// Ends every connection now, abandoning the requests on them.
@@ -515,28 +515,22 @@ impl Pool {
         let (mut failed, mut unanswered) = (0, 0);
         let provider = tag.provider;
         let stream = tag.workload == Workload::Stream;
-        let deadline = tokio::time::Instant::now() + self.stream_wait;
+        // Not renewed on retries.
+        let deadline = stream.then(|| tokio::time::Instant::now() + self.stream_wait);
         loop {
-            let wait = async {
-                let download = self
-                    .downloads
-                    .acquire(
-                        stream,
-                        self.weight(tag.probe.as_ref().map(|probe| probe.size)),
-                    )
+            let acquire = self.downloads.acquire(
+                stream,
+                self.weight(tag.probe.as_ref().map(|probe| probe.size)),
+            );
+            let download = match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, acquire)
                     .await
-                    .ok_or(Failure::Request(Error::Closed))?;
-                tag.step(Step::Permitted { provider });
-                let (tx, load, ahead, connection) = self.worker(stream, tag.fresh).await?;
-                Ok::<_, Failure>((download, tx, load, ahead, connection))
-            };
-            let (download, tx, load, ahead, connection) = if stream {
-                tokio::time::timeout_at(deadline, wait)
-                    .await
-                    .map_err(|_| Failure::Request(Error::Unavailable))??
-            } else {
-                wait.await?
-            };
+                    .map_err(|_| Failure::Request(Error::Unavailable))?,
+                None => acquire.await,
+            }
+            .ok_or(Failure::Request(Error::Closed))?;
+            tag.step(Step::Permitted { provider });
+            let (tx, load, ahead, connection) = self.worker(stream, tag.fresh, deadline).await?;
             tag.step(Step::Connected {
                 provider,
                 ahead: u16::try_from(ahead).unwrap_or(u16::MAX),
@@ -580,13 +574,19 @@ impl Pool {
     /// instead. A `fresh` request never pipelines: it waits for an idle connection instead.
     /// For limits of four or more, background work leaves one idle or unopened slot for
     /// playback and waits for pending connections before pipelining.
+    /// Past the admission `deadline` it fails as [`Error::Unavailable`], except that a
+    /// cold connect it started itself runs on, so a hung provider is blamed for it.
     async fn worker(
         &self,
         stream: bool,
         fresh: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<(mpsc::Sender<Request>, Load, usize, u32), Failure> {
         let mut impatient = false;
         loop {
+            if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+                return Err(Failure::Request(Error::Unavailable));
+            }
             let mut changed = pin!(self.changed.notified());
             changed.as_mut().enable();
             let (reserved, live, held) = {
@@ -643,10 +643,18 @@ impl Pool {
                 (reserved, live, held)
             };
             if reserved {
-                let mut open = Box::pin(self.open(self.connecting()));
+                let now = tokio::time::Instant::now();
+                // A detached connect keeps only the endpoint's own deadline.
+                let until = deadline
+                    .filter(|_| !(stream && live))
+                    .map(|deadline| deadline.max(now + STREAM_CONNECT_WAIT));
+                let mut open = Box::pin(self.open(self.connecting(), until));
                 let opened = if stream && live {
-                    let patience = STREAM_CONNECT_WAIT.min(self.endpoint.timeout() / 2);
-                    if let Ok(opened) = timeout(patience, &mut open).await {
+                    let mut patience = now + STREAM_CONNECT_WAIT.min(self.endpoint.timeout() / 2);
+                    if let Some(deadline) = deadline {
+                        patience = patience.min(deadline);
+                    }
+                    if let Ok(opened) = tokio::time::timeout_at(patience, &mut open).await {
                         opened
                     } else {
                         // Joins the pool idle if it ever connects.
@@ -662,9 +670,13 @@ impl Pool {
                 }
                 continue;
             }
-            match held {
+            let wake = match (held.map(tokio::time::Instant::from), deadline) {
+                (Some(held), Some(deadline)) => Some(held.min(deadline)),
+                (held, deadline) => held.or(deadline),
+            };
+            match wake {
                 Some(until) => {
-                    let _ = tokio::time::timeout_at(until.into(), changed).await;
+                    let _ = tokio::time::timeout_at(until, changed).await;
                 }
                 None => changed.await,
             }
@@ -676,9 +688,11 @@ impl Pool {
     }
 
     /// `None` when the connect was refused but other connections can take the request.
+    /// The connect ends by `until` or the endpoint timeout, whichever comes first.
     fn open(
         &self,
         connecting: Connecting,
+        until: Option<tokio::time::Instant>,
     ) -> impl Future<Output = Result<Option<(mpsc::Sender<Request>, Load, u32)>, Failure>> + Send + 'static
     {
         let (endpoint, config) = (self.endpoint.clone(), self.config);
@@ -687,7 +701,9 @@ impl Pool {
         let stats = Arc::clone(&self.stats);
         async move {
             let started = Instant::now();
-            let conn = match Connection::connect_staged(&endpoint).await {
+            let limit = tokio::time::Instant::now() + endpoint.timeout();
+            let until = until.map_or(limit, |until| until.min(limit));
+            let conn = match Connection::connect_staged_until(&endpoint, until).await {
                 Ok(conn) => conn,
                 Err((stage, error)) => {
                     stats.connect_failed();
