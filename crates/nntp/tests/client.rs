@@ -433,6 +433,101 @@ async fn a_complete_trailerless_part_with_a_split_header_is_kept() {
     assert_eq!(downloads.available_permits(), 16);
 }
 
+/// Asks for `begin` twice on one connection: a wrong offset fails before any byte
+/// reaches progress, and the connection still reads the next reply.
+async fn check_identity(chunks: Vec<Vec<u8>>, data: &[u8], begin: u64, wrong: u64) {
+    let port = raw_body_server(chunks).await;
+    let client = Client::new([provider(port, 0, None, &Downloads::new(16))]);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let progress = Progress {
+        tx,
+        wanted: Arc::new(AtomicBool::new(true)),
+    };
+    let fetch = |begin| {
+        client.body_with(
+            "a@test",
+            Workload::Stream,
+            None,
+            Some(&progress),
+            Some(begin),
+        )
+    };
+
+    assert!(
+        fetch(wrong).await.is_err(),
+        "offset {wrong} is another part"
+    );
+    assert!(rx.try_recv().is_err(), "nothing of another part is sent");
+    let ids = |client: &Client| -> Vec<u32> {
+        client.stats()[0].connections.iter().map(|c| c.id).collect()
+    };
+    let before = ids(&client);
+    assert_eq!(before.len(), 1);
+
+    let body = fetch(begin).await.unwrap();
+    assert_eq!((&*body.data, body.offset), (data, begin));
+    assert_eq!(
+        ids(&client),
+        before,
+        "the same connection read the next reply"
+    );
+}
+
+#[tokio::test]
+async fn fragmented_part_headers_preserve_identity_checks() {
+    let corpus = Corpus::generate(1025, 2, ARTICLE_SIZE);
+    let data = &corpus.data[ARTICLE_SIZE..];
+    let (begin, size) = (ARTICLE_SIZE as u64, corpus.data.len());
+    let head = [
+        REPLY,
+        format!("=ybegin part=2 total=2 line=128 size={size} name=x\r\n").as_bytes(),
+    ]
+    .concat();
+    let part = format!("=ypart begin={} end={size}\r\n", begin + 1);
+    let tail = [
+        &infinidysk_yenc::encode(data, 128)[..],
+        format!(
+            "\r\n=yend size={} part=2 pcrc32={:08x}\r\n.\r\n",
+            data.len(),
+            infinidysk_yenc::crc32(0, data)
+        )
+        .as_bytes(),
+    ]
+    .concat();
+
+    let contiguous = vec![[&head[..], part.as_bytes(), &tail].concat()];
+    check_identity(contiguous, data, begin, 0).await;
+    // The `=ypart` line split after `=yp`, so the first read cannot see it.
+    let split = vec![
+        [&head[..], b"=yp"].concat(),
+        [&part.as_bytes()[3..], &tail].concat(),
+    ];
+    check_identity(split, data, begin, 0).await;
+
+    // No `=ypart`: the offset is 0, checked at the first decoded byte.
+    let data = b"abcdefgh";
+    let crc = infinidysk_yenc::crc32(0, data);
+    let whole = vec![
+        [
+            REPLY,
+            b"=ybegin line=128 size=8 name=x\r\n",
+            &infinidysk_yenc::encode(data, 128),
+            b"\r\n=ye",
+        ]
+        .concat(),
+        format!("nd size=8 crc32={crc:08x}\r\n.\r\n").into_bytes(),
+    ];
+    check_identity(whole, data, 0, 5).await;
+
+    // An empty article never decodes a byte, but its offset is still checked.
+    let empty = [
+        REPLY,
+        b"=ybegin line=128 size=0 name=x\r\n=yend size=0\r\n.\r\n",
+    ]
+    .concat();
+    check_identity(vec![empty], b"", 0, 5).await;
+}
+
 #[tokio::test]
 async fn a_complete_trailerless_article_is_kept() {
     let head = [REPLY, b"=ybegin line=128 size=8 name=x\r\n"].concat();
