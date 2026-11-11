@@ -59,7 +59,7 @@ async fn an_unexpected_reply_keeps_its_text_without_control_characters() {
         let mut lines = BufReader::new(read).lines();
         while lines.next_line().await.unwrap().is_some() {
             write
-                .write_all(b"400 Too many \x1b[31mconnections\r\n")
+                .write_all(b"500 Too many \x1b[31mconnections\r\n")
                 .await
                 .unwrap();
         }
@@ -68,7 +68,47 @@ async fn an_unexpected_reply_keeps_its_text_without_control_characters() {
     let Err(Error::Status { code, reply }) = body(&client, "a@test").await else {
         panic!("an unexpected reply fails with its status")
     };
-    assert_eq!((code, &*reply), (400, "Too many [31mconnections"));
+    assert_eq!((code, &*reply), (500, "Too many [31mconnections"));
+}
+
+#[tokio::test]
+async fn a_400_reply_is_retried_on_a_fresh_connection() {
+    let corpus = Corpus::generate(1025, 1, ARTICLE_SIZE);
+    let article = corpus.articles[0].clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let accepted = Arc::clone(&accepts);
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            // The first session ends: 400 to the next command, then close.
+            let first = accepted.fetch_add(1, Ordering::SeqCst) == 0;
+            let wire = article.wire.clone();
+            let id = article.message_id.clone();
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                write.write_all(b"200 ready\r\n").await.unwrap();
+                let mut lines = BufReader::new(read).lines();
+                while lines.next_line().await.unwrap().is_some() {
+                    if first {
+                        write.write_all(b"400 session ends\r\n").await.unwrap();
+                        return;
+                    }
+                    let head = format!("222 0 <{id}> body follows\r\n");
+                    write.write_all(head.as_bytes()).await.unwrap();
+                    write.write_all(&wire).await.unwrap();
+                }
+            });
+        }
+    });
+    let client = Client::new([provider(port, 0, None, &Downloads::new(4))]);
+
+    let got = body(&client, &corpus.articles[0].message_id).await.unwrap();
+    assert_eq!(got.data, corpus.data);
+    assert_eq!(accepts.load(Ordering::SeqCst), 2);
+    // [retrieved, not found, cancelled, timeout, auth, network, protocol, ...]
+    let attempts = client.stats()[0].workloads[0].attempts;
+    assert_eq!(attempts[..7], [1, 0, 0, 0, 0, 0, 1]);
 }
 
 #[tokio::test]
