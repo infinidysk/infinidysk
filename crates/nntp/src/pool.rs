@@ -515,9 +515,11 @@ impl Pool {
         let (mut failed, mut unanswered) = (0, 0);
         let provider = tag.provider;
         let stream = tag.workload == Workload::Stream;
-        // Not renewed on retries.
-        let deadline = stream.then(|| tokio::time::Instant::now() + self.stream_wait);
+        // Shared by retries; only admission waits spend it, not transfers.
+        let mut budget = self.stream_wait;
         loop {
+            let admitted = tokio::time::Instant::now();
+            let deadline = stream.then(|| admitted + budget);
             let acquire = self.downloads.acquire(
                 stream,
                 self.weight(tag.probe.as_ref().map(|probe| probe.size)),
@@ -531,6 +533,7 @@ impl Pool {
             .ok_or(Failure::Request(Error::Closed))?;
             tag.step(Step::Permitted { provider });
             let (tx, load, ahead, connection) = self.worker(stream, tag.fresh, deadline).await?;
+            budget = budget.saturating_sub(admitted.elapsed());
             tag.step(Step::Connected {
                 provider,
                 ahead: u16::try_from(ahead).unwrap_or(u16::MAX),
@@ -555,9 +558,10 @@ impl Pool {
                 Some(Err(Error::Timeout)) if stream => {
                     return Err(Failure::Request(Error::Timeout));
                 }
-                Some(Err(Error::Closed | Error::Io(_) | Error::Timeout))
-                    if failed < MAX_RETRIES =>
-                {
+                // A 400 ends the session (RFC 3977 §3.2.1); the server closes after it.
+                Some(Err(
+                    Error::Closed | Error::Io(_) | Error::Timeout | Error::Status { code: 400, .. },
+                )) if failed < MAX_RETRIES => {
                     failed += 1;
                 }
                 Some(result) => return result.map_err(Failure::Request),
@@ -581,9 +585,12 @@ impl Pool {
         fresh: bool,
         deadline: Option<tokio::time::Instant>,
     ) -> Result<(mpsc::Sender<Request>, Load, usize, u32), Failure> {
-        let mut impatient = false;
+        let (mut impatient, mut first) = (false, true);
         loop {
-            if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            // A spent budget still takes a connection that is free right away.
+            if !std::mem::take(&mut first)
+                && deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+            {
                 return Err(Failure::Request(Error::Unavailable));
             }
             let mut changed = pin!(self.changed.notified());
@@ -623,6 +630,11 @@ impl Pool {
                             ahead,
                             w.link.id,
                         ));
+                    }
+                    _ if deadline
+                        .is_some_and(|deadline| tokio::time::Instant::now() >= deadline) =>
+                    {
+                        return Err(Failure::Request(Error::Unavailable));
                     }
                     _ if open == 0
                         && state
@@ -1042,6 +1054,47 @@ fn enqueue(conn: &mut Connection, in_flight: &mut VecDeque<Request>, request: Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn expired_admission_reuses_an_idle_connection_but_never_opens_one() {
+        let server = infinidysk_testkit::LoopbackServer::start(Vec::new())
+            .await
+            .unwrap();
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            crate::TlsMode::Plain,
+            None,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let config = PoolConfig {
+            max_connections: 2,
+            pipeline_depth: 2,
+            idle_timeout: Duration::from_secs(60),
+            min_connections: 0,
+        };
+        let pool = Pool::new(endpoint, config, Downloads::new(4)).unwrap();
+        let deadline = Some(tokio::time::Instant::now());
+        assert!(matches!(
+            pool.worker(true, false, deadline).await,
+            Err(Failure::Request(Error::Unavailable))
+        ));
+        assert_eq!(server.peak_connections(), 0);
+        assert_eq!(pool.lock().connecting, 0);
+
+        let Ok((_, load, _, connection)) = pool.worker(true, false, None).await else {
+            panic!("a connection opens before admission expires");
+        };
+        drop(load);
+        let Ok((_, load, _, reused)) = pool.worker(true, false, deadline).await else {
+            panic!("an idle connection is reusable after admission expires");
+        };
+        assert_eq!(reused, connection);
+        assert_eq!(server.peak_connections(), 1);
+        drop(load);
+        pool.abort();
+    }
 
     #[test]
     fn slow_failing_retries_keep_doubling_the_backoff() {

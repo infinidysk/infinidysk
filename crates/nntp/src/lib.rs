@@ -115,16 +115,19 @@ impl Error {
         }
     }
 
-    /// Whether the connection is still in a clean command state after this error.
+    /// Whether the connection is still in a clean command state after this error. A 400
+    /// is not: the server ends the session with it.
     #[must_use]
     pub const fn is_connection_reusable(&self) -> bool {
-        matches!(
-            self,
-            Self::NotFound
-                | Self::Status { .. }
-                | Self::InvalidArgument(_)
-                | Self::Yenc(_)
-                | Self::CrcMismatch { .. }
-        )
+        match self {
+            Self::Status { code, .. } => *code != 400,
+            _ => matches!(
+                self,
+                Self::NotFound
+                    | Self::InvalidArgument(_)
+                    | Self::Yenc(_)
+                    | Self::CrcMismatch { .. }
+            ),
+        }
     }
 }
