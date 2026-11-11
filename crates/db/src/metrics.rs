@@ -28,6 +28,9 @@ const UPSERT_COUNTER: &str = "INSERT INTO counters (grain, ts, key, value) VALUE
 const UPSERT_LIFETIME: &str = "INSERT INTO lifetime (key, value) VALUES ($1, $2) \
     ON CONFLICT (key) DO UPDATE SET value = CASE WHEN excluded.key LIKE 'peak.%' \
     THEN MAX(lifetime.value, excluded.value) ELSE lifetime.value + excluded.value END";
+// `+at` stops SQLite scanning the `at` index for order instead of searching the end index.
+const BREAKER_EVENTS: &str = "SELECT at, provider_key, provider, open_ms FROM breaker_events \
+    WHERE at + open_ms >= $1 ORDER BY +at DESC";
 
 /// Row resolution: minutes are kept 7 days, hours about 13 months.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -415,13 +418,10 @@ impl Metrics {
 
     /// Breaker openings still open at or after `since_ms`, newest first.
     pub async fn breaker_events(&self, since_ms: i64) -> Result<Vec<BreakerEvent>, Error> {
-        Ok(sqlx::query_as(
-            "SELECT at, provider_key, provider, open_ms FROM breaker_events \
-             WHERE at + open_ms >= $1 ORDER BY at DESC",
-        )
-        .bind(since_ms)
-        .fetch_all(&self.pool)
-        .await?)
+        Ok(sqlx::query_as(BREAKER_EVENTS)
+            .bind(since_ms)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     /// Sum of counters starting with `prefix` in `grain` rows from `from_ms` up to `to_ms`.
@@ -530,4 +530,36 @@ fn files(path: &Path) -> [PathBuf; 3] {
         PathBuf::from(name)
     };
     [path.to_path_buf(), with("-wal"), with("-shm")]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn outage_lookups_search_their_index() {
+        let path =
+            std::env::temp_dir().join(format!("infinidysk-metrics-{}.sqlite", Uuid::new_v4()));
+        let metrics = Metrics::open(&path).await.expect("open");
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {BREAKER_EVENTS}"
+        )))
+        .bind(0_i64)
+        .fetch_all(&metrics.pool)
+        .await
+        .expect("plan");
+        let plan: Vec<_> = plan.into_iter().map(|row| row.3).collect();
+        assert_eq!(
+            plan,
+            [
+                "SEARCH breaker_events USING INDEX breaker_events_end (<expr>>?)",
+                "USE TEMP B-TREE FOR ORDER BY"
+            ]
+        );
+
+        metrics.close().await;
+        for file in files(&path) {
+            let _ = std::fs::remove_file(file);
+        }
+    }
 }
