@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.0.0-beta.8](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.7...v2.0.0-beta.8) (2026-11-11)
+
+
+### Features
+
+* **nntp:** 25 more providers to pick from when adding a server ([#1880](https://github.com/infinidysk/infinidysk/issues/1880)) ([0bd13e8](https://github.com/infinidysk/infinidysk/commit/0bd13e84efacfbafafffcf32b34fda42af8a9954))
+
+
+### Bug Fixes
+
+* **arr:** extend whole-library request timeouts to three minutes ([#1896](https://github.com/infinidysk/infinidysk/issues/1896)) ([6cd716a](https://github.com/infinidysk/infinidysk/commit/6cd716aec53d62b79f1bac4c29c173f648b8cd4a))
+* **arr:** treat a connection the Arr drops mid-request as transient ([#1890](https://github.com/infinidysk/infinidysk/issues/1890)) ([766acc2](https://github.com/infinidysk/infinidysk/commit/766acc2d3aecb8a4ca50cc2e8f3654b188cb31b0))
+* **nntp:** brief connection failures no longer shrink the provider pool ([#1883](https://github.com/infinidysk/infinidysk/issues/1883)) ([b77a82f](https://github.com/infinidysk/infinidysk/commit/b77a82f78d189065ff6ef8cc638abf291e59723e))
+* **nntp:** report stalled provider connections accurately and bound login time ([#1887](https://github.com/infinidysk/infinidysk/issues/1887)) ([d1bb0af](https://github.com/infinidysk/infinidysk/commit/d1bb0afe99bf5a6d9f920e88ac2d8f4a23760e16))
+* **nntp:** retry on a new connection when the server ends the session with 400 ([#1889](https://github.com/infinidysk/infinidysk/issues/1889)) ([6874a08](https://github.com/infinidysk/infinidysk/commit/6874a08c44adff6ec2a26e68f786f85366daf387))
+* **nntp:** try another provider address when one does not answer ([#1891](https://github.com/infinidysk/infinidysk/issues/1891)) ([4ab40fc](https://github.com/infinidysk/infinidysk/commit/4ab40fcb495c9936bb2b3a3b1e05fefcbc243ce7))
+* **nntp:** validate article offsets after the full part header arrives ([#1886](https://github.com/infinidysk/infinidysk/issues/1886)) ([5ac1ab2](https://github.com/infinidysk/infinidysk/commit/5ac1ab2b9c5556b441e7cc117722032016a7a3e2))
+* **stream:** fetch a segment again when its read-ahead failed before the reader needed it ([#1888](https://github.com/infinidysk/infinidysk/issues/1888)) ([159efcb](https://github.com/infinidysk/infinidysk/commit/159efcbb1768f0d50e4b06d8e92271314ade8459))
+* **ui:** cleanup shows how many empty folders it removed, and cancel stops it ([#1884](https://github.com/infinidysk/infinidysk/issues/1884)) ([6c0f572](https://github.com/infinidysk/infinidysk/commit/6c0f572741163456d5533819e4e8babe87b98fa2))
+* **ui:** provider outages show for their full length in every window, including All time ([#1885](https://github.com/infinidysk/infinidysk/issues/1885)) ([ba9fb1a](https://github.com/infinidysk/infinidysk/commit/ba9fb1a2204c7d26c492447a41826ffa49d9540e))
+* **webdav:** log why a stream was cut short ([#1892](https://github.com/infinidysk/infinidysk/issues/1892)) ([78ed0b7](https://github.com/infinidysk/infinidysk/commit/78ed0b7c81dcdb8f42d7ba2d87648f8fa8dc3314))
+
+
+### Performance Improvements
+
+* **webdav:** faster streaming when segments do not line up with response chunks ([#1893](https://github.com/infinidysk/infinidysk/issues/1893)) ([c1f2b40](https://github.com/infinidysk/infinidysk/commit/c1f2b40d2ac4e2f7f3e1f1370221428c1573aacb))
+
+
+### Reverts
+
+* **webdav:** stream response bytes through the 256 KiB buffer again ([#1895](https://github.com/infinidysk/infinidysk/issues/1895)) ([2aef6a6](https://github.com/infinidysk/infinidysk/commit/2aef6a6bbc590963dc4ece3b45b9c5acc1fb328f))
+
 ## [2.0.0-beta.7](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.6...v2.0.0-beta.7) (2026-11-10)
 
 
