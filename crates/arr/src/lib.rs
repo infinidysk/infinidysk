@@ -110,12 +110,16 @@ pub enum Error {
 }
 
 impl Error {
-    /// The Arr was unreachable, slow or failing, so retrying later may work.
+    /// The Arr was unreachable, slow or failing, or dropped the connection mid-request,
+    /// so retrying later may work.
     #[must_use]
     pub fn is_transient(&self) -> bool {
         match self {
             Self::Http(e) => {
-                e.is_connect() || e.is_timeout() || e.status().is_some_and(|s| s.is_server_error())
+                e.is_connect()
+                    || e.is_timeout()
+                    || e.status().is_some_and(|s| s.is_server_error())
+                    || dropped(e)
             }
             Self::Rejected { status, .. } => status.is_server_error(),
             Self::Unexpected(_)
@@ -124,6 +128,22 @@ impl Error {
             | Self::Searching => false,
         }
     }
+}
+
+/// The connection failed while sending the request or reading the response body. A
+/// body cut short reaches JSON decoding as a body error in the cause chain; malformed
+/// JSON that arrived whole does not.
+fn dropped(error: &reqwest::Error) -> bool {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = cause {
+        if let Some(e) = current.downcast_ref::<reqwest::Error>()
+            && (e.is_request() || e.is_body())
+        {
+            return true;
+        }
+        cause = current.source();
+    }
+    false
 }
 
 /// reqwest's own message hides why a request failed, such as a refused connection.
