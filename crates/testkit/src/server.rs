@@ -67,6 +67,9 @@ pub struct LoopbackServer {
     bodies: Arc<AtomicUsize>,
 }
 
+/// Per message-id: BODY replies still to stall, for how long, and how many were.
+type Stalls = Arc<Mutex<HashMap<String, (usize, Duration, usize)>>>;
+
 #[derive(Clone)]
 struct Acceptor {
     articles: Arc<HashMap<String, Vec<u8>>>,
@@ -75,6 +78,7 @@ struct Acceptor {
     open: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
     bodies: Arc<AtomicUsize>,
+    stalls: Stalls,
 }
 
 impl Acceptor {
@@ -90,6 +94,7 @@ impl Acceptor {
                     behavior: self.behavior,
                     rejected: now > self.behavior.max_connections,
                     bodies: Arc::clone(&self.bodies),
+                    stalls: Arc::clone(&self.stalls),
                 };
                 // A failed connection only affects the test that owns it.
                 tokio::spawn(async move {
@@ -236,6 +241,7 @@ impl LoopbackServer {
             open: Arc::default(),
             peak: Arc::default(),
             bodies: Arc::default(),
+            stalls: Arc::default(),
         };
         Ok(Self {
             addr,
@@ -281,6 +287,26 @@ impl LoopbackServer {
         self.bodies.load(Ordering::SeqCst)
     }
 
+    /// Holds the next `times` BODY replies for `message_id` for `delay` each.
+    pub fn stall_article(&self, message_id: &str, times: usize, delay: Duration) {
+        self.acceptor
+            .stalls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message_id.to_owned(), (times, delay, 0));
+    }
+
+    /// BODY replies for `message_id` stalled so far by [`stall_article`](Self::stall_article).
+    #[must_use]
+    pub fn stalled(&self, message_id: &str) -> usize {
+        self.acceptor
+            .stalls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(message_id)
+            .map_or(0, |&(_, _, stalled)| stalled)
+    }
+
     #[must_use]
     pub const fn addr(&self) -> SocketAddr {
         self.addr
@@ -316,6 +342,7 @@ struct Limit {
     behavior: Behavior,
     rejected: bool,
     bodies: Arc<AtomicUsize>,
+    stalls: Stalls,
 }
 
 async fn delay(duration: Duration) {
@@ -364,6 +391,20 @@ async fn serve<S: AsyncRead + AsyncWrite>(
                 }
                 delay(impairment.response_delay).await;
                 let id = arg.trim().trim_start_matches('<').trim_end_matches('>');
+                let held = limit
+                    .stalls
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .get_mut(id)
+                    .filter(|(left, _, _)| *left > 0)
+                    .map(|(left, duration, stalled)| {
+                        *left -= 1;
+                        *stalled += 1;
+                        *duration
+                    });
+                if let Some(duration) = held {
+                    delay(duration).await;
+                }
                 if let Some(wire) = articles.get(id) {
                     write
                         .write_all(format!("222 0 <{id}> body follows\r\n").as_bytes())
