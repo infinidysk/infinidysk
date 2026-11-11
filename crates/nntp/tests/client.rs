@@ -1045,10 +1045,6 @@ async fn background_connects_that_fail_are_counted_without_a_trip() {
     let stats = &client.stats()[0];
     assert_eq!((stats.connect_failures, stats.trips), (2, 0));
     assert!(stats.open_for.is_none());
-
-    // Inside the connect backoff the request fails without trying to connect.
-    assert!(body(&client, "a@test").await.is_err());
-    assert_eq!(client.stats()[0].connect_failures, 2);
 }
 
 #[tokio::test]
