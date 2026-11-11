@@ -154,3 +154,50 @@ async fn download_limit_waits_outside_the_read_timeout_and_lifts_live() {
         "{elapsed:?}"
     );
 }
+
+#[tokio::test]
+async fn a_handshake_ends_by_the_connect_deadline() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Each step answers inside the 500 ms read timeout, but PASS is never answered.
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut read = BufReader::new(read);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        write.write_all(b"200 ready\r\n").await.unwrap();
+        let mut line = String::new();
+        read.read_line(&mut line).await.unwrap();
+        assert!(line.starts_with("AUTHINFO USER "));
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let _ = write.write_all(b"381 password required\r\n").await;
+        // The client gives up: the rest of the stream ends, PASS or not.
+        let mut rest = Vec::new();
+        let _ = read.read_to_end(&mut rest).await;
+    });
+    let credentials = Credentials {
+        username: "user".into(),
+        password: "pass".into(),
+    };
+    let endpoint = Endpoint::new(
+        "127.0.0.1",
+        port,
+        TlsMode::Plain,
+        Some(credentials),
+        Duration::from_millis(500),
+    )
+    .unwrap();
+
+    let started = Instant::now();
+    let result = Connection::connect(&endpoint).await;
+    let elapsed = started.elapsed();
+    assert!(matches!(result, Err(Error::Timeout)), "{:?}", result.err());
+    // Per step this took 400 + 400 + 500 ms.
+    assert!(elapsed < Duration::from_millis(1000), "{elapsed:?}");
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the partial connection is closed")
+        .unwrap();
+}

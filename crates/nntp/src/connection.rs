@@ -268,7 +268,7 @@ impl Endpoint {
         self
     }
 
-    /// `timeout` bounds the TCP connect, the TLS handshake and every single read or
+    /// `timeout` bounds the whole connect and login, and every later single read or
     /// write.
     pub fn new(
         host: impl Into<String>,
@@ -340,9 +340,19 @@ impl Connection {
 
     /// [`connect`](Self::connect), with the stage a failure happened in.
     pub(crate) async fn connect_staged(endpoint: &Endpoint) -> Result<Self, (Stage, Error)> {
+        Self::connect_staged_until(endpoint, tokio::time::Instant::now() + endpoint.timeout).await
+    }
+
+    /// [`connect_staged`](Self::connect_staged), with all of it ending by `deadline`.
+    pub(crate) async fn connect_staged_until(
+        endpoint: &Endpoint,
+        deadline: tokio::time::Instant,
+    ) -> Result<Self, (Stage, Error)> {
         let mut stage = Stage::Resolve;
-        let result = Self::connect_at(endpoint, &mut stage).await;
-        result.map_err(|error| (stage, error))
+        match tokio::time::timeout_at(deadline, Self::connect_at(endpoint, &mut stage)).await {
+            Ok(result) => result.map_err(|error| (stage, error)),
+            Err(_) => Err((stage, Error::Timeout)),
+        }
     }
 
     async fn connect_at(endpoint: &Endpoint, stage: &mut Stage) -> Result<Self, Error> {
@@ -400,7 +410,8 @@ impl Connection {
             pending: 0,
             timeout: timeout_after,
             timing: Timing::default(),
-            bandwidth: endpoint.bandwidth.clone(),
+            // Set after login, so the connect deadline never covers a local limit wait.
+            bandwidth: None,
         };
         *stage = Stage::Greeting;
         match conn.read_status().await? {
@@ -412,6 +423,8 @@ impl Connection {
         if let Some(credentials) = &endpoint.credentials {
             conn.authenticate(credentials).await?;
         }
+        // Login bytes stay unpaid until the first read after this.
+        conn.bandwidth = endpoint.bandwidth.clone();
         let ms = |from: Instant, to: Instant| to.duration_since(from).as_millis();
         tracing::debug!(
             host = endpoint.host.as_str(),
@@ -739,10 +752,10 @@ impl Connection {
     /// Waits out the download limit for bytes already read. Outside the read timeout,
     /// so a slow limit never fails a healthy connection.
     async fn pay(&mut self) {
-        let unpaid = std::mem::take(&mut self.stream.get_mut().unpaid);
         if let Some(bandwidth) = &self.bandwidth
-            && unpaid > 0
+            && self.stream.get_ref().unpaid > 0
         {
+            let unpaid = std::mem::take(&mut self.stream.get_mut().unpaid);
             let link = &self.stream.get_ref().link;
             let (phase, since) = (link.phase(), link.since.load(Ordering::Relaxed));
             link.set(Phase::Bandwidth);
@@ -830,4 +843,45 @@ fn parse_ypart(line: &[u8]) -> Option<(u64, usize)> {
     let end = field::<u64>(line, b"end")?;
     let len = end.checked_sub(begin)?.checked_add(1)?;
     Some((begin.checked_sub(1)?, usize::try_from(len).ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use infinidysk_testkit::LoopbackServer;
+
+    #[tokio::test]
+    async fn login_preserves_bandwidth_debt_until_the_limiter_is_attached() {
+        let server = LoopbackServer::start(Vec::new()).await.unwrap();
+        let usage = Arc::new(Usage::default());
+        let bandwidth = Arc::new(Bandwidth::new(Some(1)));
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            TlsMode::Plain,
+            Some(Credentials {
+                username: "user".into(),
+                password: "pass".into(),
+            }),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+        .with_usage(Arc::clone(&usage))
+        .with_bandwidth(Arc::clone(&bandwidth));
+        let mut conn = Connection::connect(&endpoint).await.unwrap();
+        let debt = usage.used();
+        assert!(debt > 0);
+        assert_eq!(conn.stream.get_ref().unpaid, debt);
+
+        let mut payment = Box::pin(conn.pay());
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(payment.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        bandwidth.set_limit(None);
+        payment.await;
+        assert_eq!(conn.stream.get_ref().unpaid, 0);
+        assert_eq!(usage.used(), debt);
+    }
 }
