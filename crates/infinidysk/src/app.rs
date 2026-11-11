@@ -23,7 +23,7 @@ use infinidysk_nntp::{
 use infinidysk_queue::Queue;
 use infinidysk_queue::import::{self, Output, Verifier};
 use infinidysk_stream::{Budget, Cache, CacheConfig, DiskConfig, Fault};
-use infinidysk_vfs::{Tracing, Vfs};
+use infinidysk_vfs::{ReadVersion, Tracing, Vfs};
 use infinidysk_webdav::{Access, Auth as DavAuth, WebDav};
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, RwLock, mpsc, watch};
@@ -226,6 +226,11 @@ pub async fn serve(
         &quotas,
         &bandwidth,
     )?));
+    let repairs = crate::repair::install(&client, db.clone(), boot.config_dir.join("repairs"));
+    repairs
+        .restore_embedded()
+        .await
+        .context("restoring saved repair articles")?;
     let warm_task = {
         let client = Arc::clone(&client);
         let cancel = cancel.clone();
@@ -284,7 +289,7 @@ pub async fn serve(
 
     let (arr_tx, arr_rx) = watch::channel(arr_instances(&settings.arr_instances));
     let (health_tx, health_rx) = watch::channel(health_settings(&settings.health));
-    let (fault_tx, mut fault_rx) = mpsc::unbounded_channel::<(ItemId, usize, Fault)>();
+    let (fault_tx, mut fault_rx) = mpsc::unbounded_channel::<(ItemId, ReadVersion, usize, Fault)>();
     let vfs = Arc::new(
         Vfs::new(
             db.clone(),
@@ -296,9 +301,9 @@ pub async fn serve(
             &settings.mount.dir,
         )
         .with_cache(Arc::clone(&cache))
-        .with_report(Arc::new(move |id, index, fault| {
+        .with_report(Arc::new(move |id, version, index, fault| {
             // Fails only at shutdown, when nobody records damage anymore.
-            let _ = fault_tx.send((id, index, fault));
+            let _ = fault_tx.send((id, version, index, fault));
         })),
     );
     vfs.set_gap_tolerance(settings.health.degraded_tolerance);
@@ -313,6 +318,9 @@ pub async fn serve(
         settings: health_rx.clone(),
         analyzes,
     }));
+    if infinidysk_core::experiment("par2-repair") {
+        queue.enable_par2();
+    }
     let worker = {
         let queue = Arc::clone(&queue);
         tokio::spawn(async move { queue.run().await })
@@ -344,6 +352,9 @@ pub async fn serve(
             move || importing() || streaming(),
         ));
     }
+    if infinidysk_core::experiment("par2-repair") {
+        health = health.with_par2();
+    }
     let health = Arc::new(health);
     let health_task = {
         let health = Arc::clone(&health);
@@ -359,19 +370,33 @@ pub async fn serve(
     // Playback damage, batched per file so a broken stretch costs one blob rewrite.
     tokio::spawn({
         let health = Arc::clone(&health);
+        let db = db.clone();
         async move {
             while let Some(first) = fault_rx.recv().await {
-                let mut files: HashMap<ItemId, (Vec<usize>, Vec<usize>)> = HashMap::new();
+                let mut files: HashMap<ItemId, (ReadVersion, Vec<usize>, Vec<usize>)> =
+                    HashMap::new();
                 let mut next = Some(first);
-                while let Some((id, index, fault)) = next {
-                    let (missing, corrupt) = files.entry(id).or_default();
-                    match fault {
-                        Fault::Missing => missing.push(index),
-                        Fault::Corrupt => corrupt.push(index),
+                while let Some((id, version, index, fault)) = next {
+                    if version.is_current() {
+                        let entry = files
+                            .entry(id)
+                            .or_insert_with(|| (version.clone(), Vec::new(), Vec::new()));
+                        if !entry.0.is_current() {
+                            *entry = (version, Vec::new(), Vec::new());
+                        }
+                        match fault {
+                            Fault::Missing => entry.1.push(index),
+                            Fault::Corrupt => entry.2.push(index),
+                        }
                     }
                     next = fault_rx.try_recv().ok();
                 }
-                for (id, (missing, corrupt)) in files {
+                for (id, (version, missing, corrupt)) in files {
+                    // Publication pauses background work before taking item writers.
+                    let _writing = db.write_permit().await;
+                    let Some(_lease) = version.read().await else {
+                        continue;
+                    };
                     if let Err(error) = health.report(id, &missing, &corrupt).await {
                         warn!(item = %id, reason = %error, "could not record playback damage");
                     }
@@ -398,9 +423,12 @@ pub async fn serve(
     #[cfg(not(target_os = "linux"))]
     drop(mount_tx);
     #[cfg(target_os = "linux")]
+    let invalidator = Arc::new(infinidysk_fuse::Invalidator::default());
+    #[cfg(target_os = "linux")]
     let mount = fuse.then(|| {
         tokio::spawn(infinidysk_fuse::run(
             Arc::clone(&vfs),
+            Arc::clone(&invalidator),
             infinidysk_fuse::Config {
                 mount_dir: settings.mount.dir.clone().into(),
                 uid: boot.uid,
@@ -502,10 +530,28 @@ pub async fn serve(
         .await,
     );
     let library_task = tokio::spawn(Arc::clone(&library).run());
+    let repair_task = if infinidysk_core::experiment("par2-repair") {
+        let publisher = crate::repair::Publisher::new(Arc::clone(&repairs), Arc::clone(&vfs))?;
+        #[cfg(target_os = "linux")]
+        let publisher = if fuse {
+            publisher.with_mount(invalidator)
+        } else {
+            publisher
+        };
+        Some(tokio::spawn(Arc::clone(&repairs).run(
+            Arc::clone(&client),
+            publisher,
+            Arc::clone(&health),
+            cancel.clone(),
+        )))
+    } else {
+        None
+    };
     let restart = Arc::new(AtomicBool::new(false));
     let backups = Arc::new(
         crate::backup::Backups::new(crate::backup::Parts {
             db: db.clone(),
+            repairs: Arc::clone(&repairs),
             config: Arc::clone(&config),
             // After a cutover the database is PostgreSQL, whatever the boot URL says.
             live: if db.is_postgres() {
@@ -617,6 +663,15 @@ pub async fn serve(
         }
     };
     cancel.cancel();
+    if let Some(mut task) = repair_task
+        && tokio::time::timeout(DRAIN, &mut task).await.is_err()
+    {
+        task.abort();
+        warn!(
+            reason = "repair finalization is still pending",
+            "repair will reconcile after restart"
+        );
+    }
     worker.abort();
     health_task.abort();
     discovery_task.abort();

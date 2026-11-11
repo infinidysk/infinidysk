@@ -268,7 +268,7 @@ impl Cache {
     ) -> Body {
         self.misses.fetch_add(1, Ordering::Relaxed);
         let body = client
-            .body_with(message_id, Workload::Stream, probe, progress, begin)
+            .provider_body_with(message_id, Workload::Stream, probe, progress, begin)
             .await;
         let data = body.map_err(Arc::new)?.data;
         self.insert(message_id, data.clone());

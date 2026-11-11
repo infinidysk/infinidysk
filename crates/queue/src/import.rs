@@ -17,7 +17,8 @@ use infinidysk_archive::{Format, rar, sevenzip};
 use infinidysk_core::crypt::{BLOCK, Cipher, Crypt};
 use infinidysk_core::trace::{self, Causes, Probe, Trace};
 use infinidysk_core::{
-    ByteRange, FileMeta, FilePart, MultipartFile, NzbFile, Par2Proof, Segment, Segments, media,
+    BlobId, ByteRange, FileMeta, FilePart, MultipartFile, NzbFile, Par2Proof, Segment, Segments,
+    media, repair::Omitted,
 };
 use infinidysk_db::FirstCheck;
 use infinidysk_nntp::{ArticleFuture, Articles, Body, Client, Workload};
@@ -213,6 +214,9 @@ pub enum Error {
     Missing(String),
     #[error("{0}")]
     Failed(String),
+    /// A capability or configuration failure that PAR2 cannot fix.
+    #[error("{0}")]
+    Unrepairable(String),
 }
 
 fn failed(msg: impl Into<String>) -> Error {
@@ -269,6 +273,7 @@ struct Volume {
 // that overshoot ever matters.
 struct Job {
     client: Arc<Client>,
+    source: Option<(BlobId, i64)>,
     requests: Semaphore,
     progress: Arc<Progress>,
     /// Extra filename globs to drop.
@@ -337,18 +342,52 @@ impl Articles for Job {
     fn body<'a>(&'a self, id: &'a str, begin: Option<u64>) -> ArticleFuture<'a, Bytes> {
         Box::pin(async move {
             let cached = self.bodies().get(id).cloned();
-            if let Some(data) = cached {
-                return Ok(data);
+            if let Some(data) = &cached
+                && !self
+                    .client
+                    .may_repair(infinidysk_nntp::RepairKey::Article(id))
+            {
+                return Ok(data.clone());
             }
             let (_slot, probe) = self.slot().await;
             self.progress.request();
-            let body = self
-                .client
-                .body_with(id, Workload::Queue, Some(&probe), None, begin)
-                .await;
+            let body = async {
+                if let Some(body) = self.client.repaired(id, begin).await? {
+                    return Ok(body.data);
+                }
+                if let Some(data) = cached {
+                    return Ok(data);
+                }
+                Ok(self
+                    .client
+                    .provider_body_with(id, Workload::Queue, Some(&probe), None, begin)
+                    .await?
+                    .data)
+            }
+            .await;
             self.progress.answer();
             self.done(&probe);
-            Ok(body?.data)
+            body
+        })
+    }
+
+    fn repair_source(&self) -> Option<(BlobId, i64)> {
+        self.source
+    }
+
+    fn omitted<'a>(&'a self, key: &'a Omitted) -> ArticleFuture<'a, Bytes> {
+        Box::pin(async move {
+            if self.source != Some((key.nzb, key.generation)) {
+                return Err(infinidysk_nntp::Error::NotFound);
+            }
+            let (_slot, probe) = self.slot().await;
+            self.progress.request();
+            let body = self.client.repaired_omitted(key).await;
+            self.progress.answer();
+            self.done(&probe);
+            body?
+                .map(|body| body.data)
+                .ok_or(infinidysk_nntp::Error::NotFound)
         })
     }
 }
@@ -371,10 +410,12 @@ pub async fn import(
     password: Option<&str>,
     progress: Arc<Progress>,
     verifier: Option<&dyn Verifier>,
+    source: Option<(BlobId, i64)>,
 ) -> Result<(Vec<Output>, Vec<Option<FirstCheck>>), Error> {
     let started = Instant::now();
     let job = &Arc::new(Job {
         client: Arc::clone(client),
+        source,
         requests: Semaphore::new(CONCURRENCY),
         progress,
         blocklist: rules.blocklist.clone(),
@@ -423,11 +464,15 @@ pub async fn import(
                     return None;
                 }
                 let hash = infinidysk_par2::hash_16k(&b.data);
-                par2.iter().find(|(_, f)| {
+                let mut matches = par2.iter().filter(|(_, _, f)| {
                     f.hash_16k == hash && f.length <= bytes && f.length * 100 >= bytes * 95
-                })
+                });
+                let first = matches.next()?;
+                // Prefix matching may name a file, but cannot choose between recovery sets.
+                let set = first.0.filter(|_| matches.all(|other| other == first));
+                Some((set, first.1, &first.2))
             });
-            let name = matched.map_or_else(|| file.name().to_owned(), |(_, f)| f.name.clone());
+            let name = matched.map_or_else(|| file.name().to_owned(), |(_, _, f)| f.name.clone());
             let kind = match (names::classify(&name), first.as_ref()) {
                 (Kind::Par2, _) => Kind::Par2,
                 (kind, None) => kind,
@@ -446,7 +491,7 @@ pub async fn import(
                 kind,
                 ids: file.segments.iter().map(|s| s.id.clone()).collect(),
                 first,
-                proof: matched.and_then(|(slice_size, f)| proof(*slice_size, f)),
+                proof: matched.and_then(|(set_id, slice_size, f)| proof(set_id, slice_size, f)),
             }
         })
         .collect();
@@ -552,7 +597,7 @@ pub async fn import(
 
     let outputs = filter(outputs, job);
     if outputs.is_empty() {
-        return Err(failed("No importable files found."));
+        return Err(Error::Unrepairable("No importable files found.".to_owned()));
     }
     let required = rules.owners.get(&category.to_lowercase());
     require(&outputs, required.map_or(&[], Vec::as_slice))?;
@@ -702,7 +747,7 @@ async fn read_par2(
     job: &Job,
     nzb: &Nzb,
     firsts: &[Option<Body>],
-) -> Result<Vec<(u64, infinidysk_par2::File)>, Error> {
+) -> Result<Vec<(Option<infinidysk_par2::Id>, u64, infinidysk_par2::File)>, Error> {
     let mut candidates: Vec<usize> = (0..firsts.len())
         .filter(|&i| {
             firsts[i]
@@ -717,8 +762,8 @@ async fn read_par2(
             file.segments.len(),
         )
     });
-    let mut files: Vec<(u64, infinidysk_par2::File)> = Vec::new();
-    let mut seen = HashSet::new();
+    let mut files: Vec<(Option<infinidysk_par2::Id>, u64, infinidysk_par2::File)> = Vec::new();
+    let mut seen: HashMap<_, usize> = HashMap::new();
     let (mut articles, mut bytes) = (0, 0);
     for i in candidates {
         let vol = nzb.files[i].name().to_ascii_lowercase().contains(".vol");
@@ -755,16 +800,28 @@ async fn read_par2(
         bytes += reader.buffered();
         let index = reader.index();
         for f in index.files {
-            if seen.insert(f.id) {
-                files.push((index.slice_size, f));
+            let key = (index.set_id, f.id);
+            if let Some(&at) = seen.get(&key) {
+                let previous = &mut files[at];
+                if previous.1 != index.slice_size || previous.2 != f {
+                    previous.0 = None;
+                }
+            } else {
+                seen.insert(key, files.len());
+                files.push((index.set_id, index.slice_size, f));
             }
         }
     }
     Ok(files)
 }
 
-fn proof(slice_size: u64, f: &infinidysk_par2::File) -> Option<Par2Proof> {
+fn proof(
+    set_id: Option<infinidysk_par2::Id>,
+    slice_size: u64,
+    f: &infinidysk_par2::File,
+) -> Option<Par2Proof> {
     Some(Par2Proof {
+        set_id,
         file_length: f.length,
         slice_size: u32::try_from(slice_size).ok()?,
         slice_md5: f.slices.iter().map(|s| s.md5).collect(),
@@ -1040,12 +1097,17 @@ impl Volume {
         for (part, range) in self.overlaps(offset..end) {
             let mut at = part.offset;
             for segment in &part.segments.items {
-                let next = at + u64::from(segment.size);
+                let next = at
+                    .checked_add(u64::from(segment.size))
+                    .ok_or_else(|| failed("segment range overflow"))?;
                 if next > range.start && at < range.end {
                     let from = range.start.max(at) - at;
                     let to = range.end.min(next) - at;
                     let begin = part.segments.sizes_trusted.then_some(at);
-                    out.extend(self.segment(job, segment, begin, from..to).await?);
+                    out.extend(
+                        self.segment(job, segment, begin, part.proof.as_ref(), from..to)
+                            .await?,
+                    );
                 }
                 if next >= range.end {
                     break;
@@ -1062,6 +1124,7 @@ impl Volume {
         job: &Job,
         segment: &Segment,
         begin: Option<u64>,
+        proof: Option<&Par2Proof>,
         range: Range<u64>,
     ) -> Result<Vec<u8>, Error> {
         let slice = |data: &[u8]| {
@@ -1069,20 +1132,27 @@ impl Volume {
                 ..usize::try_from(range.end).expect("within a segment in memory");
             data[r].to_vec()
         };
-        if let Some(data) = job.bodies().get(&segment.id) {
-            return Ok(slice(data));
-        }
-        let body = fetch(job, &segment.id, begin)
-            .await?
-            .ok_or_else(|| missing(&self.name))?;
-        if body.data.len() as u64 != u64::from(segment.size) {
+        let data = job
+            .read(segment, begin, proof)
+            .await
+            .map_err(|error| match error {
+                infinidysk_nntp::Error::NotFound
+                | infinidysk_nntp::Error::CrcMismatch { .. }
+                | infinidysk_nntp::Error::Yenc(_)
+                | infinidysk_nntp::Error::TooLarge
+                | infinidysk_nntp::Error::InvalidArgument(_) => missing(&self.name),
+                error => Error::Retry(error),
+            })?;
+        if data.len() as u64 != u64::from(segment.size) {
             return Err(failed(format!(
                 "{}: segment sizes disagree with the yEnc headers",
                 self.name
             )));
         }
-        let out = slice(&body.data);
-        job.bodies().insert(segment.id.clone(), body.data);
+        let out = slice(&data);
+        if !segment.id.is_empty() {
+            job.bodies().insert(segment.id.clone(), data);
+        }
         Ok(out)
     }
 
@@ -1156,13 +1226,13 @@ fn plain(v: Volume) -> Option<Output> {
 /// cannot decrypt.
 fn streamable(name: &str, kind: &str, stored: bool, encrypted: bool) -> Result<(), Error> {
     if !stored {
-        return Err(failed(format!(
+        return Err(Error::Unrepairable(format!(
             "{name}: compressed {kind} archives cannot be streamed; \
              only stored (uncompressed) archive contents are supported."
         )));
     }
     if encrypted {
-        return Err(failed(format!(
+        return Err(Error::Unrepairable(format!(
             "{name}: {kind} encryption older than AES is not supported."
         )));
     }
@@ -1172,7 +1242,7 @@ fn streamable(name: &str, kind: &str, stored: bool, encrypted: bool) -> Result<(
 /// The key for `kdf` from the job's password, derived once per job off the runtime.
 async fn key(job: &Job, name: &str, kdf: &Kdf) -> Result<Derived, Error> {
     let Some(password) = &job.password else {
-        return Err(failed(format!(
+        return Err(Error::Unrepairable(format!(
             "{name}: the archive is encrypted and the NZB has no password. \
              Add it to the NZB name as {{{{password}}}}."
         )));
@@ -1558,30 +1628,40 @@ async fn check_articles(
     percent: u8,
 ) -> Result<Vec<Output>, Error> {
     // Each distinct segment once; archive members can share a volume's segments.
-    let mut ids: Vec<String> = Vec::new();
-    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut ids = Vec::new();
+    let mut index = HashMap::new();
     let uses: Vec<Vec<usize>> = outputs
         .iter()
         .map(|o| {
-            let mut used: Vec<usize> = segment_ids(&o.meta)
+            let mut used: Vec<usize> = segment_keys(&o.meta, job.source)?
+                .into_iter()
                 .map(|id| {
-                    *index.entry(id.to_owned()).or_insert_with(|| {
-                        ids.push(id.to_owned());
+                    *index.entry(id.clone()).or_insert_with(|| {
+                        ids.push(id);
                         ids.len() - 1
                     })
                 })
                 .collect();
             used.dedup();
-            used
+            Ok::<_, Error>(used)
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let fatal: HashSet<usize> = outputs
         .iter()
         .zip(&uses)
         .filter(|(o, _)| o.path.last().and_then(|n| media::kind(n)).is_some())
         .flat_map(|(_, used)| used.iter().copied())
         .collect();
-    let first = media::sample(ids.len(), percent);
+    let mut first = media::sample(ids.len(), percent);
+    first.extend(ids.iter().enumerate().filter_map(|(i, key)| {
+        (match key {
+            Checked::Omitted(_) => true,
+            Checked::Named(id) => id.is_empty(),
+        })
+        .then_some(i)
+    }));
+    first.sort_unstable();
+    first.dedup();
     job.progress
         .plan(Step::Checking, first.len() + 2 * media_outputs(&outputs));
     let mut missed = stat_all(job, &ids, &first, &fatal).await?;
@@ -1621,34 +1701,62 @@ async fn check_articles(
     }
 }
 
-fn segment_ids(meta: &FileMeta) -> impl Iterator<Item = &str> {
-    let spans: Vec<&Segments> = match meta {
-        FileMeta::Nzb(f) => vec![&f.segments],
-        FileMeta::Multipart(m) => m.parts.iter().map(|p| &p.segments).collect(),
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Checked {
+    Named(String),
+    Omitted(Omitted),
+}
+
+fn segment_keys(meta: &FileMeta, source: Option<(BlobId, i64)>) -> Result<Vec<Checked>, Error> {
+    let spans: Vec<_> = match meta {
+        FileMeta::Nzb(f) => vec![(&f.segments, 0, f.proof.as_ref())],
+        FileMeta::Multipart(m) => m
+            .parts
+            .iter()
+            .map(|p| (&p.segments, p.offset, p.proof.as_ref()))
+            .collect(),
     };
-    spans
-        .into_iter()
-        .flat_map(|s| s.items.iter().map(|s| s.id.as_str()))
+    let mut keys = Vec::new();
+    for (segments, mut at, proof) in spans {
+        for segment in &segments.items {
+            let key =
+                Omitted::for_segment(source, segment, segments.sizes_trusted.then_some(at), proof)
+                    .map_err(|_| {
+                        Error::Retry(infinidysk_nntp::Error::Repair(
+                            "invalid omitted article layout",
+                        ))
+                    })?;
+            keys.push(key.map_or_else(|| Checked::Named(segment.id.clone()), Checked::Omitted));
+            at = at
+                .checked_add(u64::from(segment.size))
+                .ok_or_else(|| failed("segment range overflow"))?;
+        }
+    }
+    Ok(keys)
 }
 
 /// Which of `probes`, indices into `ids`, are missing on every provider. Returns at the
 /// first miss in `fatal`, which fails the import whatever the other probes find.
 async fn stat_all(
     job: &Arc<Job>,
-    ids: &[String],
+    ids: &[Checked],
     probes: &[usize],
     fatal: &HashSet<usize>,
 ) -> Result<HashSet<usize>, Error> {
     // Owned indices: a closure over `&usize` makes the spawned import future fail `Send`.
-    let mut pending = stream::iter(
-        probes
-            .iter()
-            .copied()
-            .enumerate()
-            .map(
-                |(position, index)| async move { (position, index, stat(job, &ids[index]).await) },
-            ),
-    )
+    let mut pending = stream::iter(probes.iter().copied().enumerate().map(
+        |(position, index)| async move {
+            let found = match &ids[index] {
+                Checked::Named(id) => stat(job, id).await,
+                Checked::Omitted(key) => match job.omitted(key).await {
+                    Ok(_) => Ok(true),
+                    Err(infinidysk_nntp::Error::NotFound) => Ok(false),
+                    Err(error) => Err(Error::Retry(error)),
+                },
+            };
+            (position, index, found)
+        },
+    ))
     .buffer_unordered(CONCURRENCY);
     let mut missed = HashSet::new();
     let mut inconclusive: Option<(usize, Error)> = None;
@@ -1878,6 +1986,155 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn omitted_import_checks_and_member_reads_keep_distinct_posted_identities() {
+        use infinidysk_nntp::RepairKey;
+        let nzb = BlobId::new();
+        let corrupt = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fault = Arc::clone(&corrupt);
+        let client = Arc::new(Client::new([]));
+        client.set_repairs(Box::new(move |key| {
+            let (data, offset, file_size) = match key {
+                RepairKey::Omitted(key)
+                    if key.nzb == nzb
+                        && key.generation == 0
+                        && key.set == [7; 16]
+                        && key.range
+                            == (ByteRange {
+                                start: 128,
+                                end: 131,
+                            }) =>
+                {
+                    let data = if key.file == [1; 16] {
+                        b"abc"
+                    } else if key.file == [2; 16] {
+                        b"xyz"
+                    } else {
+                        return None;
+                    };
+                    (data.as_slice(), 128, 200)
+                }
+                RepairKey::Article("named@loopback") => (&b"new"[..], 0, 3),
+                _ => return None,
+            };
+            let corrupt = fault.load(Ordering::Relaxed);
+            Some(Box::pin(async move {
+                if corrupt {
+                    return Err(infinidysk_nntp::Error::Repair("stored article is corrupt"));
+                }
+                Ok(Some(Body {
+                    data: Bytes::from_static(data),
+                    offset,
+                    file_size,
+                    part: None,
+                    total: None,
+                }))
+            }))
+        }));
+        let mut job = Arc::new(Job {
+            client,
+            source: Some((nzb, 0)),
+            requests: Semaphore::new(CONCURRENCY),
+            progress: Arc::new(Progress::default()),
+            blocklist: vec![],
+            bodies: Mutex::default(),
+            password: None,
+            keys: Mutex::default(),
+            waits: Mutex::default(),
+        });
+        job.bodies()
+            .insert(String::new(), Bytes::from_static(b"bad"));
+        job.bodies()
+            .insert("named@loopback".into(), Bytes::from_static(b"old"));
+        let output = |file: u8| Output {
+            path: vec![format!("source-{file}.bin")],
+            meta: FileMeta::Multipart(MultipartFile {
+                parts: vec![FilePart {
+                    segments: Segments {
+                        items: vec![Segment {
+                            id: String::new(),
+                            size: 3,
+                            fallbacks: vec![],
+                        }],
+                        sizes_trusted: true,
+                        ..Segments::default()
+                    },
+                    offset: 128,
+                    data: ByteRange {
+                        start: 128,
+                        end: 131,
+                    },
+                    split_after: false,
+                    proof: Some(Par2Proof {
+                        set_id: Some([7; 16]),
+                        file_id: [file; 16],
+                        file_length: 200,
+                        slice_size: 4,
+                        slice_md5: vec![],
+                        slice_crc32: vec![],
+                        file_md5: [3; 16],
+                        md5_16k: [4; 16],
+                    }),
+                }],
+                crypt: None,
+            }),
+        };
+        let outputs = check_articles(&job, vec![output(1), output(2)], 1)
+            .await
+            .unwrap();
+        assert_eq!(outputs.len(), 2);
+        for (output, expected) in outputs.iter().zip([b"abc", b"xyz"]) {
+            assert_eq!(
+                Volume::of(output.path.join("/"), &output.meta)
+                    .read(&job, 0, 3)
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+        assert_eq!(
+            job.body("named@loopback", Some(0)).await.unwrap().as_ref(),
+            b"new"
+        );
+        assert_eq!(job.bodies().get("").unwrap().as_ref(), b"bad");
+        corrupt.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            check_articles(&job, vec![output(1)], 100).await,
+            Err(Error::Retry(_))
+        ));
+        corrupt.store(false, Ordering::Relaxed);
+        let mut invalid = output(1);
+        let FileMeta::Multipart(file) = &mut invalid.meta else {
+            unreachable!()
+        };
+        file.parts[0].offset = u64::MAX - 1;
+        file.parts[0].data = ByteRange {
+            start: u64::MAX - 1,
+            end: u64::MAX,
+        };
+        assert!(matches!(
+            check_articles(&job, vec![invalid.clone()], 100).await,
+            Err(Error::Retry(_))
+        ));
+        assert!(
+            Volume::of("source.bin".into(), &invalid.meta)
+                .read(&job, 0, 3)
+                .await
+                .is_err()
+        );
+        Arc::get_mut(&mut job).unwrap().source = None;
+        assert!(matches!(
+            check_articles(&job, vec![output(1)], 100).await,
+            Err(Error::Missing(_))
+        ));
+        assert!(matches!(
+            Volume::of("source.bin".into(), &output(1).meta)
+                .read(&job, 0, 3)
+                .await,
+            Err(Error::Missing(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn a_full_check_fails_at_the_first_missing_video_segment() {
         use infinidysk_nntp::{Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
         use infinidysk_testkit::LoopbackServer;
@@ -1906,6 +2163,7 @@ mod tests {
         }]);
         let job = Arc::new(Job {
             client: Arc::new(client),
+            source: None,
             requests: Semaphore::new(CONCURRENCY),
             progress: Arc::new(Progress::default()),
             blocklist: Vec::new(),
@@ -1943,6 +2201,7 @@ mod tests {
     async fn key_derivations_wait_for_a_free_slot() {
         let job = Arc::new(Job {
             client: Arc::new(Client::new([])),
+            source: None,
             requests: Semaphore::new(CONCURRENCY),
             progress: Arc::new(Progress::default()),
             blocklist: Vec::new(),

@@ -50,6 +50,7 @@ zip.workspace = true
 infinidysk-fuse.workspace = true
 
 [dev-dependencies]
+infinidysk-par2.workspace = true
 http-body-util.workspace = true
 infinidysk-testkit.workspace = true
 sqlx.workspace = true

@@ -22,7 +22,7 @@ export const jobCopy: Record<Job, { title: string; blurb: string; tip: string; c
   "backup-database": {
     title: "Back up database",
     blurb: "Writes a copy of the library database to the backup folder and keeps the newest copies.",
-    tip: "Copies the library database (settings, logins, downloads, history and file details) while infinidysk keeps running. Each copy is checked and gets a SHA-256 checksum. After a good copy, the oldest scheduled and manual backups beyond Copies to keep are deleted; pinned, uploaded and added backups stay. It stops without deleting anything if the backup folder lacks room for the copy plus a reserve. It runs first in the window, before the jobs that delete. A PostgreSQL database is not backed up; use pg_dump.",
+    tip: "Copies the SQLite library database (settings, logins, downloads, history and file details) and verified repair bytes while infinidysk keeps running. Each copy is checked and gets a SHA-256 checksum. After a good copy, the oldest scheduled and manual backups beyond Copies to keep are deleted; pinned, uploaded and added backups stay. It stops without deleting anything if the backup folder lacks room for the copy plus a reserve. It runs first in the window, before the jobs that delete. Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy /config/repairs as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.",
     confirm: "Writes a copy about the size of the database's used space. Imports and playback keep running.",
     noun: "backup",
   },

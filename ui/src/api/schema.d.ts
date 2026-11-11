@@ -552,6 +552,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/{id}/par2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_par2_status"];
+        put?: never;
+        post: operations["post_par2_repair"];
+        delete: operations["delete_par2_repair"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/files/{id}/reads": {
         parameters: {
             query?: never;
@@ -606,6 +622,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/{id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["post_par2_verify"];
+        delete: operations["delete_par2_verify"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -618,6 +650,22 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/health/par2-scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_par2_scan"];
+        put?: never;
+        post: operations["post_par2_scan"];
+        delete: operations["delete_par2_scan"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3043,6 +3091,35 @@ export interface components {
             workloads: components["schemas"]["WorkloadView"][];
             writer_error?: string | null;
         };
+        Par2Job: {
+            /** Format: int32 */
+            attempts: number;
+            /** Format: int64 */
+            duration_ms: number;
+            /** Format: uuid */
+            id: string;
+            reason: string;
+            state: string;
+            /** Format: int64 */
+            stored_bytes: number;
+            /** Format: int64 */
+            transferred_bytes: number;
+            /** Format: int64 */
+            updated_at: number;
+            /** Format: int64 */
+            verified_bytes: number;
+        };
+        Par2ScanStatus: {
+            enabled: boolean;
+            /** Format: int64 */
+            pending_jobs: number;
+            scan?: components["schemas"]["Scan"] | null;
+        };
+        Par2Status: {
+            enabled: boolean;
+            repair?: components["schemas"]["Par2Job"] | null;
+            verification?: components["schemas"]["Par2Job"] | null;
+        };
         Paused: {
             paused: boolean;
         };
@@ -3282,7 +3359,7 @@ export interface components {
             /**
              * Format: uuid
              * @description Stable across edits, so masked secrets can be matched back.
-             * @default 01a1ad68-894a-75ea-aef8-427ee3c82983
+             * @default 01a1c70b-ad44-757d-a103-7e33d42546df
              */
             id: string;
             /**
@@ -3771,6 +3848,18 @@ export interface components {
             mb_per_s: number;
             /** @description Still warming up; `mb_per_s` is then the rate since the start. */
             warming: boolean;
+        };
+        Scan: {
+            /** Format: uuid */
+            boundary?: string | null;
+            cancelled?: boolean;
+            complete: boolean;
+            /** Format: uuid */
+            cursor?: string | null;
+            /** Format: int64 */
+            requested_at: number;
+            /** Format: int64 */
+            scanned_files: number;
         };
         /** @description A file waiting for health work. */
         ScheduledCheck: {
@@ -5371,6 +5460,97 @@ export interface operations {
             };
         };
     };
+    get_par2_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Par2Status"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_par2_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    delete_par2_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     get_file_reads: {
         parameters: {
             query?: never;
@@ -5456,6 +5636,68 @@ export interface operations {
             };
         };
     };
+    post_par2_verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    delete_par2_verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     get_health: {
         parameters: {
             query?: {
@@ -5478,6 +5720,83 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthHistoryEntry"][];
+                };
+            };
+        };
+    };
+    get_par2_scan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Par2ScanStatus"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_par2_scan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    delete_par2_scan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };

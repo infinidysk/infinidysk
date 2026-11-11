@@ -23,6 +23,7 @@ mod provider_status;
 mod provider_test;
 mod quota;
 mod release_notes;
+pub mod repair;
 pub mod sab;
 mod ui;
 pub mod update;

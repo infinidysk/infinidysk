@@ -30,7 +30,7 @@ const STALE_AFTER_MS: i64 = 3 * DAY_MS;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const NOTE_MAX: usize = 500;
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
-pub const POSTGRES: &str = "Your database is PostgreSQL. Back it up with pg_dump; infinidysk backs up SQLite databases only.";
+pub const POSTGRES: &str = "Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy /config/repairs as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.";
 const CHANGED: &str = "The file changed since it was made (checksum differs); it may be damaged.";
 const STAGED_CHANGED: &str =
     "The backup file changed since it was made (checksum differs); it may be damaged.";
@@ -38,6 +38,7 @@ const UNFINISHED: &str = "A restore or undo has not finished; restart infinidysk
 
 pub struct Parts {
     pub db: Db,
+    pub repairs: Arc<crate::repair::Repairs>,
     pub config: Arc<RwLock<ConfigStore>>,
     /// The live SQLite file; `None` on PostgreSQL.
     pub live: Option<PathBuf>,
@@ -585,17 +586,16 @@ impl Backups {
             .map_err(|e| Stop::Reason(format!("Could not create the backup file: {e}")))?;
         drop(file);
         live.step("Writing the copy", Some(estimate));
-        let stop = {
-            let cancel = cancel.clone();
-            move || cancel.is_cancelled()
-        };
-        let written = self.parts.db.backup_into(part.path(), stop);
+        let written = self.parts.repairs.backup_into(part.path(), cancel);
         let path = part.path().to_owned();
         let size_now = || std::fs::metadata(&path).map_or(0, |m| m.len());
         match self.tracked(written, size_now).await {
             Ok(()) => {}
-            Err(DbError::Interrupted) => return Err(Stop::Cancelled),
-            Err(DbError::DiskFull) => {
+            Err(_) if cancel.is_cancelled() => return Err(Stop::Cancelled),
+            Err(e)
+                if e.downcast_ref::<DbError>()
+                    .is_some_and(|e| matches!(e, DbError::DiskFull)) =>
+            {
                 return Err(Stop::Reason(
                     "The backup folder ran out of space.".to_owned(),
                 ));

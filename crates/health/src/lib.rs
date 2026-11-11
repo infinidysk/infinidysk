@@ -4,6 +4,9 @@
 
 mod check;
 mod structure;
+mod verify;
+
+pub use verify::Verification;
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
@@ -20,7 +23,7 @@ use infinidysk_db::{
     ProbeAttempt, ProbeOutcome, Recheck, Repair, now_ms,
 };
 use infinidysk_nntp::{Articles, Client};
-use tokio::sync::{Notify, watch};
+use tokio::sync::{Notify, Semaphore, watch};
 
 use check::Outcome;
 pub use infinidysk_arr::{Arr, Profile};
@@ -63,6 +66,8 @@ pub enum Error {
     Meta(#[from] infinidysk_core::blob::Error),
     #[error("HTTP client setup failed")]
     Http(#[from] reqwest::Error),
+    #[error("verification worker failed")]
+    VerificationTask(#[from] tokio::task::JoinError),
 }
 
 /// The user-settable choices of §10.
@@ -137,6 +142,8 @@ pub struct Health {
     counters: [AtomicU64; 4],
     inconclusive: Mutex<HashMap<ItemId, u32>>,
     wake: Notify,
+    verification: Arc<Semaphore>,
+    par2: bool,
 }
 
 /// Checks since start, by result.
@@ -199,6 +206,8 @@ impl Health {
             counters: Default::default(),
             inconclusive: Mutex::default(),
             wake: Notify::new(),
+            verification: Arc::new(Semaphore::new(1)),
+            par2: false,
         })
     }
 
@@ -219,6 +228,13 @@ impl Health {
     #[must_use]
     pub fn with_in_use(mut self, in_use: impl Fn(ItemId) -> bool + Send + Sync + 'static) -> Self {
         self.in_use = Box::new(in_use);
+        self
+    }
+
+    /// Try durable local reconstruction before requesting an Arr replacement.
+    #[must_use]
+    pub const fn with_par2(mut self) -> Self {
+        self.par2 = true;
         self
     }
 
@@ -378,6 +394,7 @@ impl Health {
             return Ok(false);
         };
         if status.state != HealthState::Hidden {
+            self.db.request_arr_replacement(id).await?;
             status.state = HealthState::Repairing;
             status.next_check = Some(now_ms());
             self.db.set_health(id, &status, Recheck::None).await?;
@@ -489,8 +506,27 @@ impl Health {
             },
             proven: false,
         };
-        let client = check::Direct(&self.client);
+        let source = self.omitted_source(item, blob_id, &meta).await?;
+        let original = source.map(|source| (source, meta.clone()));
+        let client = check::Direct {
+            client: &self.client,
+            source,
+            meter: None,
+        };
         let (outcome, changed, head) = check::run(&client, &mut meta, &item.name, &opts).await;
+        if let Some((source, original)) = original {
+            let current = self.meta(item).await?;
+            if current
+                .as_ref()
+                .is_none_or(|(id, meta)| *id != blob_id || *meta != original)
+                || self.omitted_source(item, blob_id, &original).await? != Some(source)
+            {
+                return Err(infinidysk_db::Error::Corrupt(
+                    "repair source changed during health check",
+                )
+                .into());
+            }
+        }
         if changed {
             self.db
                 .update_blob(blob_id, &blob::encode_meta(&meta)?)
@@ -520,7 +556,7 @@ impl Health {
             Outcome::Inconclusive(error) => {
                 self.count(INCONCLUSIVE);
                 if streak == INCONCLUSIVE_WARN {
-                    tracing::warn!(path = %item.path, reason = %error, "health checks keep failing to reach providers; retrying every 30 minutes");
+                    tracing::warn!(path = %item.path, reason = %error, "cannot confirm file availability; retrying every 30 minutes");
                 } else {
                     tracing::debug!(path = %item.path, reason = %error, "health check inconclusive");
                 }
@@ -698,6 +734,35 @@ impl Health {
         if self.db.item_remap_pending(item.id).await? {
             let reason = "its Arr is rescanning a converted library file";
             return self.retry(item, status, reason, true).await;
+        }
+        if self.par2 && self.db.par2_before_arr(item.id).await? {
+            let owner = infinidysk_db::repair::Owner::Item(item.id);
+            let result = self.db.par2_result(owner, false).await?;
+            let pending = match result {
+                Some(job) if matches!(job.state, 0 | 1 | 4) => true,
+                Some(job)
+                    if matches!(job.state, 2 | 3 | 5 | 6)
+                        && status.last_check.unwrap_or(0) <= job.updated_at =>
+                {
+                    let next = HealthStatus {
+                        state: HealthState::Unchecked,
+                        next_check: Some(now),
+                        ..status
+                    };
+                    self.db.set_health(item.id, &next, status.recheck).await?;
+                    return Ok(());
+                }
+                Some(_) => false,
+                None => self.db.request_par2(owner, false, now).await?.is_some(),
+            };
+            if pending {
+                let next = HealthStatus {
+                    next_check: Some(now + MINUTE_MS),
+                    ..status
+                };
+                self.db.set_health(item.id, &next, status.recheck).await?;
+                return Ok(());
+            }
         }
         let (arr, owner, job, job_name) = match self.owner(item).await? {
             Lookup::Found {
@@ -1001,6 +1066,33 @@ impl Health {
             .reject_release(job_name, &ids, now_ms() + REJECT_FOR_MS)
             .await?;
         Ok(())
+    }
+
+    async fn omitted_source(
+        &self,
+        item: &Item,
+        metadata: BlobId,
+        meta: &FileMeta,
+    ) -> Result<Option<(BlobId, i64)>, Error> {
+        if !self.db.may_have_repairs() || !meta.has_placeholders() {
+            return Ok(None);
+        }
+        let Some(nzb) = item.nzb_blob else {
+            return Ok(None);
+        };
+        let (generation, raw) = self
+            .db
+            .repair_metadata(item.id, metadata, nzb)
+            .await?
+            .ok_or(infinidysk_db::Error::Corrupt(
+                "repair source changed while reading metadata",
+            ))?;
+        if blob::decode_meta(&raw)? != *meta {
+            return Err(
+                infinidysk_db::Error::Corrupt("repair metadata changed while reading").into(),
+            );
+        }
+        Ok(Some((nzb, generation)))
     }
 
     async fn meta(&self, item: &Item) -> Result<Option<(BlobId, FileMeta)>, Error> {

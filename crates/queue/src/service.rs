@@ -137,6 +137,7 @@ pub struct Queue {
     rules: Mutex<Arc<import::Rules>>,
     handoff: OnceLock<Arc<dyn HandoffWriter>>,
     verifier: OnceLock<Arc<dyn Verifier>>,
+    par2: AtomicBool,
 }
 
 /// Imports since start.
@@ -201,6 +202,7 @@ impl Queue {
             rules: Mutex::default(),
             handoff: OnceLock::new(),
             verifier: OnceLock::new(),
+            par2: AtomicBool::new(false),
         }
     }
 
@@ -208,6 +210,11 @@ impl Queue {
     /// `storage` from the mount. Set once, before [`Queue::run`].
     pub fn set_handoff(&self, writer: Arc<dyn HandoffWriter>) {
         let _ = self.handoff.set(writer);
+    }
+
+    /// Enable parked imports while their original articles are reconstructed.
+    pub fn enable_par2(&self) {
+        self.par2.store(true, Ordering::Release);
     }
 
     /// Counts an import at a 100 % sample as each file's first health check, run by
@@ -707,7 +714,17 @@ impl Queue {
     }
 
     async fn attempt(&self, job: &QueueEntry, progress: &Arc<Progress>) -> Result<Outcome, Error> {
-        let Some(raw) = self.db.blob(job.nzb_blob).await? else {
+        let repair_owner = infinidysk_db::repair::Owner::Queue(job.id);
+        if self.par2.load(Ordering::Acquire)
+            && self
+                .db
+                .par2_result(repair_owner, false)
+                .await?
+                .is_some_and(|result| matches!(result.state, 0 | 1 | 4))
+        {
+            return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
+        }
+        let Some((source, raw)) = self.db.queued_repair_nzb(job.id, job.nzb_blob).await? else {
             return Ok(Outcome::Failed(
                 "The NZB is missing from storage.".to_owned(),
             ));
@@ -735,14 +752,38 @@ impl Queue {
                 password,
                 Arc::clone(progress),
                 self.verifier.get().map(|v| &**v as &dyn Verifier),
+                Some((source.nzb(), source.generation())),
             ) => imported,
             () = self.stalled(progress) => return Ok(Outcome::Stuck),
         };
         let (outputs, checks) = match imported {
             Ok(imported) => imported,
             Err(import::Error::Retry(error)) => return Ok(Outcome::Retry(error.to_string())),
+            Err(import::Error::Unrepairable(reason)) => return Ok(Outcome::Failed(reason)),
+            Err(error)
+                if self.par2.load(Ordering::Acquire)
+                    && self.db.par2_result(repair_owner, false).await?.is_none()
+                    && self
+                        .db
+                        .request_par2(repair_owner, false, now_ms())
+                        .await?
+                        .is_some() =>
+            {
+                return Ok(Outcome::Retry(format!("Waiting for PAR2 repair: {error}")));
+            }
             Err(error) => return Ok(Outcome::Failed(error.to_string())),
         };
+        if self
+            .db
+            .repair_source(infinidysk_db::repair::Owner::Queue(job.id))
+            .await?
+            .as_ref()
+            != Some(&source)
+        {
+            return Ok(Outcome::Retry(
+                "The stored NZB changed during the import.".to_owned(),
+            ));
+        }
         Ok(Outcome::Done {
             outputs,
             checks,

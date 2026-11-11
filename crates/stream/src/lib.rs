@@ -4,7 +4,7 @@ mod cache;
 mod disk;
 mod gaps;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io::{self, SeekFrom};
 use std::pin::Pin;
@@ -14,9 +14,10 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
+use infinidysk_core::repair::Omitted;
 use infinidysk_core::trace::{Event, Probe, Step, Trace};
 use infinidysk_core::wait::{Stage, Wait, Watch};
-use infinidysk_nntp::{Client, Error, Progress, Workload};
+use infinidysk_nntp::{Client, Error, Progress, RepairKey, Workload};
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -61,6 +62,13 @@ pub enum Fault {
 
 /// Told the layout index of every segment zero-filled for a [`Fault`].
 pub type Report = Arc<dyn Fn(usize, Fault) + Send + Sync>;
+
+/// Admit a segment before reading repairs, caches, filler or providers.
+pub type Access = Arc<
+    dyn for<'a> Fn(&'a str) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>
+        + Send
+        + Sync,
+>;
 
 /// Bytes standing in for a segment no provider can serve.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -125,6 +133,7 @@ pub struct Layout {
     segments: Vec<Segment>,
     /// Cumulative end offset of each segment.
     ends: Vec<u64>,
+    omitted: HashMap<usize, Omitted>,
 }
 
 impl Layout {
@@ -136,7 +145,40 @@ impl Layout {
                 Some(*end)
             })
             .collect();
-        Self { segments, ends }
+        Self {
+            segments,
+            ends,
+            omitted: HashMap::new(),
+        }
+    }
+
+    /// Attach trusted source identities only to exact, omitted layout slots.
+    pub fn with_omitted(
+        mut self,
+        keys: impl IntoIterator<Item = (usize, Omitted)>,
+    ) -> io::Result<Self> {
+        for (index, key) in keys {
+            let Some(segment) = self.segments.get(index) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "omitted segment index",
+                ));
+            };
+            if !segment.message_id.is_empty()
+                || segment.begin != Some(key.range.start)
+                || key.range.is_empty()
+                || segment.size != key.range.len()
+                || key.range.end > key.file_length
+                || key.generation < 0
+                || self.omitted.insert(index, key).is_some()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "omitted segment identity",
+                ));
+            }
+        }
+        Ok(self)
     }
 
     pub fn len(&self) -> u64 {
@@ -359,6 +401,7 @@ pub struct SegmentReader {
     trace: Option<Arc<Trace>>,
     watch: Option<Arc<Watch>>,
     report: Option<Report>,
+    access: Option<Access>,
     filler: Filler,
     gaps: Option<Arc<Gaps>>,
     /// Segment the reader has been waiting for, and since when; traced reads only.
@@ -402,6 +445,7 @@ impl SegmentReader {
             trace: None,
             watch: None,
             report: None,
+            access: None,
             filler: Filler::Zeros,
             gaps: None,
             waiting: None,
@@ -471,6 +515,13 @@ impl SegmentReader {
         self
     }
 
+    /// Checks publication admission before fetching each segment, including cache hits.
+    #[must_use]
+    pub fn with_access(mut self, access: Access) -> Self {
+        self.access = Some(access);
+        self
+    }
+
     /// Fills unavailable segments with `filler` instead of zeros. Layout offsets must be
     /// the file's own, or packets land off the file's grid.
     #[must_use]
@@ -493,7 +544,9 @@ impl SegmentReader {
             at: self.layout.start(index),
             filler: self.filler,
             report: self.report.clone(),
+            access: self.access.clone(),
             gaps: self.gaps.clone(),
+            omitted: self.layout.omitted.get(&index).copied(),
         }
     }
 
@@ -627,12 +680,26 @@ impl SegmentReader {
                 self.next,
                 self.strict,
             );
-            if !strict && hole.gaps.as_ref().is_some_and(|g| g.is_hole(index)) {
-                let size = usize::try_from(layout.segments[index].size).unwrap_or(0);
+            if !strict
+                && !client.may_repair(match &hole.omitted {
+                    Some(key) => RepairKey::Omitted(key),
+                    None => RepairKey::Article(&layout.segments[index].message_id),
+                })
+                && hole.gaps.as_ref().is_some_and(|g| g.is_hole(index))
+            {
                 self.pending.push_back(Fetch {
                     task: tokio::spawn(async move {
-                        let data = hole.filler.fill(hole.at, size).into();
-                        Ok(((data, None, true), Duration::ZERO))
+                        let (data, filled) = fetch(
+                            &client,
+                            Source::Direct,
+                            &layout.segments[index],
+                            None,
+                            None,
+                            &hole,
+                            false,
+                        )
+                        .await?;
+                        Ok(((data, None, filled), Duration::ZERO))
                     }),
                     started: Instant::now(),
                     waited: false,
@@ -679,6 +746,10 @@ impl SegmentReader {
             });
             self.pending.push_back(Fetch {
                 task: tokio::spawn(async move {
+                    // Waiting for publication must not hold memory needed to drain other readers.
+                    if let Some(access) = &hole.access {
+                        access(&layout.segments[index].message_id).await?;
+                    }
                     let leased = lease.is_some();
                     let permit = match lease {
                         Some(lease) => lease.acquire().await,
@@ -1020,7 +1091,9 @@ struct Hole {
     at: u64,
     filler: Filler,
     report: Option<Report>,
+    access: Option<Access>,
     gaps: Option<Arc<Gaps>>,
+    omitted: Option<Omitted>,
 }
 
 /// Body sized exactly to the segment. Articles unusable on every provider are filled
@@ -1035,27 +1108,54 @@ async fn fetch(
     hole: &Hole,
     strict: bool,
 ) -> io::Result<(Bytes, bool)> {
+    if let Some(access) = &hole.access {
+        access(&segment.message_id).await?;
+    }
     let size = usize::try_from(segment.size)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "segment too large"))?;
     let (id, begin) = (&segment.message_id, segment.begin);
+    let repaired = match &hole.omitted {
+        Some(key) => client.repaired_omitted(key).await,
+        None => client.repaired(id, begin).await,
+    }
+    .map_err(io::Error::other)?;
+    if let Some(body) = repaired {
+        if body.data.len() != size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "repair size differs from layout",
+            ));
+        }
+        if let Some(gaps) = &hole.gaps {
+            gaps.repaired(hole.index);
+        }
+        return Ok((body.data, false));
+    }
+    if !strict && hole.gaps.as_ref().is_some_and(|g| g.is_hole(hole.index)) {
+        return Ok((hole.filler.fill(hole.at, size).into(), true));
+    }
     let workload = if strict {
         Workload::Health
     } else {
         Workload::Stream
     };
-    let body = match source {
-        Source::Direct => client
-            .body_with(id, workload, probe, progress.as_ref(), begin)
-            .await
-            .map(|body| body.data)
-            .map_err(Arc::new),
-        Source::Shared(cache) => cache.body(client, id, begin, probe, progress).await,
-        Source::Hedge(Some(cache)) => cache.hedge(client, id, begin, probe).await,
-        Source::Hedge(None) => client
-            .hedge(id, probe, begin)
-            .await
-            .map(|body| body.data)
-            .map_err(Arc::new),
+    let body = if id.is_empty() {
+        Err(Arc::new(Error::NotFound))
+    } else {
+        match source {
+            Source::Direct => client
+                .provider_body_with(id, workload, probe, progress.as_ref(), begin)
+                .await
+                .map(|body| body.data)
+                .map_err(Arc::new),
+            Source::Shared(cache) => cache.body(client, id, begin, probe, progress).await,
+            Source::Hedge(Some(cache)) => cache.hedge(client, id, begin, probe).await,
+            Source::Hedge(None) => client
+                .hedge(id, probe, begin)
+                .await
+                .map(|body| body.data)
+                .map_err(Arc::new),
+        }
     };
     match body {
         Ok(data) if data.len() == size => Ok((data, false)),

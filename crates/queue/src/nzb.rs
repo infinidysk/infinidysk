@@ -35,7 +35,7 @@ pub struct Nzb {
     pub files: Vec<File>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct File {
     pub subject: String,
     /// Posting time in Unix seconds, when the NZB carries a valid one.
@@ -51,6 +51,8 @@ pub struct Segment {
     /// Message-id without angle brackets.
     pub id: String,
     pub bytes: u32,
+    /// Original NZB part number; repair checks it against decoded yEnc evidence.
+    pub number: i64,
 }
 
 impl Nzb {
@@ -187,6 +189,7 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
                         segments.entry(number).or_insert_with(|| Segment {
                             id: id.to_owned(),
                             bytes,
+                            number,
                         });
                     }
                 }
@@ -203,7 +206,9 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
                             (segments.keys().next(), segments.keys().next_back())
                     {
                         f.gap = first > 1
-                            || last - first >= i64::try_from(segments.len()).unwrap_or(i64::MAX);
+                            || last.checked_sub(first).is_none_or(|span| {
+                                span >= i64::try_from(segments.len()).unwrap_or(i64::MAX)
+                            });
                         f.segments = segments.into_values().collect();
                         nzb.files.push(f);
                     }
@@ -300,9 +305,11 @@ mod tests {
                     gap: false,
                     segments: ids
                         .iter()
-                        .map(|id| Segment {
+                        .enumerate()
+                        .map(|(i, id)| Segment {
                             id: (*id).into(),
                             bytes: 1,
+                            number: i64::try_from(i + 1).expect("small test NZB"),
                         })
                         .collect(),
                 })

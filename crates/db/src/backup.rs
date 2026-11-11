@@ -198,11 +198,62 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
     let problems: Vec<String> = sqlx::query_scalar(concat!("PRAGMA quick_check(", 10, ")"))
         .fetch_all(&mut *conn)
         .await?;
-    let problems = if problems.len() == 1 && problems[0] == "ok" {
+    let mut problems = if problems.len() == 1 && problems[0] == "ok" {
         Vec::new()
     } else {
         problems.into_iter().take(MAX_PROBLEMS).collect()
     };
+    if schema_version >= 12 && problems.is_empty() {
+        let mut after: Option<uuid::Uuid> = None;
+        loop {
+            let row: Option<(uuid::Uuid, Vec<u8>, Option<Vec<u8>>)> = sqlx::query_as(
+                "SELECT id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END \
+                 FROM repair_patches WHERE backup_payload IS NOT NULL AND (id > $1 OR $1 IS NULL) ORDER BY id LIMIT 1")
+                .bind(after).fetch_optional(&mut *conn).await?;
+            let Some((id, descriptor, bytes)) = row else {
+                break;
+            };
+            after = Some(id);
+            let valid = tokio::task::spawn_blocking(move || {
+                use sha2::{Digest as _, Sha256};
+                infinidysk_core::repair::Patch::decode(&descriptor)
+                    .ok()
+                    .zip(bytes)
+                    .is_some_and(|(patch, bytes)| {
+                        patch.source.range.len() == bytes.len() as u64
+                            && patch.sha256 == <[u8; 32]>::from(Sha256::digest(&bytes))
+                    })
+            })
+            .await
+            .map_err(|_| Error::Corrupt("backup repair verification stopped"))?;
+            if !valid {
+                problems.push("A backed-up repair article is missing or corrupt.".to_owned());
+                break;
+            }
+        }
+    }
+    if schema_version >= 12 && problems.is_empty() {
+        let mut after: Option<String> = None;
+        loop {
+            let row: Option<(String, Option<Vec<u8>>, Vec<u8>)> = sqlx::query_as(
+                "SELECT hash, CASE WHEN length(payload) <= 33554432 THEN payload ELSE NULL END, sha256 FROM legacy_repair_articles WHERE hash > $1 OR $1 IS NULL ORDER BY hash LIMIT 1")
+                .bind(&after).fetch_optional(&mut *conn).await?;
+            let Some((hash, bytes, checksum)) = row else {
+                break;
+            };
+            after = Some(hash);
+            let valid = tokio::task::spawn_blocking(move || {
+                use sha2::{Digest as _, Sha256};
+                bytes.is_some_and(|bytes| checksum.as_slice() == Sha256::digest(bytes).as_slice())
+            })
+            .await
+            .map_err(|_| Error::Corrupt("legacy backup verification stopped"))?;
+            if !valid {
+                problems.push("A saved legacy repair candidate is corrupt.".to_owned());
+                break;
+            }
+        }
+    }
     Ok(FileCheck {
         schema_version,
         incompatible: None,

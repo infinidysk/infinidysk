@@ -1448,6 +1448,7 @@ dependencies = [
  "infinidysk-health",
  "infinidysk-import",
  "infinidysk-nntp",
+ "infinidysk-par2",
  "infinidysk-queue",
  "infinidysk-stream",
  "infinidysk-testkit",
@@ -1526,6 +1527,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tokio-util",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -1586,6 +1588,7 @@ dependencies = [
  "infinidysk-core",
  "infinidysk-db",
  "infinidysk-nntp",
+ "infinidysk-par2",
  "infinidysk-queue",
  "infinidysk-testkit",
  "reqwest",
@@ -1593,6 +1596,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -1630,7 +1634,9 @@ dependencies = [
  "infinidysk-core",
  "infinidysk-testkit",
  "infinidysk-yenc",
+ "nix",
  "rustls",
+ "sha2 0.11.1",
  "socket2",
  "thiserror 2.0.21",
  "tokio",
@@ -1647,6 +1653,7 @@ version = "0.0.0"
 dependencies = [
  "infinidysk-yenc",
  "md-5",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1669,6 +1676,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -1721,6 +1729,8 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "bytes",
+ "futures-util",
  "hmac 0.13.0",
  "http-body-util",
  "httpdate",
@@ -1737,7 +1747,6 @@ dependencies = [
  "serde",
  "sha2 0.11.1",
  "tokio",
- "tokio-util",
  "tower",
  "tracing",
 ]
@@ -3725,6 +3734,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

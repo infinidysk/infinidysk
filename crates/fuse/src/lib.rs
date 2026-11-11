@@ -7,6 +7,9 @@
 //! each open file owns one engine [`File`].
 #![cfg(target_os = "linux")]
 
+mod invalidate;
+pub use invalidate::{Invalidation, Invalidator};
+
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read as _, SeekFrom};
@@ -19,13 +22,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use fuse3::raw::MountHandle;
 use fuse3::raw::prelude::*;
 use fuse3::{Errno, Inode, MountOptions, Result};
 use futures_util::stream::{self, Stream};
 use futures_util::{FutureExt as _, StreamExt as _};
-use infinidysk_vfs::{Delivery, Handle as File, Kernel, Kind, Node, Origin, ReadStage, Vfs};
+use infinidysk_vfs::{
+    Delivery, Handle as File, Kernel, Kind, Node, Origin, ReadFence, ReadLease, ReadStage, Vfs,
+};
 use nix::libc;
 use nix::mount::{MntFlags, MsFlags, umount2};
 use nix::unistd::SysconfVar;
@@ -104,6 +109,7 @@ pub struct Config {
 /// `state` holds what the kernel applied while mounted, otherwise why not mounted.
 pub async fn run(
     vfs: Arc<Vfs>,
+    invalidator: Arc<Invalidator>,
     config: Config,
     state: watch::Sender<std::result::Result<Kernel, String>>,
     cancel: CancellationToken,
@@ -140,7 +146,14 @@ pub async fn run(
             info!(path = %dir.display(), "cleared a stale FUSE mount; the previous session did not unmount");
         }
         let started = Instant::now();
-        match mount(Arc::clone(&vfs), &config, cancel.child_token()).await {
+        match mount(
+            Arc::clone(&vfs),
+            Arc::clone(&invalidator),
+            &config,
+            cancel.child_token(),
+        )
+        .await
+        {
             Err(error) => {
                 warn!(path = %dir.display(), reason = %error, "FUSE mount failed");
                 state.send_modify(|s| *s = Err(error.to_string()));
@@ -185,6 +198,7 @@ pub async fn run(
 
 async fn mount(
     vfs: Arc<Vfs>,
+    invalidator: Arc<Invalidator>,
     config: &Config,
     stopping: CancellationToken,
 ) -> std::io::Result<MountHandle> {
@@ -197,7 +211,7 @@ async fn mount(
         .nonempty(true)
         .force_readdir_plus(true)
         .custom_options(format!("max_read={}", config.max_read));
-    let mut fs = Fs::new(vfs, config.uid, config.gid, stopping);
+    let mut fs = Fs::new(vfs, invalidator, config.uid, config.gid, stopping);
     // The kernel keeps up to two readahead windows of reads in flight.
     fs.order_span = 2 * u64::from(config.max_readahead) + u64::from(config.max_read);
     fs.epoch_times = config.epoch_times;
@@ -406,10 +420,11 @@ fn connection_dir(id: u64) -> PathBuf {
 
 struct Fs {
     vfs: Arc<Vfs>,
+    invalidator: Arc<Invalidator>,
     uid: u32,
     gid: u32,
-    inodes: Mutex<Inodes>,
-    handles: Mutex<HashMap<u64, Handle>>,
+    inodes: Arc<Mutex<Inodes>>,
+    handles: Arc<Mutex<HashMap<u64, Handle>>>,
     next_fh: AtomicU64,
     /// Whether the hint about readers in other PID namespaces was logged.
     hinted: AtomicBool,
@@ -420,6 +435,12 @@ struct Fs {
     /// How far ahead of its handle a read waits for the reads before it.
     order_span: u64,
     epoch_times: bool,
+}
+
+impl Drop for Fs {
+    fn drop(&mut self) {
+        self.invalidator.stopped(&self.inodes);
+    }
 }
 
 #[derive(Clone)]
@@ -433,6 +454,7 @@ enum Handle {
 
 struct OpenFile<R = File> {
     path: Arc<str>,
+    fence: Option<ReadFence>,
     /// `None` once a read was cut short mid-way (interrupt or panic): the reader's state is
     /// unknown, so later reads fail rather than return wrong bytes.
     reader: tokio::sync::Mutex<Option<R>>,
@@ -445,6 +467,30 @@ struct OpenFile<R = File> {
     moved: Notify,
     /// Lists reads in progress for live status.
     session: Option<Arc<infinidysk_vfs::Session>>,
+}
+
+struct ReplyBytes {
+    data: Bytes,
+    _lease: ReadLease,
+}
+
+impl AsRef<[u8]> for ReplyBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+fn data_reply(buf: BytesMut, lease: Option<ReadLease>) -> ReplyData {
+    let data = buf.freeze();
+    // fuse3 borrows these bytes through its awaited response write, including clones.
+    let data = match lease {
+        Some(lease) => Bytes::from_owner(ReplyBytes {
+            data,
+            _lease: lease,
+        }),
+        None => data,
+    };
+    ReplyData { data }
 }
 
 /// A read's place among those waiting on its handle; leaves on drop.
@@ -469,7 +515,11 @@ impl Drop for Turn<'_> {
 }
 
 impl<R: AsyncRead + AsyncSeek + Unpin> OpenFile<R> {
-    async fn read(&self, id: u64, offset: u64, size: u32) -> std::io::Result<BytesMut> {
+    async fn read(&self, id: u64, offset: u64, size: u32) -> std::io::Result<ReplyData> {
+        let lease = match &self.fence {
+            Some(fence) => Some(fence.read().await?),
+            None => None,
+        };
         let listed = self.session.as_ref().map(|s| s.request(id, offset, size));
         let stage = |stage| {
             if let Some(listed) = &listed {
@@ -534,7 +584,7 @@ impl<R: AsyncRead + AsyncSeek + Unpin> OpenFile<R> {
         *slot = Some(reader);
         drop(slot);
         result?;
-        Ok(buf)
+        Ok(data_reply(buf, lease))
     }
 }
 
@@ -587,6 +637,7 @@ struct Inodes {
     next: Inode,
     by_ino: HashMap<Inode, (Arc<str>, u64)>,
     by_path: HashMap<Arc<str>, Inode>,
+    owners: HashMap<Inode, ReadFence>,
 }
 
 impl Inodes {
@@ -618,6 +669,7 @@ impl Inodes {
             *lookups = lookups.saturating_sub(n);
             if *lookups == 0 {
                 self.by_path.remove(path);
+                self.owners.remove(&ino);
                 self.by_ino.remove(&ino);
             }
         }
@@ -755,18 +807,26 @@ fn child_path(parent: &str, name: &OsStr) -> Result<String> {
 }
 
 impl Fs {
-    fn new(vfs: Arc<Vfs>, uid: u32, gid: u32, stopping: CancellationToken) -> Self {
+    fn new(
+        vfs: Arc<Vfs>,
+        invalidator: Arc<Invalidator>,
+        uid: u32,
+        gid: u32,
+        stopping: CancellationToken,
+    ) -> Self {
         let root: Arc<str> = "/".into();
         Self {
             vfs,
+            invalidator,
             uid,
             gid,
-            inodes: Mutex::new(Inodes {
+            inodes: Arc::new(Mutex::new(Inodes {
                 next: ROOT + 1,
                 by_ino: HashMap::from([(ROOT, (Arc::clone(&root), 1))]),
                 by_path: HashMap::from([(root, ROOT)]),
-            }),
-            handles: Mutex::new(HashMap::new()),
+                owners: HashMap::new(),
+            })),
+            handles: Arc::new(Mutex::new(HashMap::new())),
             next_fh: AtomicU64::new(1),
             hinted: AtomicBool::new(false),
             live: Mutex::new(HashMap::new()),
@@ -891,6 +951,14 @@ impl Fs {
     }
 
     fn attr(&self, ino: Inode, node: &Node) -> FileAttr {
+        if let Node::Item(item) | Node::IdFile(item) = node
+            && node.kind() == Kind::File
+        {
+            let mut inodes = lock(&self.inodes);
+            if inodes.by_ino.contains_key(&ino) {
+                inodes.owners.insert(ino, self.vfs.read_fence(item.id));
+            }
+        }
         let (kind, perm, nlink) = match node.kind() {
             // Owner- and group-writable so the kernel lets apps delete links in it.
             Kind::Dir if matches!(node, Node::Links(Some(_))) => (FileType::Directory, 0o775, 2),
@@ -923,6 +991,14 @@ impl Fs {
 
 #[allow(clippy::unused_async_trait_impl)] // The trait is async; sync bodies read clearer than `ready()`.
 impl Filesystem for Fs {
+    async fn ready(&self, notify: fuse3::notify::Notify) {
+        self.invalidator.ready(
+            notify,
+            Arc::clone(&self.inodes),
+            Arc::clone(&self.handles),
+            self.stopping.clone(),
+        );
+    }
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         // Writes always fail, so the write size is moot; any valid value will do.
         Ok(ReplyInit {
@@ -931,6 +1007,7 @@ impl Filesystem for Fs {
     }
 
     async fn destroy(&self, _req: Request) {
+        self.invalidator.stopped(&self.inodes);
         let open_handles = lock(&self.handles).len();
         info!(open_handles, "FUSE session closed");
     }
@@ -1108,6 +1185,10 @@ impl Filesystem for Fs {
                 return Err(Errno::new_is_dir());
             }
             let attr = self.attr(inode, &node);
+            let fence = match &node {
+                Node::Item(item) | Node::IdFile(item) => Some(self.vfs.read_fence(item.id)),
+                _ => None,
+            };
             let origin = Origin {
                 delivery: Delivery::Fuse,
                 client: self.caller(&req).await,
@@ -1116,6 +1197,7 @@ impl Filesystem for Fs {
             let file = match self.vfs.open(&node, origin).await {
                 Ok(Some(reader)) => OpenFile {
                     path,
+                    fence,
                     session: reader.session().cloned(),
                     reader: tokio::sync::Mutex::new(Some(reader)),
                     pos: AtomicU64::new(0),
@@ -1159,9 +1241,9 @@ impl Filesystem for Fs {
         let result = guarded("read", self.interruptible(&req, read)).await;
         // Reads waiting their turn recheck however this one ended.
         file.moved.notify_waiters();
-        let buf = result?;
-        trace!(target: OPS, op = "read", path = &*file.path, offset, bytes = buf.len(), us = started.elapsed().as_micros());
-        Ok(ReplyData { data: buf.freeze() })
+        let reply = result?;
+        trace!(target: OPS, op = "read", path = &*file.path, offset, bytes = reply.data.len(), us = started.elapsed().as_micros());
+        Ok(reply)
     }
 
     /// Ends a read or open of a dying caller with `EINTR`. Anything else, including a
@@ -1312,6 +1394,68 @@ fn modified(node: &Node, epoch: bool) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn a_cloned_read_reply_keeps_publication_waiting_until_its_bytes_are_released() {
+        use infinidysk_core::ItemId;
+        use infinidysk_db::Db;
+        use infinidysk_nntp::Client;
+        use infinidysk_stream::Budget;
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        let vfs = Vfs::new(
+            db.clone(),
+            Arc::new(Client::new([])),
+            Budget::new(16_384),
+            0,
+            "/mnt",
+        );
+        let item = ItemId::new();
+        let fence = vfs.read_fence(item);
+        let open = |fence| OpenFile {
+            path: "source.bin".into(),
+            fence: Some(fence),
+            reader: tokio::sync::Mutex::new(Some(std::io::Cursor::new(b"read bytes".to_vec()))),
+            pos: AtomicU64::new(0),
+            waiting: Mutex::new(Vec::new()),
+            order_span: 1 << 20,
+            moved: Notify::new(),
+            session: None,
+        };
+        let file = open(fence.clone());
+        let writing = fence.write().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), file.read(1, 0, 10))
+                .await
+                .is_err()
+        );
+        drop(writing);
+        let reply = file.read(2, 0, 10).await.unwrap();
+        let clone = reply.data.clone();
+        let slice = clone.slice(1..5);
+        drop(reply);
+        drop(clone);
+        drop(file);
+        drop(fence);
+        let publisher = vfs.read_fence(item);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), publisher.write())
+                .await
+                .is_err()
+        );
+        assert_eq!(slice.as_ref(), b"ead ");
+        drop(slice);
+        let write = tokio::time::timeout(Duration::from_secs(1), publisher.write())
+            .await
+            .unwrap();
+        drop(write);
+        let file = open(publisher.clone());
+        *file.reader.lock().await = None;
+        assert!(file.read(3, 0, 10).await.is_err());
+        let write = tokio::time::timeout(Duration::from_secs(1), publisher.write())
+            .await
+            .unwrap();
+        drop(write);
+        db.close().await;
+    }
     use super::*;
 
     #[test]
@@ -1555,6 +1699,7 @@ mod tests {
     async fn a_read_waiting_its_turn_goes_once_the_reader_frees_without_a_read_ending() {
         let file = Arc::new(OpenFile {
             path: "f".into(),
+            fence: None,
             reader: tokio::sync::Mutex::new(Some(std::io::Cursor::new(vec![7_u8; 8192]))),
             pos: AtomicU64::new(0),
             waiting: Mutex::new(Vec::new()),
@@ -1575,7 +1720,7 @@ mod tests {
             .expect("the read went")
             .expect("no panic")
             .expect("read");
-        assert_eq!(bytes.len(), 4096);
+        assert_eq!(bytes.data.len(), 4096);
     }
 
     #[test]

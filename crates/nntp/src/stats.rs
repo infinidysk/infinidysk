@@ -182,7 +182,7 @@ pub(crate) const fn outcome(error: &Error) -> Outcome {
         Error::Io(_) | Error::Closed | Error::Tls(_) => Reason::Network,
         Error::Protocol | Error::Status { .. } => Reason::Protocol,
         Error::Yenc(_) | Error::CrcMismatch { .. } | Error::TooLarge => Reason::Corrupt,
-        Error::Unavailable | Error::InvalidArgument(_) => Reason::Other,
+        Error::Unavailable | Error::InvalidArgument(_) | Error::Repair(_) => Reason::Other,
     };
     Outcome::NotRetrieved(reason)
 }

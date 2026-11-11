@@ -11,6 +11,7 @@ publish.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 bytes.workspace = true
 fuse3.workspace = true
+infinidysk-core.workspace = true
 futures-util = { workspace = true, features = ["std"] }
 infinidysk-vfs.workspace = true
 nix = { workspace = true, features = ["feature", "fs"] }

@@ -241,6 +241,7 @@ pub async fn apply_with_progress(
     progress: impl Fn(Progress) + Sync,
 ) -> Result<Imported, Error> {
     let mut cs = open(config).await?;
+    crate::legacy_repairs::stage(config, db).await?;
     let blobs = config.join("blobs");
     // C# wrote `DateTime.Now`, so its times are wall clock in its container's zone (`TZ`).
     let tz = TimeZone::system();
@@ -1767,6 +1768,7 @@ fn proof(p: &csharp::Par2Proof) -> Option<Par2Proof> {
         return None;
     };
     Some(Par2Proof {
+        set_id: None,
         file_length: u64::try_from(p.file_length).ok()?,
         slice_size: u32::try_from(p.slice_size).ok()?,
         slice_md5: slice_md5.to_vec(),

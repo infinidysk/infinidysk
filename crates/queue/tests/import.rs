@@ -534,19 +534,92 @@ async fn archives_open_three_levels_deep_and_compressed_inner_members_fail() {
     );
 }
 
+#[tokio::test]
+async fn compressed_archives_fail_without_starting_a_repair_download() {
+    let data = fixture("archive/tests/fixtures/7Zip.LZMA.7z");
+    let articles = post("compressed", "source.7z", &data, 7000);
+    let xml = nzb(&[("source.7z", &articles, data.len(), 7000)]);
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let queue = queue_on(&[&server]).await;
+    let db = queue.db().clone();
+    queue.enable_par2();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &xml,
+        )
+        .await
+        .unwrap();
+    assert!(queue.process_next().await);
+    assert_eq!(
+        db.history_entry(id).await.unwrap().unwrap().status,
+        JobStatus::Failed
+    );
+    assert!(
+        db.par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(db.claim_par2(i64::MAX).await.unwrap().is_none());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn par2_names_obfuscated_files() {
+    check_par2_names(0).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ambiguous_par2_sets_keep_file_names_but_do_not_authorize_omitted_reads() {
+    check_par2_names(1).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn conflicting_par2_file_descriptions_do_not_authorize_omitted_reads() {
+    check_par2_names(2).await;
+}
+
+async fn check_par2_names(ambiguity: u8) {
     let data: Vec<u8> = (0..100_000usize)
         .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
         .collect();
     let a = post("a", "0123abcdef", &data, 32 << 10);
     let par2 = fixture("par2/tests/fixtures/set.par2");
     let p = post("p", "x.par2", &par2, 32 << 10);
-    let xml = nzb(&[
+    let mut entries: Vec<(&str, &[Article], usize, usize)> = vec![
         ("0123abcdef", &a, data.len(), 32 << 10),
         ("\"x.par2\"", &p, par2.len(), 32 << 10),
-    ]);
-    let (_server, queue) = setup([a.clone(), p.clone()].concat()).await;
+    ];
+    let mut other = par2.clone();
+    // Recompute packet checksums after changing either the set or the full-file hash.
+    let mut at = 0;
+    while at < other.len() {
+        let len = usize::try_from(u64::from_le_bytes(
+            other[at + 8..at + 16].try_into().unwrap(),
+        ))
+        .unwrap();
+        let packet = &mut other[at..at + len];
+        assert!(len <= 16_384);
+        if ambiguity == 1 {
+            packet[32..48].fill(9);
+        } else if &packet[48..64] == b"PAR 2.0\0FileDesc" {
+            packet[80] ^= 1;
+        }
+        let hash = infinidysk_par2::hash_16k(&packet[32..]);
+        packet[16..32].copy_from_slice(&hash);
+        at += len;
+    }
+    let q = post("q", "y.par2", &other, 32 << 10);
+    if ambiguity != 0 {
+        entries.push(("\"y.par2\"", &q, other.len(), 32 << 10));
+    }
+    let xml = nzb(&entries);
+    let (_server, queue) = setup([a.clone(), p.clone(), q].concat()).await;
     let db = queue.db().clone();
 
     let history = run(&queue, &db, &xml).await;
@@ -559,7 +632,17 @@ async fn par2_names_obfuscated_files() {
     let Some(FileMeta::Nzb(f)) = meta(&db, "/content/tv/job/a.bin").await else {
         panic!("deobfuscated file imported")
     };
-    assert_eq!(f.proof.map(|p| p.file_length), Some(100_000));
+    let proof = f.proof.expect("PAR2 proof");
+    assert_eq!(proof.file_length, 100_000);
+    assert_eq!(
+        proof.set_id,
+        if ambiguity != 0 {
+            None
+        } else {
+            infinidysk_par2::read(&par2).set_id
+        }
+    );
+    assert_eq!(proof.set_id.is_some(), ambiguity == 0);
 }
 
 /// Fixtures: `par2 create -c0 -s4096 one.par2 one.bin` and `-s8192 two.par2 two.bin`.

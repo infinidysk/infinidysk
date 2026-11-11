@@ -1,21 +1,27 @@
 //! The SQLite → PostgreSQL copy. Tests that need a server run when
 //! `INFINIDYSK_TEST_POSTGRES_URL` points at one whose user may create databases.
 
-use infinidysk_core::{BlobId, ItemId, ItemKind, JobId};
+use infinidysk_core::{
+    BlobId, ByteRange, ItemId, ItemKind, JobId, PatchId,
+    repair::{Patch, Source as Posted},
+};
 use infinidysk_db::transfer::{self, Capture, PgConnection};
 use infinidysk_db::{
     Conversion, Db, Handoff, HealthCheck, HealthResult, HistoryEntry, Item, JobStatus, QueueEntry,
-    Repair,
+    Repair, repair::Owner,
 };
 use sqlx::{AssertSqlSafe, SqlitePool};
 use std::path::PathBuf;
 use std::time::Duration;
 
 /// Every table, as the copy lists them.
-const ALL: [&str; 16] = [
+const ALL: [&str; 19] = [
     "blobs",
+    "repair_patches",
     "items",
     "queue",
+    "repair_jobs",
+    "legacy_repair_articles",
     "history",
     "health_checks",
     "media_probes",
@@ -157,6 +163,29 @@ async fn seed(s: &Sqlite) -> Seeded {
     )
     .await
     .expect("insert");
+    let source = db
+        .repair_source(Owner::Item(file.id))
+        .await
+        .expect("source")
+        .expect("exists");
+    let patch = Patch {
+        id: PatchId::new(),
+        source: Posted {
+            set: [1; 16],
+            file: [2; 16],
+            range: ByteRange { start: 0, end: 3 },
+            file_length: 3,
+            message_id: Some("patch@loopback".into()),
+            part: None,
+            total: None,
+        },
+        sha256: [3; 32],
+    };
+    assert!(
+        db.publish_patches(&source, &[patch])
+            .await
+            .expect("publish")
+    );
     db.enqueue(
         &QueueEntry {
             id: JobId::new(),
@@ -255,6 +284,20 @@ async fn seed(s: &Sqlite) -> Seeded {
     })
     .await
     .expect("conversion");
+    db.request_par2(Owner::Item(file.id), false, 7)
+        .await
+        .expect("repair request");
+    {
+        use sha2::{Digest as _, Sha256};
+        db.stage_legacy_repair(
+            &"A".repeat(64),
+            b"{}",
+            b"candidate",
+            &Sha256::digest(b"candidate"),
+        )
+        .await
+        .expect("legacy candidate");
+    }
     Seeded {
         dir,
         sub,

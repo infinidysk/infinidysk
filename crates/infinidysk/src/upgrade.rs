@@ -1357,7 +1357,12 @@ pub async fn serve_import(
     cancel: &CancellationToken,
 ) -> anyhow::Result<TcpListener> {
     let vars: Vec<(String, String)> = std::env::vars().collect();
-    if matches!(import_needed(db, config, &vars).await, Ok(false)) {
+    if matches!(import_needed(db, config, &vars).await, Ok(false))
+        && matches!(
+            infinidysk_import::legacy_repairs::needed(config, db).await,
+            Ok(false)
+        )
+    {
         return Ok(listener);
     }
     let listener = listener.into_std()?;
@@ -1377,16 +1382,22 @@ pub async fn serve_import(
     let importing = async {
         loop {
             let clock = std::sync::Mutex::new(ProgressClock::default());
-            let result = import_with_progress(db, config, &vars, |progress| {
-                let elapsed = clock
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .elapsed(progress, Instant::now());
-                server.status.send_modify(|status| {
-                    status.progress = Some(UpgradeProgress::new(progress, elapsed));
-                });
-            })
-            .await;
+            let result = if matches!(import_needed(db, config, &vars).await, Ok(false)) {
+                infinidysk_import::legacy_repairs::stage(config, db)
+                    .await
+                    .map_err(Into::into)
+            } else {
+                import_with_progress(db, config, &vars, |progress| {
+                    let elapsed = clock
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .elapsed(progress, Instant::now());
+                    server.status.send_modify(|status| {
+                        status.progress = Some(UpgradeProgress::new(progress, elapsed));
+                    });
+                })
+                .await
+            };
             match result {
                 Ok(()) => break,
                 Err(error) => {

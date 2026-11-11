@@ -8,9 +8,11 @@ use std::task::{Context, Poll, ready};
 use infinidysk_core::crypt::{BLOCK, Cipher};
 use infinidysk_core::trace::Trace;
 use infinidysk_core::wait::Watch;
-use infinidysk_core::{FileMeta, Segments};
+use infinidysk_core::{BlobId, FileMeta, Par2Proof, Segments, repair::Omitted};
 use infinidysk_nntp::Client;
-use infinidysk_stream::{Budget, Cache, Filler, Gaps, Layout, Report, Segment, SegmentReader};
+use infinidysk_stream::{
+    Access, Budget, Cache, Filler, Gaps, Layout, Report, Segment, SegmentReader,
+};
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
 use crate::Error;
@@ -21,11 +23,14 @@ pub enum Reader {
     Segments(SegmentReader),
     Parts(PartsReader),
     Crypt(Box<CryptReader>),
+    Live(Box<crate::live::LiveReader>),
 }
 
 impl Reader {
+    #[allow(clippy::too_many_arguments)] // Source identity accompanies the existing reader options.
     pub(crate) fn new(
         meta: &FileMeta,
+        source: Option<(BlobId, i64)>,
         client: &Arc<Client>,
         budget: &Budget,
         cache: Option<&Arc<Cache>>,
@@ -34,35 +39,49 @@ impl Reader {
         report: Option<&Report>,
     ) -> Result<Self, Error> {
         let floor = infinidysk_core::experiment("win-floor").then(|| client.max_connections());
-        let reader = |segments: Vec<Segment>| {
+        let reader = |segments: Vec<Segment>, omitted: Vec<(usize, Omitted)>| {
             let size = segments.first().map_or(1, |s| s.size.max(1));
             let prefetch = prefetch(read_ahead, size, floor);
-            let mut reader = SegmentReader::new(
-                Arc::clone(client),
-                Arc::new(Layout::new(segments)),
-                prefetch,
-            )
-            .with_budget(budget.clone());
+            let layout = Layout::new(segments)
+                .with_omitted(omitted)
+                .map_err(|_| Error::Corrupt("omitted segment identity differs from layout"))?;
+            let mut reader = SegmentReader::new(Arc::clone(client), Arc::new(layout), prefetch)
+                .with_budget(budget.clone());
             if let Some(cache) = cache {
                 reader = reader.with_cache(Arc::clone(cache));
             }
             if let Some(report) = report {
                 reader = reader.with_report(Arc::clone(report));
             }
-            match trace {
+            Ok::<_, Error>(match trace {
                 Some(trace) => reader.with_trace(Arc::clone(trace)),
                 None => reader,
-            }
+            })
         };
+        let (mut segments, mut omitted) = (Vec::new(), Vec::new());
         Ok(match meta {
-            FileMeta::Nzb(file) => Self::Segments(reader(layout(&file.segments, 0).collect())),
+            FileMeta::Nzb(file) => {
+                append_layout(
+                    &mut segments,
+                    &mut omitted,
+                    &file.segments,
+                    0,
+                    file.proof.as_ref(),
+                    source,
+                )?;
+                Self::Segments(reader(segments, omitted)?)
+            }
             FileMeta::Multipart(file) => {
-                let mut segments = Vec::new();
                 let (mut starts, mut ats) = (Vec::new(), Vec::new());
                 let (mut len, mut at) = (0, 0);
                 for part in &file.parts {
                     let span = part.segments.size();
-                    if part.data.start < part.offset || part.data.end > part.offset + span {
+                    if part.data.start < part.offset
+                        || part
+                            .offset
+                            .checked_add(span)
+                            .is_none_or(|end| part.data.end > end)
+                    {
                         return Err(Error::Corrupt("part data lies outside its segments"));
                     }
                     if !part.data.is_empty() {
@@ -71,10 +90,17 @@ impl Reader {
                         len += part.data.len();
                     }
                     at += span;
-                    segments.extend(layout(&part.segments, part.offset));
+                    append_layout(
+                        &mut segments,
+                        &mut omitted,
+                        &part.segments,
+                        part.offset,
+                        part.proof.as_ref(),
+                        source,
+                    )?;
                 }
                 let parts = PartsReader {
-                    inner: reader(segments),
+                    inner: reader(segments, omitted)?,
                     starts,
                     ats,
                     len,
@@ -123,16 +149,32 @@ fn prefetch(read_ahead: u64, size: u64, floor: Option<usize>) -> usize {
 
 /// Stream segments; `offset` is where the first starts in its posted file, so trusted
 /// sizes give each segment's expected `=ypart` offset.
-fn layout(segments: &Segments, offset: u64) -> impl Iterator<Item = Segment> + '_ {
-    segments.items.iter().scan(offset, |at, s| {
-        let begin = segments.sizes_trusted.then_some(*at);
-        *at += u64::from(s.size);
-        Some(Segment {
+fn append_layout(
+    layout: &mut Vec<Segment>,
+    omitted: &mut Vec<(usize, Omitted)>,
+    segments: &Segments,
+    mut at: u64,
+    proof: Option<&Par2Proof>,
+    source: Option<(BlobId, i64)>,
+) -> Result<(), Error> {
+    for s in &segments.items {
+        let end = at
+            .checked_add(u64::from(s.size))
+            .ok_or(Error::Corrupt("segment range overflow"))?;
+        let begin = segments.sizes_trusted.then_some(at);
+        if let Some(key) = Omitted::for_segment(source, s, begin, proof)
+            .map_err(|_| Error::Corrupt("invalid omitted article layout"))?
+        {
+            omitted.push((layout.len(), key));
+        }
+        layout.push(Segment {
             message_id: s.id.clone(),
             size: u64::from(s.size),
             begin,
-        })
-    })
+        });
+        at = end;
+    }
+    Ok(())
 }
 
 impl Reader {
@@ -150,11 +192,26 @@ impl Reader {
         }
     }
 
+    pub(crate) fn with_access(self, access: Access) -> Self {
+        match self {
+            Self::Memory(_) | Self::Live(_) => self,
+            Self::Segments(r) => Self::Segments(r.with_access(access)),
+            Self::Parts(mut r) => {
+                r.inner = r.inner.with_access(access);
+                Self::Parts(r)
+            }
+            Self::Crypt(mut r) => {
+                r.inner.inner = r.inner.inner.with_access(access);
+                Self::Crypt(r)
+            }
+        }
+    }
+
     /// Shares `gaps` with the file's other readers; analysis readers stay without.
     #[must_use]
     pub(crate) fn with_gaps(self, gaps: Arc<Gaps>) -> Self {
         match self {
-            Self::Memory(_) => self,
+            Self::Memory(_) | Self::Live(_) => self,
             Self::Segments(r) => Self::Segments(r.with_gaps(gaps)),
             Self::Parts(mut r) => {
                 r.inner = r.inner.with_gaps(gaps);
@@ -171,7 +228,7 @@ impl Reader {
     #[must_use]
     pub(crate) fn with_watch(self, watch: Arc<Watch>) -> Self {
         match self {
-            Self::Memory(_) => self,
+            Self::Memory(_) | Self::Live(_) => self,
             Self::Segments(r) => Self::Segments(r.with_watch(watch)),
             Self::Parts(mut r) => {
                 r.inner = r.inner.with_watch(watch);
@@ -188,7 +245,7 @@ impl Reader {
     #[must_use]
     pub(crate) fn into_strict(self) -> Self {
         match self {
-            Self::Memory(_) => self,
+            Self::Memory(_) | Self::Live(_) => self,
             Self::Segments(r) => Self::Segments(r.with_strict()),
             Self::Parts(mut r) => {
                 r.inner = r.inner.with_strict();
@@ -205,6 +262,7 @@ impl Reader {
     pub fn set_end(&mut self, end: u64) {
         match self {
             Self::Memory(_) => {}
+            Self::Live(r) => r.set_end(end),
             Self::Segments(r) => r.set_end(end),
             Self::Parts(r) => r.set_end(end),
             Self::Crypt(r) => r
@@ -225,6 +283,7 @@ impl AsyncRead for Reader {
             Self::Segments(r) => Pin::new(r).poll_read(cx, buf),
             Self::Parts(r) => Pin::new(r).poll_read(cx, buf),
             Self::Crypt(r) => Pin::new(r).poll_read(cx, buf),
+            Self::Live(r) => Pin::new(r).poll_read(cx, buf),
         }
     }
 }
@@ -236,6 +295,7 @@ impl AsyncSeek for Reader {
             Self::Segments(r) => Pin::new(r).start_seek(position),
             Self::Parts(r) => Pin::new(r).start_seek(position),
             Self::Crypt(r) => Pin::new(r).start_seek(position),
+            Self::Live(r) => Pin::new(r).start_seek(position),
         }
     }
 
@@ -245,6 +305,7 @@ impl AsyncSeek for Reader {
             Self::Segments(r) => Pin::new(r).poll_complete(cx),
             Self::Parts(r) => Pin::new(r).poll_complete(cx),
             Self::Crypt(r) => Pin::new(r).poll_complete(cx),
+            Self::Live(r) => Pin::new(r).poll_complete(cx),
         }
     }
 }
@@ -575,7 +636,17 @@ mod tests {
         let capacity = 4 * ARTICLE;
         let budget = Budget::new(capacity);
         let open = |read_ahead, trace: &Arc<Trace>| {
-            Reader::new(&meta, &client, &budget, None, read_ahead, Some(trace), None).unwrap()
+            Reader::new(
+                &meta,
+                None,
+                &client,
+                &budget,
+                None,
+                read_ahead,
+                Some(trace),
+                None,
+            )
+            .unwrap()
         };
         let released = || async {
             tokio::time::timeout(Duration::from_secs(10), async {

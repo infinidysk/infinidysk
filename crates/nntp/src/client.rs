@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
+use infinidysk_core::repair::Omitted;
 use infinidysk_core::trace::{self, Probe};
 use tokio::sync::OwnedRwLockWriteGuard;
 use tokio_util::sync::CancellationToken;
@@ -13,11 +14,21 @@ use crate::connection::validate_message_id;
 use crate::missing::Missing;
 use crate::pool::{Command, Failure, Load, Pool, Tag, join_all};
 use crate::stats::{self, ProviderStats, Rescue, Stats, Workload};
-use crate::{Error, Progress};
+use crate::{ArticleFuture, Error, Progress};
 
 /// Sees every body a request returns, with the message-id, who asked, and whether the
 /// caller had already left (the reply was drained to keep the connection in sync).
 pub type BodySink = Box<dyn Fn(&str, Workload, &Body, bool) + Send + Sync>;
+
+/// None skips the lookup without allocating a future when no repairs can exist.
+pub type RepairLookup =
+    Box<dyn for<'a> Fn(RepairKey<'a>) -> Option<ArticleFuture<'a, Option<Body>>> + Send + Sync>;
+
+#[derive(Clone, Copy)]
+pub enum RepairKey<'a> {
+    Article(&'a str),
+    Omitted(&'a Omitted),
+}
 
 /// One provider's pool and its place in the cascade.
 pub struct Provider {
@@ -44,6 +55,7 @@ pub struct Client {
     known: Mutex<Vec<Known>>,
     missing: Missing,
     sink: Arc<OnceLock<BodySink>>,
+    repairs: OnceLock<RepairLookup>,
     /// Rare (a miss followed by a hit), so a lock is fine.
     rescues: Mutex<HashMap<(u16, u16, trace::Outcome), u64>>,
     /// Background requests pass this before being counted; a [`Lease`] holds it shut.
@@ -105,13 +117,14 @@ impl Entry {
 }
 
 impl Client {
-    /// Without providers every request fails with [`Error::Unavailable`].
+    /// Without providers, articles with no repair fail with [`Error::Unavailable`].
     pub fn new(providers: impl IntoIterator<Item = Provider>) -> Self {
         let client = Self {
             providers: RwLock::new(Arc::new([])),
             known: Mutex::default(),
             missing: Missing::default(),
             sink: Arc::default(),
+            repairs: OnceLock::new(),
             rescues: Mutex::default(),
             gate: Arc::default(),
             preempt: Arc::default(),
@@ -158,6 +171,74 @@ impl Client {
     /// Sets the [`BodySink`]; only the first call takes effect.
     pub fn set_sink(&self, sink: BodySink) {
         let _ = self.sink.set(sink);
+    }
+
+    /// Install the verified, committed repair source once, below every delivery method.
+    pub fn set_repairs(&self, lookup: RepairLookup) {
+        let _ = self.repairs.set(lookup);
+    }
+
+    /// Whether callers must check repairs before bypassing this client with cached/filler bytes.
+    pub fn may_repair(&self, key: RepairKey<'_>) -> bool {
+        self.repairs.get().and_then(|lookup| lookup(key)).is_some()
+    }
+
+    /// Local bytes only. No provider, download permit, provider stats, or body sink.
+    pub async fn repaired(&self, id: &str, begin: Option<u64>) -> Result<Option<Body>, Error> {
+        if id.is_empty() {
+            return Ok(None);
+        }
+        let Some(read) = self
+            .repairs
+            .get()
+            .and_then(|lookup| lookup(RepairKey::Article(id)))
+        else {
+            return Ok(None);
+        };
+        validate_message_id(id)?;
+        let body = read.await?;
+        if let Some(body) = &body
+            && (body.data.is_empty()
+                || body.data.len() > crate::MAX_DECODED_LEN
+                || body
+                    .offset
+                    .checked_add(body.data.len() as u64)
+                    .is_none_or(|end| end > body.file_size)
+                || begin.is_some_and(|begin| begin != body.offset))
+        {
+            return Err(Error::Repair(
+                "posted range differs from the requested article",
+            ));
+        }
+        Ok(body)
+    }
+
+    pub async fn repaired_omitted(&self, key: &Omitted) -> Result<Option<Body>, Error> {
+        if key.generation < 0
+            || key.range.is_empty()
+            || key.range.end > key.file_length
+            || key.range.len() > crate::MAX_DECODED_LEN as u64
+        {
+            return Err(Error::Repair("invalid omitted article identity"));
+        }
+        let Some(read) = self
+            .repairs
+            .get()
+            .and_then(|lookup| lookup(RepairKey::Omitted(key)))
+        else {
+            return Ok(None);
+        };
+        let body = read.await?;
+        if let Some(body) = &body
+            && (body.offset != key.range.start
+                || body.data.len() as u64 != key.range.len()
+                || body.file_size != key.file_length)
+        {
+            return Err(Error::Repair(
+                "posted range differs from the omitted article",
+            ));
+        }
+        Ok(body)
     }
 
     /// Requests that skipped a provider because it recently lacked the article.
@@ -363,6 +444,25 @@ impl Client {
         self.body_tagged(message_id, tag).await
     }
 
+    /// Provider-only BODY after a caller has checked repairs, or for diagnostics.
+    pub async fn provider_body_with(
+        &self,
+        message_id: &str,
+        workload: Workload,
+        probe: Option<&Probe>,
+        progress: Option<&Progress>,
+        begin: Option<u64>,
+    ) -> Result<Body, Error> {
+        let tag = Tag {
+            workload,
+            probe: probe.cloned(),
+            progress: progress.cloned(),
+            begin,
+            ..Tag::UNTRACKED
+        };
+        self.provider_body_tagged(message_id, tag).await
+    }
+
     /// A playback body racing a slow fetch of the same article: waits for an idle
     /// connection rather than pipeline behind another request.
     pub async fn hedge(
@@ -381,6 +481,13 @@ impl Client {
     }
 
     async fn body_tagged(&self, message_id: &str, tag: Tag) -> Result<Body, Error> {
+        if let Some(body) = self.repaired(message_id, tag.begin).await? {
+            return Ok(body);
+        }
+        self.provider_body_tagged(message_id, tag).await
+    }
+
+    async fn provider_body_tagged(&self, message_id: &str, tag: Tag) -> Result<Body, Error> {
         let workload = tag.workload;
         let body = self
             .request(Command::Body, message_id, tag)
@@ -392,9 +499,22 @@ impl Client {
         Ok(body)
     }
 
-    /// Whether any provider has the article, with [`body`](Self::body)'s cascade, error
-    /// semantics and tracing.
+    /// Whether a verified repair or a provider can serve the article.
+    /// [`provider_stat`](Self::provider_stat) checks providers alone.
     pub async fn stat(
+        &self,
+        message_id: &str,
+        workload: Workload,
+        probe: Option<&Probe>,
+    ) -> Result<(), Error> {
+        if self.repaired(message_id, None).await?.is_some() {
+            return Ok(());
+        }
+        self.provider_stat(message_id, workload, probe).await
+    }
+
+    /// Provider availability only, for diagnostics that must not count local repairs.
+    pub async fn provider_stat(
         &self,
         message_id: &str,
         workload: Workload,

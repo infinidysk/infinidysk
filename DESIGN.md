@@ -867,6 +867,14 @@ Sign-in, first-run setup and the upgrade-failed screen sit outside the app shell
 - Field errors under the field; a failed submission below the action with the input kept, focus returned to the field to fix, and API errors rewritten as "what failed, then the fix"; a blocked state as an `Alert` in the card.
 - Username fields turn off autocapitalize, autocorrect and spellcheck; usernames are case-sensitive.
 
+### PAR2 work
+
+- File details keep **Verify with PAR2**, **Repair with PAR2** and **Repair via Arr** as separate actions. Verification explains that complete source files or archive volumes may be read.
+- Queued work is pending, not success. Show its state and reason, decoded provider bytes, saved bytes, verified scope and duration. Announce updates in a polite status region; keep focus in place.
+- Disable duplicate requests while pending. Offer cancellation with an accurate “Cancellation requested” response; accepted publication may still finish.
+- Health's library verification queues small resumable batches only after explicit confirmation. Stopping enumeration leaves already queued checks visible and cancellable in file details.
+- Reuse existing outline buttons, confirmation dialogs and settings experiments. Actions and status rows wrap on mobile.
+
 ## Copywriting
 
 (Supabase: [Copywriting](https://supabase.com/design-system/docs/copywriting))

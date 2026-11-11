@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <title>PAR2 actions regression</title>
+  <div id="root"></div>
+  <pre id="result">Running</pre>
+  <script type="module">
+    import { act, createElement } from "react";
+    import { createRoot } from "react-dom/client";
+    import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+    import { MemoryRouter } from "react-router";
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    const root = createRoot(document.getElementById("root"));
+    const check = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const job = {
+      id: "job",
+      state: "running",
+      reason: "",
+      attempts: 1,
+      transferred_bytes: 0,
+      stored_bytes: 0,
+      updated_at: 1,
+    };
+    try {
+      const { Par2Actions } = await import("/src/par2.tsx");
+      client.setQueryData(["par2", "file"], { enabled: true, repair: job, verification: null });
+      await act(async () =>
+        root.render(
+          createElement(
+            QueryClientProvider,
+            { client },
+            createElement(MemoryRouter, null, createElement(Par2Actions, { id: "file", hasNzb: true })),
+          ),
+        ),
+      );
+      const button = (text) => [...document.querySelectorAll("button")].find((b) => b.textContent.includes(text));
+      check(button("Repair with PAR2")?.disabled, "Running repairs must not admit duplicate work");
+      check(
+        document.querySelector('[role="status"]').textContent.includes("running"),
+        "Running state must be announced",
+      );
+      await act(async () =>
+        client.setQueryData(["par2", "file"], {
+          enabled: true,
+          repair: { ...job, state: "repaired", stored_bytes: 7000 },
+          verification: null,
+        }),
+      );
+      check(!button("Repair with PAR2").disabled, "A completed repair permits an explicit retry");
+      check(
+        document.querySelector('[role="status"]').textContent.includes("repaired"),
+        "Completion must replace running state",
+      );
+      await act(async () =>
+        client.setQueryData(["par2", "file"], { enabled: false, repair: null, verification: null }),
+      );
+      check(button("Verify with PAR2")?.disabled, "Disabled execution must disable verification");
+      check(document.querySelector('a[href="/settings/experiments"]'), "Explain how to enable PAR2 work");
+      document.getElementById("result").textContent = "PASS";
+    } catch (error) {
+      document.getElementById("result").textContent = `FAIL: ${error.message}`;
+    } finally {
+      await act(async () => root.unmount());
+      client.clear();
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    }
+  </script>
+</html>

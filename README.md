@@ -69,6 +69,18 @@ The UI, the SABnzbd API and WebDAV share port 3000. The library is mounted at `/
 
 Next steps in the docs: [Run with Docker](https://www.infinidysk.com/v2/install/docker/), [Providers](https://www.infinidysk.com/v2/install/providers/), [Connect your Arr apps](https://www.infinidysk.com/v2/install/connect-arr/), [Settings](https://www.infinidysk.com/v2/reference/settings/).
 
+PAR2 repair is an experiment: enable it in **Settings → Experiments**, then restart. Explorer file details offer **Verify with PAR2** and **Repair with PAR2**, separately from **Repair via Arr**. Health can verify an existing library in small, resumable batches. Full verification can read complete source files and archive volumes from your providers; a sampled health check is not full verification. Kernel and throughput release checks are still pending.
+
+When enabled, confirmed health damage tries local repair before Arr replacement. Damaged imports wait for repair, then retry through verified saved articles. Unsupported compression and missing passwords still fail directly. The worker checks source data before requesting additional recovery slices. One repair runs at a time; work is bounded to 256 MB of working memory, a 16 MB NZB/metadata allowance, 100 GB of decoded source reads per attempt, one hour per attempt and three attempts. Transport overhead and provider retries can add traffic. Saved repairs have a 10 GB capacity; referenced articles are never evicted to make room.
+
+Saved repair articles live in `/config/repairs` for SQLite and PostgreSQL. Built-in backup and restore supports SQLite only. Those backups include verified repair bytes and pending C# repair candidates. For PostgreSQL, stop infinidysk, take a database dump with `pg_dump` and copy `/config/repairs` as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Older database-only backups stay readable, and missing repairs trigger health rechecks. Cleanup waits while a restore undo or the SQLite copy from a PostgreSQL switch remains available. Back up config before upgrading.
+
+To move an install, stop infinidysk and copy the whole config directory, including `repairs/`, before starting it at the new location.
+
+Repairs for articles omitted from an NZB require a saved PAR2 recovery-set identity and trusted byte ranges. Older metadata stays readable; verification recovers missing proofs lazily from the original NZB when possible. Complete stored plain-file proofs can be verified without an original NZB; reconstruction still needs one. C# repair files are preserved as candidates and become normal saved repairs only after full PAR2 verification. The importer retires its old reader after a complete rewrite pass and seven days without use; original C# files are retained.
+
+Health and import checks use saved repairs when their source identity is known. A repair counts as available only after its bytes pass verification.
+
 ## Reporting problems
 
 See [Reporting a bug](https://www.infinidysk.com/v2/help/reporting/): the image tag, a support pack from the System page, and for playback problems a read trace. Never post provider passwords or API keys. Release names are not needed; describe the file instead (for example "stored RAR5 episode").
@@ -84,6 +96,13 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+On Linux, also run `cargo test -p fuse3 --locked` for notification tests.
+With `/dev/fuse` and mount permission, run `cargo test -p infinidysk --test repair_mount -- --ignored` to check repair publication through the kernel.
+
+With `par2` installed, run `cargo run --release --locked -p infinidysk-bench -- --scenario par2-` to measure playback with idle, active, cancelled, and failed repairs on loopback NNTP. The benchmark uses `par2` to generate the fixture before timing.
+
+`vendor/fuse3` contains fuse3 0.9.0 with a post-INIT notifier and checked inode invalidation. Keep this patch until upstream reports notification write errors. Its original license is retained.
 
 ## License
 

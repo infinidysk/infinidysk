@@ -72,6 +72,38 @@ fn nzb(articles: &[Article], len: usize, name: &str) -> Vec<u8> {
 
 type Log = Arc<(Mutex<Vec<String>>, AtomicBool)>;
 
+#[tokio::test]
+async fn pending_par2_repair_defers_arr_replacement_and_releases_write_admission() {
+    let (articles, len) = mkv("par2-health");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (_arr_tx, arr) = watch::channel(Vec::new());
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_par2();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Repairing;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    assert!(health.step().await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Repairing);
+    assert_eq!(
+        db.par2_result(infinidysk_db::repair::Owner::Item(item.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        0
+    );
+    let _paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+        .await
+        .unwrap();
+}
+
 /// A 100 KB MKV posted under `prefix`.
 fn mkv(prefix: &str) -> (Vec<Article>, usize) {
     let mut data: Vec<u8> = (0..100_000u32)

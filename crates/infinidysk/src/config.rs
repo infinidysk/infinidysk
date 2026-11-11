@@ -177,7 +177,12 @@ pub struct Experiment {
     pub description: &'static str,
 }
 
-pub const EXPERIMENTS: [Experiment; 2] = [
+pub const EXPERIMENTS: [Experiment; 3] = [
+    Experiment {
+        name: "par2-repair",
+        title: "Repair original articles with PAR2",
+        description: "Enables bounded local repair before Arr replacement and retries damaged imports. Repairs use persistent storage and can read complete recovery sets. Kernel and throughput validation is still pending; back up your config before enabling. Applies after restart.",
+    },
     Experiment {
         name: "win-floor",
         title: "Deeper read-ahead for large articles",

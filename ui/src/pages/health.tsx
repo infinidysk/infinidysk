@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api, body, type Schemas } from "../api/client";
 import { ago, stamp } from "../format";
 import { useSettings } from "../settings";
+import { Par2Scan } from "../par2";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -381,6 +382,7 @@ export function Health() {
       <PageHeader title="Health" description="Article checks against your providers from the last 30 days" />
       <Disabled />
       <Summary />
+      <Par2Scan />
       <Reconcile />
       <Attention />
       <Schedule />

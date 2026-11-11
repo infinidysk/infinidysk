@@ -28,7 +28,7 @@ const ARTICLE: usize = 4096;
 /// `user:pass`.
 const BASIC: &str = "Basic dXNlcjpwYXNz";
 
-async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2]) {
+async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2], Arc<Vfs>) {
     let articles = post("a", "a.mkv", data, ARTICLE);
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
     let endpoint = Endpoint::new(
@@ -100,16 +100,16 @@ async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2
         .await
         .unwrap();
 
-    let vfs = Vfs::new(
+    let vfs = Arc::new(Vfs::new(
         db.clone(),
         Arc::clone(&client),
         Budget::new(1 << 20),
         1 << 20,
         "/mnt",
-    );
+    ));
     let (legacy, previous) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
     let dav = WebDav {
-        vfs: Arc::new(vfs),
+        vfs: Arc::clone(&vfs),
         queue: Arc::new(Queue::new(db, client)),
         access: RwLock::new(Access {
             auth: Auth::Basic {
@@ -124,7 +124,7 @@ async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2
             trusted_proxies: Vec::new(),
         }),
     };
-    (server, router(Arc::new(dav)), file, [legacy, previous])
+    (server, router(Arc::new(dav)), file, [legacy, previous], vfs)
 }
 
 async fn send(
@@ -155,11 +155,57 @@ async fn body(response: Response) -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn publication_waits_for_http_bytes_then_refreshes_the_remaining_response() {
+    let data = vec![23; 4 * ARTICLE];
+    let (_server, app, file, _, vfs) = setup(&data).await;
+    let fence = vfs.read_fence(file.id);
+    let response = send(
+        &app,
+        "GET",
+        "/content/tv/my%20job/a.mkv",
+        &[("authorization", BASIC)],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut response = response.into_body();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), fence.write())
+            .await
+            .is_err()
+    );
+    let first = response
+        .frame()
+        .await
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    let received = first.len();
+    let held = first.slice(1..3);
+    drop(first);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), fence.write())
+            .await
+            .is_err()
+    );
+    drop(held);
+    let mut publication = fence.write().await;
+    publication.retire().unwrap();
+    drop(publication);
+    assert_eq!(
+        response.collect().await.unwrap().to_bytes().as_ref(),
+        &data[received..]
+    );
+    drop(fence.write().await);
+}
+
+#[tokio::test]
 async fn serves_the_tree_over_webdav() {
     let data: Vec<u8> = (0..3 * ARTICLE + 123)
         .map(|i| u8::try_from(i * 7 % 251).unwrap())
         .collect();
-    let (_server, app, file, [legacy, previous]) = setup(&data).await;
+    let (_server, app, file, [legacy, previous], _) = setup(&data).await;
     let auth = [("authorization", BASIC)];
 
     let r = send(&app, "PROPFIND", "/", &[], Vec::new()).await;
@@ -386,7 +432,7 @@ async fn serves_the_tree_over_webdav() {
 #[tokio::test]
 async fn deleted_completed_links_go_while_content_stays() {
     let data = vec![7; ARTICLE + 5];
-    let (_server, app, _file, _) = setup(&data).await;
+    let (_server, app, _file, _, _) = setup(&data).await;
     let auth = [("authorization", BASIC)];
     let status = |method: &'static str, uri: &'static str| {
         let app = &app;
@@ -429,7 +475,7 @@ async fn deleted_completed_links_go_while_content_stays() {
 #[tokio::test]
 async fn unreachable_providers_answer_retryable_503_before_the_body() {
     let data = vec![7; 2 * ARTICLE];
-    let (server, app, _, _) = setup(&data).await;
+    let (server, app, _, _, _) = setup(&data).await;
     drop(server);
     let path = "/content/tv/my%20job/a.mkv";
     for range in [None, Some("bytes=4090-")] {

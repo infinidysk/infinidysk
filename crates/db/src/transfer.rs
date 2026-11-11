@@ -53,8 +53,11 @@ impl Key {
 /// Every table, parents before children (foreign keys).
 pub(crate) const TABLES: &[(&str, Key)] = &[
     ("blobs", Key::One("id")),
+    ("repair_patches", Key::One("id")),
     ("items", Key::One("id")),
     ("queue", Key::One("id")),
+    ("repair_jobs", Key::One("id")),
+    ("legacy_repair_articles", Key::One("hash")),
     ("history", Key::One("id")),
     ("health_checks", Key::One("id")),
     ("media_probes", Key::One("item_id")),
