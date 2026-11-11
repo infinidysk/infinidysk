@@ -452,6 +452,25 @@ async fn unreachable_providers_answer_retryable_503_before_the_body() {
     }
 }
 
+#[tokio::test]
+async fn primed_webdav_stream_preserves_first_bytes_and_ranges() {
+    // Larger than several response chunks, ending mid-article.
+    let data: Vec<u8> = (0..150 * ARTICLE + 123)
+        .map(|i| u8::try_from(i * 13 % 251).unwrap())
+        .collect();
+    let (_server, app, _, _) = setup(&data).await;
+    let path = "/content/tv/my%20job/a.mkv";
+    let r = send(&app, "GET", path, &[("authorization", BASIC)], Vec::new()).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(body(r).await == data, "whole file");
+    for (range, from) in [("bytes=1001-", 1001), ("bytes=300000-", 300_000)] {
+        let headers = [("authorization", BASIC), ("range", range)];
+        let r = send(&app, "GET", path, &headers, Vec::new()).await;
+        assert_eq!(r.status(), StatusCode::PARTIAL_CONTENT, "{range}");
+        assert!(body(r).await == data[from..], "{range}");
+    }
+}
+
 /// Reasons of `webdav read failed mid-stream` warnings.
 #[derive(Clone, Default)]
 struct MidStream(Arc<Mutex<Vec<String>>>);
