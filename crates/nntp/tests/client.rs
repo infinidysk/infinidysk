@@ -1050,3 +1050,29 @@ async fn background_connects_that_fail_are_counted_without_a_trip() {
     assert!(body(&client, "a@test").await.is_err());
     assert_eq!(client.stats()[0].connect_failures, 2);
 }
+
+#[tokio::test]
+async fn requests_during_the_connect_backoff_count_one_connect_failure() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&accepts);
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let _ = stream.write_all(b"502 service unavailable\r\n").await;
+        }
+    });
+    let client = Client::new([provider(port, 0, None, &Downloads::new(16))]);
+
+    for _ in 0..21 {
+        assert!(body(&client, "a@test").await.is_err());
+    }
+    let stats = &client.stats()[0];
+    assert_eq!(accepts.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.connect_failures, 1);
+    assert_eq!(
+        stats.workloads[0].failed, 21,
+        "every caller still saw its failure"
+    );
+}
