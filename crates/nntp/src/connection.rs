@@ -752,10 +752,10 @@ impl Connection {
     /// Waits out the download limit for bytes already read. Outside the read timeout,
     /// so a slow limit never fails a healthy connection.
     async fn pay(&mut self) {
-        let unpaid = std::mem::take(&mut self.stream.get_mut().unpaid);
         if let Some(bandwidth) = &self.bandwidth
-            && unpaid > 0
+            && self.stream.get_ref().unpaid > 0
         {
+            let unpaid = std::mem::take(&mut self.stream.get_mut().unpaid);
             let link = &self.stream.get_ref().link;
             let (phase, since) = (link.phase(), link.since.load(Ordering::Relaxed));
             link.set(Phase::Bandwidth);
@@ -843,4 +843,45 @@ fn parse_ypart(line: &[u8]) -> Option<(u64, usize)> {
     let end = field::<u64>(line, b"end")?;
     let len = end.checked_sub(begin)?.checked_add(1)?;
     Some((begin.checked_sub(1)?, usize::try_from(len).ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use infinidysk_testkit::LoopbackServer;
+
+    #[tokio::test]
+    async fn login_preserves_bandwidth_debt_until_the_limiter_is_attached() {
+        let server = LoopbackServer::start(Vec::new()).await.unwrap();
+        let usage = Arc::new(Usage::default());
+        let bandwidth = Arc::new(Bandwidth::new(Some(1)));
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            TlsMode::Plain,
+            Some(Credentials {
+                username: "user".into(),
+                password: "pass".into(),
+            }),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+        .with_usage(Arc::clone(&usage))
+        .with_bandwidth(Arc::clone(&bandwidth));
+        let mut conn = Connection::connect(&endpoint).await.unwrap();
+        let debt = usage.used();
+        assert!(debt > 0);
+        assert_eq!(conn.stream.get_ref().unpaid, debt);
+
+        let mut payment = Box::pin(conn.pay());
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(payment.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        bandwidth.set_limit(None);
+        payment.await;
+        assert_eq!(conn.stream.get_ref().unpaid, 0);
+        assert_eq!(usage.used(), debt);
+    }
 }

@@ -631,6 +631,11 @@ impl Pool {
                             w.link.id,
                         ));
                     }
+                    _ if deadline
+                        .is_some_and(|deadline| tokio::time::Instant::now() >= deadline) =>
+                    {
+                        return Err(Failure::Request(Error::Unavailable));
+                    }
                     _ if open == 0
                         && state
                             .failed_at
@@ -1049,6 +1054,47 @@ fn enqueue(conn: &mut Connection, in_flight: &mut VecDeque<Request>, request: Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn expired_admission_reuses_an_idle_connection_but_never_opens_one() {
+        let server = infinidysk_testkit::LoopbackServer::start(Vec::new())
+            .await
+            .unwrap();
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            crate::TlsMode::Plain,
+            None,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let config = PoolConfig {
+            max_connections: 2,
+            pipeline_depth: 2,
+            idle_timeout: Duration::from_secs(60),
+            min_connections: 0,
+        };
+        let pool = Pool::new(endpoint, config, Downloads::new(4)).unwrap();
+        let deadline = Some(tokio::time::Instant::now());
+        assert!(matches!(
+            pool.worker(true, false, deadline).await,
+            Err(Failure::Request(Error::Unavailable))
+        ));
+        assert_eq!(server.peak_connections(), 0);
+        assert_eq!(pool.lock().connecting, 0);
+
+        let Ok((_, load, _, connection)) = pool.worker(true, false, None).await else {
+            panic!("a connection opens before admission expires");
+        };
+        drop(load);
+        let Ok((_, load, _, reused)) = pool.worker(true, false, deadline).await else {
+            panic!("an idle connection is reusable after admission expires");
+        };
+        assert_eq!(reused, connection);
+        assert_eq!(server.peak_connections(), 1);
+        drop(load);
+        pool.abort();
+    }
 
     #[test]
     fn slow_failing_retries_keep_doubling_the_backoff() {
