@@ -181,7 +181,8 @@ impl Metrics {
         crate::sqlite_compact(&self.pool).await
     }
 
-    /// Adds one minute of counter deltas (zeros skipped) and finished reads.
+    /// Adds one minute of counter deltas (zeros skipped), finished reads and outages. An
+    /// outage written again with the same key and start keeps the longer length.
     pub async fn write(
         &self,
         minute_ms: i64,
@@ -249,7 +250,9 @@ impl Metrics {
         for e in events {
             sqlx::query(
                 "INSERT INTO breaker_events (at, provider_key, provider, open_ms) \
-                 VALUES ($1, $2, $3, $4)",
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (provider_key, at) DO UPDATE SET provider = excluded.provider, \
+                 open_ms = MAX(open_ms, excluded.open_ms)",
             )
             .bind(e.at)
             .bind(&e.provider_key)

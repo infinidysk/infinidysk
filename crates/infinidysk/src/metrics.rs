@@ -1106,11 +1106,21 @@ impl Metrics {
     /// Writes what is pending as the minute starting at `minute_ms`; on failure keeps it
     /// for the next try.
     async fn write(&self, minute_ms: i64) {
-        let pending = std::mem::take(&mut self.state().pending);
+        let (pending, mut events) = {
+            let mut state = self.state();
+            let now = now_ms();
+            // Open outages are saved too, so a crash keeps them up to the last write.
+            let open: Vec<BreakerEvent> = state
+                .open
+                .iter()
+                .map(|(key, o)| o.event(key, now))
+                .collect();
+            (std::mem::take(&mut state.pending), open)
+        };
         let Some(store) = self.store.get() else {
             return;
         };
-        if pending.is_empty() {
+        if pending.is_empty() && events.is_empty() {
             return;
         }
         let counters: Vec<_> = pending
@@ -1118,8 +1128,9 @@ impl Metrics {
             .iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect();
+        events.extend(pending.events.iter().cloned());
         let written = store
-            .write(minute_ms, &counters, &pending.sessions, &pending.events)
+            .write(minute_ms, &counters, &pending.sessions, &events)
             .await;
         let mut state = self.state();
         match written {
@@ -1243,12 +1254,15 @@ impl Metrics {
             .collect();
         reads.sort_by_key(|r| std::cmp::Reverse(r.closed_at));
         let ongoing: Vec<BreakerEvent> = open.iter().map(|(key, o)| o.event(key, at)).collect();
+        let mut seen = HashSet::new();
         let mut breaker_events: Vec<BreakerView> = pending
             .events
             .iter()
             .rev()
             .chain(&ongoing)
             .chain(&events)
+            // The store holds open outages as of the last write; the copy in memory is newer.
+            .filter(|e| e.provider_key.is_none() || seen.insert((e.provider_key.clone(), e.at)))
             .map(|e| BreakerView {
                 at: e.at,
                 provider_key: e.provider_key.clone(),

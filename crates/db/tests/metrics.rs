@@ -159,6 +159,30 @@ async fn outages_keep_their_provider_key_as_long_as_hour_rows() {
 }
 
 #[tokio::test]
+async fn an_outage_written_again_keeps_one_row_with_the_longest_length() {
+    let path = temp_path();
+    let metrics = Metrics::open(&path).await.expect("open");
+    let outage = |open_ms| BreakerEvent {
+        at: DAY,
+        provider_key: Some("p1".to_owned()),
+        provider: "Name".to_owned(),
+        open_ms,
+    };
+    for open_ms in [MINUTE, 3 * MINUTE, 2 * MINUTE] {
+        metrics
+            .write(DAY, &[], &[], &[outage(open_ms)])
+            .await
+            .expect("write");
+    }
+    assert_eq!(
+        metrics.breaker_events(0).await.expect("events"),
+        [outage(3 * MINUTE)]
+    );
+    metrics.close().await;
+    remove(&path);
+}
+
+#[tokio::test]
 async fn reads_keep_their_item() {
     let path = temp_path();
     let metrics = Metrics::open(&path).await.expect("open");
