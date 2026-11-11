@@ -595,6 +595,7 @@ async fn seed_metrics(
         let events: Vec<BreakerEvent> = if rng.chance(1) {
             vec![BreakerEvent {
                 at,
+                provider_key: Some(providers[0].clone()),
                 provider: providers[0].clone(),
                 open_ms: 30_000,
             }]

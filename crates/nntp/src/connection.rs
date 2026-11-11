@@ -31,6 +31,7 @@ const MAX_MESSAGE_ID_LEN: usize = 250;
 const MAX_REPLY_LEN: usize = 120;
 /// Extra decode capacity so `\r\n=yend` is reached without growing the body buffer.
 const DECODE_SLACK: usize = 64;
+const OTHER_PART: Error = Error::Yenc("article is another part of the file");
 /// Longest TCP connect to an address with another one after it; also at most half the
 /// time left, so a silent address cannot use up the connect deadline.
 const ADDRESS_WAIT: Duration = Duration::from_secs(5);
@@ -609,19 +610,22 @@ impl Connection {
             return self.fail_drained(Error::Yenc("missing =ybegin size")).await;
         };
 
+        let other_part = |offset: u64| begin.is_some_and(|begin| begin != offset);
         let mut offset = 0;
         let mut expected = usize::try_from(file_size).unwrap_or(usize::MAX);
+        // Whether the offset was checked against `begin`; a `=ypart` line split across
+        // reads is only seen by the decoder, so the check waits for it or the first byte.
+        let mut checked = false;
         if self.fill().await?.starts_with(b"=ypart ") {
             self.read_line().await?;
             match parse_ypart(&self.line) {
                 Some((begin, len)) => (offset, expected) = (begin, len),
                 None => return self.fail_drained(Error::Yenc("invalid =ypart")).await,
             }
-        }
-        if begin.is_some_and(|begin| begin != offset) {
-            return self
-                .fail_drained(Error::Yenc("article is another part of the file"))
-                .await;
+            if other_part(offset) {
+                return self.fail_drained(OTHER_PART).await;
+            }
+            checked = true;
         }
 
         let mut data = Vec::with_capacity(expected.min(MAX_DECODED_LEN) + DECODE_SLACK);
@@ -629,6 +633,9 @@ impl Connection {
         let mut crc = 0;
         // Decoded bytes already sent to `progress`.
         let mut sent = 0;
+        // Another part found mid-data: decoded to its end and discarded, so the
+        // connection stays in step without draining from inside an encoded line.
+        let mut wrong = false;
         loop {
             if data.len() > MAX_DECODED_LEN {
                 return Err(Error::TooLarge);
@@ -642,7 +649,14 @@ impl Connection {
             let (used, end) = decode_incremental(buf, &mut data, &mut state);
             crc = crc32(crc, &data[decoded..]);
             self.timing.decode += started.elapsed();
-            if let Some(progress) = progress
+            self.stream.consume(used);
+            if !checked && data.len() > decoded {
+                checked = true;
+                wrong = other_part(offset);
+            }
+            if wrong {
+                data.clear();
+            } else if let Some(progress) = progress
                 && data.len() > sent
                 && progress.wanted.load(Ordering::Relaxed)
                 && !progress.tx.is_closed()
@@ -650,10 +664,12 @@ impl Connection {
                 let _ = progress.tx.send((sent, data[sent..].to_vec()));
                 sent = data.len();
             }
-            self.stream.consume(used);
             match end {
                 DecodeEnd::None => {}
                 DecodeEnd::Article => {
+                    if wrong || (!checked && other_part(offset)) {
+                        return Err(OTHER_PART);
+                    }
                     // Without `=yend`, only the length shows the article is whole.
                     if data.len() < expected {
                         return Err(Error::Yenc("article ended before its announced size"));
@@ -664,14 +680,36 @@ impl Connection {
                     // Rest of a `=y…` line; data resumes at a line start.
                     self.read_line().await?;
                     state = DecoderState::default();
-                    if self.line.starts_with(b"part ") {
-                        if let Some((begin, len)) = parse_ypart(&self.line) {
-                            (offset, expected) = (begin, len);
+                    if wrong {
+                        if self.line.starts_with(b"end") {
+                            self.drain().await?;
+                            return Err(OTHER_PART);
                         }
+                    } else if self.line.starts_with(b"part ") {
+                        match parse_ypart(&self.line) {
+                            Some((begin, _)) if other_part(begin) => {
+                                return self.fail_drained(OTHER_PART).await;
+                            }
+                            Some((begin, len)) => {
+                                (offset, expected) = (begin, len);
+                                let fits = len.min(MAX_DECODED_LEN) + DECODE_SLACK;
+                                if data.is_empty() && data.capacity() > fits {
+                                    data = Vec::with_capacity(fits);
+                                }
+                            }
+                            None if !checked => {
+                                return self.fail_drained(Error::Yenc("invalid =ypart")).await;
+                            }
+                            None => {}
+                        }
+                        checked = true;
                     } else if self.line.starts_with(b"end") {
                         let key: &[u8] = if part.is_some() { b"pcrc32" } else { b"crc32" };
                         let posted = crc_field(&self.line, key);
                         self.drain().await?;
+                        if !checked && other_part(offset) {
+                            return Err(OTHER_PART);
+                        }
                         if let Some(expected) = posted
                             && expected != crc
                         {

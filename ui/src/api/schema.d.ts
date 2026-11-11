@@ -1869,9 +1869,15 @@ export interface components {
         BreakerView: {
             /** Format: int64 */
             at: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description How long it stayed open; up to now while it still is.
+             */
             open_ms: number;
+            /** @description Display name when it opened. */
             provider: string;
+            /** @description The provider's key; none on outages stored before keys were. */
+            provider_key?: string | null;
         };
         /** @description Counters since start; sizes are bytes. */
         CacheView: {
@@ -3443,6 +3449,11 @@ export interface components {
             missing: number;
             /** Format: int64 */
             requests: number;
+            /**
+             * Format: int64
+             * @description Circuit breaker openings.
+             */
+            trips: number;
         };
         ProviderScore: {
             /**
