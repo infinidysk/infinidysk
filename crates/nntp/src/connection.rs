@@ -410,7 +410,8 @@ impl Connection {
             pending: 0,
             timeout: timeout_after,
             timing: Timing::default(),
-            bandwidth: endpoint.bandwidth.clone(),
+            // Set after login, so the connect deadline never covers a local limit wait.
+            bandwidth: None,
         };
         *stage = Stage::Greeting;
         match conn.read_status().await? {
@@ -422,6 +423,8 @@ impl Connection {
         if let Some(credentials) = &endpoint.credentials {
             conn.authenticate(credentials).await?;
         }
+        // Login bytes stay unpaid until the first read after this.
+        conn.bandwidth = endpoint.bandwidth.clone();
         let ms = |from: Instant, to: Instant| to.duration_since(from).as_millis();
         tracing::debug!(
             host = endpoint.host.as_str(),

@@ -515,9 +515,11 @@ impl Pool {
         let (mut failed, mut unanswered) = (0, 0);
         let provider = tag.provider;
         let stream = tag.workload == Workload::Stream;
-        // Not renewed on retries.
-        let deadline = stream.then(|| tokio::time::Instant::now() + self.stream_wait);
+        // Shared by retries; only admission waits spend it, not transfers.
+        let mut budget = self.stream_wait;
         loop {
+            let admitted = tokio::time::Instant::now();
+            let deadline = stream.then(|| admitted + budget);
             let acquire = self.downloads.acquire(
                 stream,
                 self.weight(tag.probe.as_ref().map(|probe| probe.size)),
@@ -531,6 +533,7 @@ impl Pool {
             .ok_or(Failure::Request(Error::Closed))?;
             tag.step(Step::Permitted { provider });
             let (tx, load, ahead, connection) = self.worker(stream, tag.fresh, deadline).await?;
+            budget = budget.saturating_sub(admitted.elapsed());
             tag.step(Step::Connected {
                 provider,
                 ahead: u16::try_from(ahead).unwrap_or(u16::MAX),
@@ -582,9 +585,12 @@ impl Pool {
         fresh: bool,
         deadline: Option<tokio::time::Instant>,
     ) -> Result<(mpsc::Sender<Request>, Load, usize, u32), Failure> {
-        let mut impatient = false;
+        let (mut impatient, mut first) = (false, true);
         loop {
-            if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            // A spent budget still takes a connection that is free right away.
+            if !std::mem::take(&mut first)
+                && deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+            {
                 return Err(Failure::Request(Error::Unavailable));
             }
             let mut changed = pin!(self.changed.notified());
