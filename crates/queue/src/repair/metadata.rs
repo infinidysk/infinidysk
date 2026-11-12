@@ -3,6 +3,117 @@ use infinidysk_par2::RepairSet;
 
 use super::{Error, Layout};
 
+/// Restore only ranges observed in yEnc headers. PAR2 identity must match fresh packets.
+pub(super) fn restore(
+    meta: Option<&FileMeta>,
+    slots: &mut super::layout::Slots,
+    sources: &[infinidysk_par2::File],
+    set: infinidysk_par2::Id,
+    slice_size: usize,
+    budget: &mut super::Budget,
+) -> Result<Option<usize>, Error> {
+    let plain = match meta {
+        Some(FileMeta::Nzb(file)) => Some((&file.segments, file.proof.as_ref(), 0)),
+        _ => None,
+    };
+    let parts = match meta {
+        Some(FileMeta::Multipart(file)) => file.parts.as_slice(),
+        _ => &[],
+    };
+    let mut matched = None;
+    for (segments, proof, offset) in plain.into_iter().chain(
+        parts
+            .iter()
+            .map(|part| (&part.segments, part.proof.as_ref(), part.offset)),
+    ) {
+        if !segments.sizes_trusted {
+            continue;
+        }
+        let Some((first, segment)) = segments
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, s)| !s.id.is_empty())
+        else {
+            continue;
+        };
+        let mut at = None;
+        for i in 0..slots.len() {
+            budget.comparison()?;
+            if slots.id(i) == Some(segment.id.as_str()) {
+                at = i.checked_sub(first);
+                break;
+            }
+        }
+        let Some(start) = at else {
+            continue;
+        };
+        let Some(end) = start
+            .checked_add(segments.items.len())
+            .filter(|&end| end <= slots.len())
+        else {
+            continue;
+        };
+        let mut identities_match = true;
+        for (i, known) in (start..end).zip(&segments.items) {
+            budget.comparison()?;
+            identities_match &= slots.id(i).unwrap_or_default() == known.id;
+        }
+        if !identities_match {
+            continue;
+        }
+        let mut candidate = None;
+        if let Some(proof) = proof {
+            for (i, source) in sources.iter().enumerate() {
+                budget.comparison()?;
+                if same_file(proof, source, set, slice_size) && candidate.replace(i).is_some() {
+                    return Err(Error::Ambiguous("stored source identity is not unique"));
+                }
+            }
+            if candidate.is_none() {
+                continue;
+            }
+        }
+        let mut position = offset;
+        for (i, known) in (start..end).zip(&segments.items) {
+            if known.size == 0 || known.size as usize > infinidysk_nntp::MAX_DECODED_LEN {
+                return Err(Error::Unavailable("stored article size is invalid"));
+            }
+            let next = position
+                .checked_add(u64::from(known.size))
+                .ok_or(Error::Unavailable("stored article range overflow"))?;
+            if candidate.is_some_and(|source| next > sources[source].length) {
+                return Err(Error::Unavailable(
+                    "stored article range exceeds its protected source",
+                ));
+            }
+            slots.remember(i, position..next)?;
+            position = next;
+        }
+        if let Some(candidate) = candidate {
+            if matched.is_some_and(|old| old != candidate) {
+                return Err(Error::Ambiguous("stored source identities conflict"));
+            }
+            matched = Some(candidate);
+        }
+    }
+    Ok(matched)
+}
+
+fn same_file(
+    proof: &Par2Proof,
+    source: &infinidysk_par2::File,
+    set: infinidysk_par2::Id,
+    size: usize,
+) -> bool {
+    proof.set_id.is_none_or(|old| old == set)
+        && proof.file_id == source.id
+        && proof.file_length == source.length
+        && proof.file_md5 == source.hash
+        && proof.md5_16k == source.hash_16k
+        && usize::try_from(proof.slice_size).ok() == Some(size)
+}
+
 /// Complete posted-file metadata, emitted only after full slice and file verification.
 pub struct VerifiedSource {
     pub proof: Par2Proof,

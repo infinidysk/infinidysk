@@ -90,6 +90,10 @@ Health and import checks use saved repairs when their source identity is known. 
 
 Repair progress shows completed provider reads and missing results, including repeated reads and cached misses. Missing replies do not consume the decoded source-byte allowance; uncertain transfer failures still reserve the maximum article size. Request, time and memory limits still apply. Back up config before upgrading for the additive request-progress migration.
 
+The backlog separates files found damaged from checks that could not finish and unsuccessful repair attempts. Totals count jobs, so a file can appear in both checks and repairs. A failed attempt does not prove a file is unrecoverable. Old archive/proof or memory failures can be retried with **Check availability**. Shutdown resumes unfinished work without consuming a retry; explicit cancellation remains cancelled. Back up config before upgrading: the cancellation migration corrects old checks recorded as failed cancellations.
+
+Repair reads PAR2 metadata even when checksums follow recovery packets. Saved, trusted article ranges can resolve adjacent missing parts, and a saved identity matching fresh PAR2 metadata can identify a fully missing source. Every reconstructed source still passes full checksum verification before publication. Without trustworthy byte boundaries or enough recovery data, repair stops with an explanation. Memory-limit errors include the failed phase, requested bytes, available allowance and retry instructions; changing limits applies to the next attempt.
+
 ## Reporting problems
 
 See [Reporting a bug](https://www.infinidysk.com/v2/help/reporting/): the image tag, a support pack from the System page, and for playback problems a read trace. Never post provider passwords or API keys. Release names are not needed; describe the file instead (for example "stored RAR5 episode").

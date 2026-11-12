@@ -107,7 +107,10 @@
             reason: "Checking article availability",
           },
         ],
-        counts: [{ state: 1, count: 1 }],
+        counts: [
+          { state: 1, count: 1, checks: 0, damaged_checks: 0 },
+          { state: 5, count: 9, checks: 7, damaged_checks: 3 },
+        ],
         storage_used_bytes: 1000000000,
         limits: {
           storage_gb: 10,
@@ -146,6 +149,9 @@
         "Show enumeration progress separately from completed checks",
       );
       check(document.body.textContent.includes("Discovering PAR2 files"), "Show live worker phase");
+      check(document.body.textContent.includes("3 found damage") && document.body.textContent.includes("4 could not check")
+        && document.body.textContent.includes("2 could not repair"), "Separate damaged checks from check errors and failed repairs");
+      check(!document.body.textContent.includes("unavailable or failed"), "Do not present combined failures as irreparable files");
       check(document.body.textContent.includes("40 of 100 articles checked"), "Show measured article progress");
       check(document.querySelector('progress[aria-label="Current job"][value]')?.value === 40, "Availability progress uses checked articles");
       check(document.body.textContent.includes("source.bin"), "Identify queued files");

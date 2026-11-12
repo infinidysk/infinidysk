@@ -167,12 +167,25 @@ impl Repairs {
                             reason.to_owned(),
                             (state == 4).then(|| now_ms() + 1000),
                         ),
+                        _ if stopped.is_cancelled() && cancel.is_cancelled() => {
+                            (4, "interrupted; retrying".to_owned(), Some(now_ms()))
+                        }
+                        _ if stopped.is_cancelled() => (6, "cancelled".to_owned(), None),
                         other => {
                             let mut reason = match other {
                                 Ok(Err(error)) => error.to_string(),
                                 Err(_) => "repair time limit reached".to_owned(),
                                 Ok(Ok(_)) => unreachable!(),
                             };
+                            let phase = *progress
+                                .phase
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner);
+                            if !phase.is_empty()
+                                && let Some(detail) = reason.strip_prefix("repair unavailable: ")
+                            {
+                                reason = format!("repair unavailable: {phase}: {detail}");
+                            }
                             // Resource/metadata/content failures are terminal; provider/storage failures retry.
                             let transient = !reason.starts_with("repair unavailable:")
                                 && job.attempts < i32::from(progress.limits.attempts);
@@ -195,6 +208,9 @@ impl Repairs {
                     };
                     loop {
                         let saved = async {
+                            if state == 4 && cancel.is_cancelled() {
+                                self.db.yield_par2_attempt(job.id, job.attempts).await?;
+                            }
                             let (completed, missing) = progress.requests(&job);
                             self.db
                                 .update_par2_requests(job.id, completed, missing)
@@ -353,7 +369,7 @@ impl Repairs {
                 }
                 Availability::Cancelled => anyhow::bail!("repair cancelled"),
                 Availability::Yielded => {
-                    self.db.yield_par2_attempt(job.id).await?;
+                    self.db.yield_par2_attempt(job.id, job.attempts).await?;
                     Ok((4, "Waiting for playback; availability check will resume."))
                 }
             };
@@ -410,13 +426,14 @@ impl Repairs {
         } else {
             None
         };
-        let context = repair::Context {
+        let mut context = repair::Context {
             source: Some((source.nzb(), source.generation())),
             candidates,
             probe: Some(progress.probe()),
             progress: Some(Arc::clone(&progress.requests)),
+            metadata: None,
         };
-        let mut metadata = if let infinidysk_db::repair::Owner::Item(id) = owner {
+        let metadata = if let infinidysk_db::repair::Owner::Item(id) = owner {
             if let Some(item) = self.db.item(id).await? {
                 if let Some(meta) = item.meta_blob {
                     self.db
@@ -434,6 +451,7 @@ impl Repairs {
             None
         };
         let mut metadata_changed = false;
+        context.metadata = metadata.map(Arc::new);
         let mut covered = Vec::new();
         let client_for_discovery = Arc::clone(client);
         let repairs = Arc::clone(self);
@@ -500,7 +518,9 @@ impl Repairs {
             progress
                 .verified
                 .fetch_add(result.verified_bytes, Ordering::Relaxed);
-            if let Some(metadata) = &mut metadata {
+            if let Some(metadata) = &mut context.metadata {
+                let metadata = Arc::get_mut(metadata)
+                    .context("repair unavailable: metadata snapshot is still in use")?;
                 metadata_changed |=
                     repair::refresh_metadata(metadata, &result.sources, &mut covered);
             }
@@ -544,16 +564,16 @@ impl Repairs {
             self.db.repair_source(owner).await?.as_ref() == Some(&source),
             "repair unavailable: source changed during verification"
         );
-        if metadata.is_some() {
+        if context.metadata.is_some() {
             anyhow::ensure!(
                 !covered.is_empty() && covered.iter().all(|covered| *covered),
                 "repair unavailable: PAR2 data does not cover every part of this file"
             );
         }
-        if metadata_changed && let Some(metadata) = metadata {
+        if metadata_changed && let Some(metadata) = context.metadata.as_deref() {
             anyhow::ensure!(
                 publisher
-                    .metadata(source.clone(), blob::encode_meta(&metadata)?)
+                    .metadata(source.clone(), blob::encode_meta(metadata)?)
                     .await?,
                 "repair unavailable: source changed before metadata publication"
             );
@@ -571,6 +591,9 @@ impl Repairs {
 
 fn classify(error: repair::Error) -> anyhow::Error {
     match error {
+        error @ repair::Error::Memory { .. } => anyhow::anyhow!(
+            "repair unavailable: {error}. Increase working memory in Settings > PAR2 repair and retry."
+        ),
         repair::Error::Source(_)
         | repair::Error::Changed(_)
         | repair::Error::Worker(_)

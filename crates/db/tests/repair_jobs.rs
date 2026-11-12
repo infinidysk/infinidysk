@@ -122,7 +122,12 @@ async fn lane_contract(db: &Db) {
     assert_eq!(manual.id, scan.id);
     assert_eq!(manual.scan_at, None);
     assert_eq!(manual.checked_articles, 0);
-    db.yield_par2_attempt(manual.id).await.unwrap();
+    db.yield_par2_attempt(manual.id, manual.attempts)
+        .await
+        .unwrap();
+    db.yield_par2_attempt(manual.id, manual.attempts)
+        .await
+        .unwrap();
     let yielded = db
         .par2_jobs()
         .await
@@ -133,6 +138,58 @@ async fn lane_contract(db: &Db) {
     assert_eq!(
         yielded.attempts, 0,
         "playback must not consume a repair retry"
+    );
+    let before = db
+        .par2_counts()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|row| row.0 == 5)
+        .unwrap_or((5, 0, 0, 0));
+    db.finish_par2(
+        manual.id,
+        5,
+        "Missing or corrupt articles found.",
+        0,
+        0,
+        1004,
+        None,
+    )
+    .await
+    .unwrap();
+    db.finish_par2(
+        ids[2],
+        5,
+        "repair unavailable: memory allowance",
+        0,
+        0,
+        1004,
+        None,
+    )
+    .await
+    .unwrap();
+    db.finish_par2(
+        repair.id,
+        5,
+        "repair unavailable: source matching",
+        0,
+        0,
+        1004,
+        None,
+    )
+    .await
+    .unwrap();
+    let after = db
+        .par2_counts()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|row| row.0 == 5)
+        .unwrap();
+    assert_eq!(
+        after,
+        (5, before.1 + 3, before.2 + 2, before.3 + 1),
+        "keep total job counts compatible while separating check errors, damage and repair failures"
     );
 }
 
@@ -181,7 +238,7 @@ async fn durable_requests(db: &Db) {
         (listed[0].transferred_bytes, listed[0].started_at),
         (40, Some(12))
     );
-    assert_eq!(db.par2_counts().await.unwrap(), vec![(1, 1)]);
+    assert_eq!(db.par2_counts().await.unwrap(), vec![(1, 1, 0, 0)]);
     assert!(db.claim_par2(12).await.unwrap().is_none());
     db.resume_par2(13).await.unwrap();
     let resumed = db.claim_par2(13).await.unwrap().unwrap();

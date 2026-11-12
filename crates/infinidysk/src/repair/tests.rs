@@ -79,6 +79,81 @@ async fn ready_jobs_do_not_wait_for_the_idle_poll_between_attempts() {
 }
 
 #[tokio::test]
+async fn shutdown_defers_a_claimed_check_without_consuming_a_retry() {
+    use tokio::sync::watch;
+    let f = Fixture::new().await;
+    let client = Arc::new(infinidysk_nntp::Client::new([]));
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    let vfs = Arc::new(infinidysk_vfs::Vfs::new(
+        f.db.clone(),
+        client.clone(),
+        infinidysk_stream::Budget::new(1_000_000),
+        0,
+        "/mnt",
+    ));
+    let publisher = Publisher::new(repairs.clone(), vfs).unwrap();
+    let (_arr_tx, arr) = watch::channel(vec![]);
+    let (_health_tx, settings) = watch::channel(infinidysk_health::Settings::default());
+    let health = Arc::new(
+        infinidysk_health::Health::new(f.db.clone(), client.clone(), arr, settings).unwrap(),
+    );
+    let root = f.db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut item = Item::child(&root, "interrupted.bin", ItemKind::NzbFile).unwrap();
+    let meta = BlobId::new();
+    item.meta_blob = Some(meta);
+    let raw = blob::encode_meta(&FileMeta::Nzb(infinidysk_core::NzbFile {
+        segments: Segments::default(),
+        proof: None,
+    }))
+    .unwrap();
+    f.db.insert(&[item.clone()], &[(meta, &raw)]).await.unwrap();
+    let id =
+        f.db.request_par2(Owner::Item(item.id), true, 0)
+            .await
+            .unwrap()
+            .unwrap();
+    let config = Arc::new(tokio::sync::RwLock::new(
+        crate::config::ConfigStore::load(f.db.clone(), [])
+            .await
+            .unwrap(),
+    ));
+    let paused = f.db.pause_writes().await;
+    let stop = tokio_util::sync::CancellationToken::new();
+    let task = tokio::spawn(repairs.run(client, publisher, health, config, stop.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while f
+            .db
+            .par2_result(Owner::Item(item.id), true)
+            .await
+            .unwrap()
+            .unwrap()
+            .state
+            != 1
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    stop.cancel();
+    drop(paused);
+    task.await.unwrap();
+    let saved =
+        f.db.par2_jobs()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|job| job.id == id)
+            .unwrap();
+    assert_eq!(saved.state, 4);
+    assert_eq!(
+        saved.attempts, 0,
+        "application shutdown must not consume a provider retry"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
 async fn raising_capacity_reuses_the_store_lease_without_retaining_the_old_limit() {
     let f = Fixture::new().await;
     let client = infinidysk_nntp::Client::new(vec![]);

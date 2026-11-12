@@ -152,7 +152,14 @@ export function Par2Scan() {
   if (query.isError) return <Failure error={query.error} />;
   const scan = query.data.scan;
   const disabled = !query.data.enabled || start.isPending || (!!scan && !scan.complete);
-  const count = (state: number) => query.data.counts.find((c) => c.state === state)?.count ?? 0;
+  const count = (state: number, verify?: boolean, damaged?: boolean) => {
+    const group = query.data.counts.find((c) => c.state === state);
+    if (!group) return 0;
+    if (verify === undefined) return group.count;
+    if (!verify) return group.count - group.checks;
+    if (damaged === undefined) return group.checks;
+    return damaged ? group.damaged_checks : group.checks - group.damaged_checks;
+  };
   return (
     <section className="mb-6 space-y-3" aria-label="PAR2 backlog and worker">
       <h2 className="font-medium">Article checks and repairs</h2>
@@ -234,11 +241,16 @@ export function Par2Scan() {
           used.
         </p>
         <p>
-          {count(0)} queued · {count(1)} running · {count(4)} waiting to retry · {count(2)} passed · {count(3)}{" "}
-          repaired · {count(5)} unavailable or failed · {count(6)} cancelled
+          {count(0)} queued · {count(1)} running · {count(4)} waiting to retry · {count(6)} cancelled
+        </p>
+        <p>
+          Availability: {count(2, true)} available · {count(5, true, true)} found damage · {count(5, true, false)} could not check
+        </p>
+        <p>
+          PAR2: {count(3, false)} repaired · {count(2, false)} verified without repair · {count(5, false)} could not repair
         </p>
         <p className="text-xs">
-          Totals include previous scans and manual jobs. Current limits: {query.data.limits.memory_mb} MB memory,{" "}
+          Totals count jobs across previous scans and manual requests, not unique files. A file can have both a check and a repair result. Current limits: {query.data.limits.memory_mb} MB memory,{" "}
           {query.data.limits.transfer_gb} GB source reads, {query.data.limits.check_concurrency} availability requests and {query.data.limits.timeout_minutes} minutes per attempt;{" "}
           {query.data.limits.attempts} attempts. Saved limits apply at the next attempt.
         </p>

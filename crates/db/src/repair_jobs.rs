@@ -58,9 +58,9 @@ impl Db {
     }
 
     /// Playback preemption does not consume a provider/storage retry.
-    pub async fn yield_par2_attempt(&self, id: Uuid) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET attempts = attempts - 1 WHERE id = $1 AND state = 1 AND attempts > 0")
-            .bind(id).execute(pool).await?.rows_affected());
+    pub async fn yield_par2_attempt(&self, id: Uuid, claimed_attempt: i32) -> Result<(), Error> {
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET attempts = attempts - 1 WHERE id = $1 AND state = 1 AND attempts = $2 AND attempts > 0")
+            .bind(id).bind(claimed_attempt).execute(pool).await?.rows_affected());
         Ok(())
     }
 
@@ -137,9 +137,9 @@ impl Db {
         )
     }
 
-    pub async fn par2_counts(&self) -> Result<Vec<(i16, i64)>, Error> {
+    pub async fn par2_counts(&self) -> Result<Vec<(i16, i64, i64, i64)>, Error> {
         Ok(
-            on!(self, pool => sqlx::query_as("SELECT state, COUNT(*) FROM repair_jobs GROUP BY state ORDER BY state")
+            on!(self, pool => sqlx::query_as("SELECT state, COUNT(*), SUM(CASE WHEN verify_only = TRUE THEN 1 ELSE 0 END), SUM(CASE WHEN verify_only = TRUE AND state = 5 AND reason LIKE 'Missing or corrupt articles found%' THEN 1 ELSE 0 END) FROM repair_jobs GROUP BY state ORDER BY state")
             .fetch_all(pool).await?),
         )
     }
@@ -415,5 +415,34 @@ impl Db {
             tx.commit().await?;
             Ok(Some(id))
         })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)] // Generated test rows and migration assertions.
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn legacy_cancelled_checks_are_reclassified_without_changing_real_failures() {
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        let cancelled = Uuid::new_v4();
+        let failed = Uuid::new_v4();
+        for (id, reason) in [
+            (cancelled, "repair unavailable: Cancelled"),
+            (failed, "repair unavailable: memory allowance"),
+        ] {
+            on!(&db, pool => sqlx::query("INSERT INTO repair_jobs(id, generation, verify_only, state, reason, next_at, updated_at) VALUES($1, 0, TRUE, 5, $2, 0, 0)")
+                .bind(id).bind(reason).execute(pool).await.unwrap().rows_affected());
+        }
+        for _ in 0..2 {
+            on!(&db, pool => sqlx::raw_sql(include_str!("../migrations/sqlite/0016_cancelled_checks.sql")).execute(pool).await.unwrap().rows_affected());
+        }
+        let jobs = db.par2_jobs().await.unwrap();
+        assert_eq!(
+            jobs.iter().find(|job| job.id == cancelled).unwrap().state,
+            6
+        );
+        assert_eq!(jobs.iter().find(|job| job.id == failed).unwrap().state, 5);
     }
 }

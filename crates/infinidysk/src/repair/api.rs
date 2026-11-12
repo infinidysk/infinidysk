@@ -47,6 +47,11 @@ impl From<Job> for Par2Job {
                 2 => "verified",
                 3 => "repaired",
                 4 => "deferred",
+                5 if job.verify_only
+                    && job.reason.starts_with("Missing or corrupt articles found") =>
+                {
+                    "damaged"
+                }
                 5 if job.reason.starts_with("Retry limit reached:") => "failed",
                 5 => "unavailable",
                 6 => "cancelled",
@@ -193,6 +198,10 @@ pub struct Par2ScanStatus {
 pub struct Par2Count {
     state: i16,
     count: i64,
+    /// Availability jobs included in this state total.
+    checks: i64,
+    /// Availability jobs that found damage, rather than failing to finish.
+    damaged_checks: i64,
 }
 
 #[utoipa::path(get, path = "/api/v1/health/par2-scan", tag = "health",
@@ -218,7 +227,12 @@ pub async fn get_par2_scan(State(admin): State<Arc<Admin>>) -> Result<Json<Par2S
             .par2_counts()
             .await?
             .into_iter()
-            .map(|(state, count)| Par2Count { state, count })
+            .map(|(state, count, checks, damaged_checks)| Par2Count {
+                state,
+                count,
+                checks,
+                damaged_checks,
+            })
             .collect(),
         storage_used_bytes: admin
             .repairs

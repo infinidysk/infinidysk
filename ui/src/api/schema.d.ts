@@ -3220,8 +3220,18 @@ export interface components {
             writer_error?: string | null;
         };
         Par2Count: {
+            /**
+             * Format: int64
+             * @description Availability jobs included in this state total.
+             */
+            checks: number;
             /** Format: int64 */
             count: number;
+            /**
+             * Format: int64
+             * @description Availability jobs that found damage, rather than failing to finish.
+             */
+            damaged_checks: number;
             /** Format: int32 */
             state: number;
         };
@@ -3512,7 +3522,7 @@ export interface components {
             /**
              * Format: uuid
              * @description Stable across edits, so masked secrets can be matched back.
-             * @default 01a1d0b3-aca8-7241-9f4b-21afeea2527c
+             * @default 01a1d1bb-4cf1-7284-acad-8ec332c5a04c
              */
             id: string;
             /**

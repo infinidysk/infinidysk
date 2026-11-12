@@ -101,7 +101,7 @@ async fn read_parity(
                     if reader.recovery_slices(set, size)?.len() >= count + 2 {
                         return Ok(reader);
                     }
-                } else if reader.reached_recovery() && !reader.index().files.is_empty() {
+                } else if reader.reached_recovery() && complete_metadata(&reader) {
                     break;
                 }
             }
@@ -110,16 +110,18 @@ async fn read_parity(
             && parity
             && volume_stem(&name).is_none()
             && let Some(stem) = name.strip_suffix(".par2")
-            && reader
-                .sets()
-                .into_iter()
-                .any(|set| reader.verification_set(set).is_ok())
+            && complete_metadata(&reader)
         {
             indexes.insert(stem.to_owned());
         }
         reader.end_volume();
     }
     Ok(reader)
+}
+
+fn complete_metadata(reader: &infinidysk_par2::Reader) -> bool {
+    let sets = reader.sets();
+    !sets.is_empty() && sets.into_iter().all(|set| reader.repair_set(set).is_ok())
 }
 
 use std::collections::HashSet;
@@ -146,6 +148,8 @@ pub struct Context {
     pub candidates: Option<Arc<infinidysk_nntp::RepairLookup>>,
     pub probe: Option<infinidysk_core::trace::Probe>,
     pub progress: Option<Arc<Progress>>,
+    /// Previously observed yEnc ranges and PAR2 identity, captured with the current source.
+    pub metadata: Option<Arc<infinidysk_core::FileMeta>>,
 }
 
 /// Completed provider read requests and definitive misses, including cached misses and repeated reads.
@@ -185,6 +189,10 @@ pub enum Error {
     Cancelled,
     #[error("source resolution exceeds its {0} limit")]
     Limit(&'static str),
+    #[error(
+        "source resolution needs another {required} working-memory bytes; {available} bytes available"
+    )]
+    Memory { required: usize, available: usize },
     #[error("source resolution unavailable: {0}")]
     Unavailable(&'static str),
     #[error("source changed during repair: {0}")]
@@ -198,7 +206,19 @@ pub enum Error {
     #[error("source resolution allocation failed")]
     Allocation,
     #[error("PAR2 content verification failed: {0}")]
-    Content(#[from] infinidysk_par2::Error),
+    Content(#[source] infinidysk_par2::Error),
+}
+
+impl From<infinidysk_par2::Error> for Error {
+    fn from(error: infinidysk_par2::Error) -> Self {
+        match error {
+            infinidysk_par2::Error::Memory { required, limit } => Self::Memory {
+                required,
+                available: limit,
+            },
+            error => Self::Content(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,13 +354,22 @@ async fn resolve_budget(
     budget.probe = context.probe;
     budget.progress = context.progress;
     budget.source = context.source;
+    let metadata = context.metadata;
     let client = Arc::clone(client);
     let size = set.slice_size();
     let set_id = set.id();
     let runtime = tokio::runtime::Handle::current();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let layouts = runtime.block_on(run(&client, files, &sources, size, set_id, &mut budget))?;
+        let layouts = runtime.block_on(run(
+            &client,
+            files,
+            &sources,
+            size,
+            set_id,
+            metadata.as_deref(),
+            &mut budget,
+        ))?;
         Ok((layouts, budget))
     })
     .await?;
@@ -451,8 +480,12 @@ impl Budget {
     }
 
     fn metadata(&mut self, bytes: usize) -> Result<(), Error> {
-        if bytes > self.limits.memory_bytes.saturating_sub(self.scratch) {
-            return Err(Error::Limit("memory"));
+        let available = self.limits.memory_bytes.saturating_sub(self.scratch);
+        if bytes > available {
+            return Err(Error::Memory {
+                required: bytes,
+                available,
+            });
         }
         self.limits.memory_bytes -= bytes;
         Ok(())
@@ -460,7 +493,10 @@ impl Budget {
 
     fn scratch(&mut self, bytes: usize) -> Result<(), Error> {
         if bytes > self.limits.memory_bytes {
-            return Err(Error::Limit("memory"));
+            return Err(Error::Memory {
+                required: bytes,
+                available: self.limits.memory_bytes,
+            });
         }
         self.scratch = bytes;
         Ok(())
@@ -611,15 +647,16 @@ async fn run(
     sources: &[File],
     size: usize,
     set_id: Id,
+    metadata: Option<&infinidysk_core::FileMeta>,
     budget: &mut Budget,
 ) -> Result<Vec<Layout>, Error> {
     let mut resolved: Vec<Option<Layout>> = (0..sources.len()).map(|_| None).collect();
-    let mut reason = "no matching complete source was found";
+    let mut reason = "a protected source could not be identified; surviving checksums or trusted stored metadata are needed";
     for (file, candidate) in files.into_iter().enumerate() {
         budget.check()?;
         budget.scratch(0)?;
         let memory = budget.limits.memory_bytes;
-        let result = observe(client, candidate, sources, size, budget).await;
+        let result = observe(client, candidate, sources, size, set_id, metadata, budget).await;
         // Candidate buffers are gone; only successful output metadata remains live.
         budget.scratch(0)?;
         budget.limits.memory_bytes = memory;
@@ -667,9 +704,12 @@ async fn observe(
     file: nzb::File,
     sources: &[File],
     size: usize,
+    set_id: Id,
+    metadata: Option<&infinidysk_core::FileMeta>,
     budget: &mut Budget,
 ) -> Result<Option<(usize, Vec<Article>, bool, Vec<bool>)>, Error> {
     let mut slots = Slots::new(file, budget)?;
+    let stored_source = metadata::restore(metadata, &mut slots, sources, set_id, size, budget)?;
     let mut identity = Identity::new(sources, size, budget)?;
     let width = budget.admit_reads(client, size)?;
     budget.metadata(PREFIX)?;
@@ -756,7 +796,17 @@ async fn observe(
         }
         at = end;
     }
-    let Some((source, checked)) = identity.finish()? else {
+    let observed = identity.finish()?;
+    if let (Some(stored), Some((observed, _))) = (stored_source, &observed)
+        && stored != *observed
+    {
+        return Err(Error::Changed(
+            "stored source identity disagrees with PAR2 observations",
+        ));
+    }
+    let Some((source, checked)) =
+        observed.or_else(|| stored_source.map(|i| (i, vec![false; sources[i].slices.len()])))
+    else {
         return Ok(None);
     };
     let verified = verifier

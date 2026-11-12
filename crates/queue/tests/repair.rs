@@ -272,6 +272,81 @@ async fn discovery_uses_the_index_before_downloading_recovery_volumes() {
 }
 
 #[tokio::test]
+async fn discovery_keeps_reading_metadata_after_a_recovery_packet() {
+    let packets = |mut bytes: &[u8]| {
+        let mut output = Vec::new();
+        while !bytes.is_empty() {
+            let len =
+                usize::try_from(u64::from_le_bytes(bytes[8..16].try_into().unwrap())).unwrap();
+            output.push(bytes[..len].to_vec());
+            bytes = &bytes[len..];
+        }
+        output
+    };
+    let index = packets(INDEX);
+    let volume = packets(include_bytes!("../../par2/tests/fixtures/set.vol0+3.par2"));
+    let mut ordered = index
+        .iter()
+        .filter(|p| &p[48..64] != b"PAR 2.0\0IFSC\0\0\0\0")
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    ordered.extend_from_slice(
+        volume
+            .iter()
+            .find(|p| &p[48..64] == b"PAR 2.0\0RecvSlic")
+            .unwrap(),
+    );
+    let part_size = ordered.len();
+    for packet in index
+        .iter()
+        .filter(|p| &p[48..64] == b"PAR 2.0\0IFSC\0\0\0\0")
+    {
+        ordered.extend_from_slice(packet);
+    }
+    for with_index in [false, true] {
+        let articles = post(
+            "ordered-packets",
+            if with_index {
+                "set.vol0+3.par2"
+            } else {
+                "set.par2"
+            },
+            &ordered,
+            part_size,
+        );
+        let first = post(
+            "partial-index",
+            "set.par2",
+            &ordered[..part_size],
+            part_size,
+        );
+        let nzb = if with_index {
+            document(&[("set.par2", &first), ("set.vol0+3.par2", &articles)])
+        } else {
+            document(&[("set.par2", &articles)])
+        };
+        let server = LoopbackServer::start(first.into_iter().chain(articles))
+            .await
+            .unwrap();
+        let (reader, _, _) = infinidysk_queue::repair::discover(
+            &client(&server),
+            &nzb,
+            limits(),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            reader
+                .repair_set(infinidysk_par2::read(INDEX).set_id.unwrap())
+                .is_ok(),
+            "required checksums after recovery data must be fetched, even if an index has whole-file hashes"
+        );
+    }
+}
+
+#[tokio::test]
 async fn verification_can_use_whole_file_hashes_without_slice_packets() {
     let a = post("a", "obfuscated", &data(100_000), 7000);
     let b = post("b", "obfuscated", &data(8192), 3000);
@@ -522,6 +597,7 @@ async fn legacy_candidates_become_patches_only_after_complete_par2_verification(
             candidates: Some(candidates),
             probe: None,
             progress: None,
+            metadata: None,
         },
         &CancellationToken::new(),
     )
@@ -665,6 +741,120 @@ async fn adjacent_missing_parts_do_not_get_guessed_boundaries() {
 }
 
 #[tokio::test]
+async fn trusted_stored_ranges_allow_adjacent_or_entirely_missing_source_parts() {
+    use infinidysk_core::{FileMeta, NzbFile, Par2Proof, Segment, Segments};
+    for whole_file in [false, true] {
+        let a_part_size = if whole_file { 7000 } else { 4000 };
+        let a = post("stored-a", "a.bin", &data(100_000), a_part_size);
+        let b = post("stored-b", "b.bin", &data(8192), 3000);
+        let reader = Arc::new(metadata());
+        let set_id = reader.sets()[0];
+        let set = reader.repair_set(set_id).unwrap();
+        let (articles, length, part_size) = if whole_file {
+            (&b, 8192, 3000)
+        } else {
+            (&a, 100_000, 4000)
+        };
+        let source = &set
+            .sources()
+            .iter()
+            .find(|s| s.file.length == length)
+            .unwrap()
+            .file;
+        let meta = FileMeta::Nzb(NzbFile {
+            segments: Segments {
+                items: articles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, article)| Segment {
+                        id: article.message_id.clone(),
+                        size: u32::try_from((length - i as u64 * part_size).min(part_size))
+                            .unwrap(),
+                        fallbacks: vec![],
+                    })
+                    .collect(),
+                sizes_trusted: true,
+                ..Segments::default()
+            },
+            proof: Some(Par2Proof {
+                set_id: Some(set_id),
+                file_length: source.length,
+                slice_size: u32::try_from(set.slice_size()).unwrap(),
+                slice_md5: source.slices.iter().map(|s| s.md5).collect(),
+                slice_crc32: source.slices.iter().map(|s| s.crc32).collect(),
+                file_id: source.id,
+                file_md5: source.hash,
+                md5_16k: source.hash_16k,
+            }),
+        });
+        let nzb = Arc::new(document(&[("one", &a), ("two", &b)]));
+        let server = LoopbackServer::start(if whole_file {
+            a
+        } else {
+            a.into_iter().skip(2).chain(b).collect()
+        })
+        .await
+        .unwrap();
+        for variant in 0..6 {
+            let mut hint = meta.clone();
+            if let FileMeta::Nzb(file) = &mut hint {
+                match variant {
+                    0 => file.segments.sizes_trusted = false,
+                    1 => file.proof.as_mut().unwrap().file_id[0] ^= 1,
+                    2 => file.segments.items[0].id = "unrelated@loopback".to_owned(),
+                    4 => {
+                        file.proof = None;
+                        if !whole_file {
+                            file.segments.items.truncate(3);
+                        }
+                    }
+                    5 if !whole_file => {
+                        file.segments.items[2].size += 1;
+                        file.segments.items[3].size -= 1;
+                    }
+                    5 => file.proof.as_mut().unwrap().file_md5[0] ^= 1,
+                    _ => {}
+                }
+            }
+            let result = infinidysk_queue::repair::execute(
+                &client(&server),
+                nzb.clone(),
+                reader.clone(),
+                set_id,
+                limits(),
+                false,
+                infinidysk_queue::repair::Context {
+                    metadata: Some(Arc::new(hint)),
+                    ..infinidysk_queue::repair::Context::default()
+                },
+                &CancellationToken::new(),
+            )
+            .await;
+            let supported = variant == 3 || (variant == 4 && !whole_file);
+            if !supported {
+                assert!(
+                    matches!(result, Err(Error::Unavailable(_) | Error::Changed(_))),
+                    "untrusted sizes, mismatching proofs and unrelated article IDs must not supply missing boundaries"
+                );
+                continue;
+            }
+            let result =
+                result.expect("trusted identities/ranges allow reconstruction without guessing");
+            assert_eq!(result.verified_bytes, 108_192);
+            assert_eq!(result.patches.len(), if whole_file { 3 } else { 2 });
+            for (patch, bytes) in result.patches {
+                assert_eq!(
+                    bytes,
+                    data(usize::try_from(length).unwrap())[usize::try_from(patch.source.range.start)
+                        .unwrap()
+                        ..usize::try_from(patch.source.range.end).unwrap()]
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn duplicate_article_ownership_is_rejected_before_fetching() {
     let a = post("a", "obfuscated", &data(100_000), 7000);
     let nzb = document(&[("one", &a), ("two", &a)]);
@@ -750,9 +940,36 @@ async fn source_resolution_honors_all_work_limits() {
                 &CancellationToken::new()
             )
             .await,
-            Err(Error::Limit(_))
+            Err(Error::Limit(_) | Error::Memory { .. })
         ));
     }
+}
+
+#[tokio::test]
+async fn memory_limits_report_the_required_and_available_bytes() {
+    let a = post("memory-a", "a.bin", &data(100_000), 7000);
+    let nzb = document(&[("one", &a)]);
+    let server = LoopbackServer::start(a).await.unwrap();
+    let reader = metadata();
+    let set = reader.repair_set(reader.sets()[0]).unwrap();
+    let error = resolve(
+        &client(&server),
+        &nzb,
+        &set,
+        Limits {
+            memory_bytes: 1,
+            ..limits()
+        },
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("available") && error.contains("bytes"),
+        "{error}"
+    );
+    assert_eq!(server.body_commands(), 0);
 }
 
 #[tokio::test]
@@ -1068,7 +1285,7 @@ async fn contradictory_yenc_evidence_does_not_create_a_layout() {
                 &CancellationToken::new()
             )
             .await,
-            Err(Error::Unavailable(_) | Error::Limit(_))
+            Err(Error::Unavailable(_) | Error::Limit(_) | Error::Memory { .. })
         ));
     }
 }

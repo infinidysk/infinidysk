@@ -84,6 +84,15 @@ impl Slots {
         self.parts[index].damage = Some(damage);
     }
 
+    pub(super) fn remember(&mut self, index: usize, range: Range<u64>) -> Result<(), Error> {
+        let slot = &mut self.parts[index];
+        if slot.range.as_ref().is_some_and(|old| *old != range) {
+            return Err(Error::Changed("stored article ranges conflict"));
+        }
+        slot.range = Some(range);
+        Ok(())
+    }
+
     pub fn observe(&mut self, index: usize, body: &Body, budget: &mut Budget) -> Result<(), Error> {
         if self.length.is_some_and(|length| length != body.file_size) {
             return Err(Error::Unavailable("yEnc file lengths disagree"));
@@ -110,6 +119,15 @@ impl Slots {
             .ok_or(Error::Unavailable(
                 "yEnc article is outside the protected file",
             ))?;
+        if self.parts[index]
+            .range
+            .as_ref()
+            .is_some_and(|range| *range != (body.offset..end))
+        {
+            return Err(Error::Changed(
+                "stored article range disagrees with yEnc headers",
+            ));
+        }
         if body.data.is_empty() {
             return Err(Error::Unavailable("empty source article"));
         }
@@ -133,7 +151,7 @@ impl Slots {
                     next.range
                         .as_ref()
                         .ok_or(Error::Unavailable(
-                            "adjacent unavailable articles have ambiguous boundaries",
+                            "adjacent unavailable articles have ambiguous boundaries; trusted stored byte ranges are needed",
                         ))?
                         .start
                 } else {
