@@ -33,7 +33,7 @@ infinidysk is a Usenet-backed virtual filesystem. It takes NZBs from Arr instanc
 
 - Areas: Overview, Queue (imports and history), Explorer (library tree and media analysis), Health (checks, repair, schedule), Stats, Traces, System (logs), Settings (providers, Arr instances, library, mount, performance, network).
 - SABnzbd API (`/api?mode=…`) and WebDAV paths (`/view`, `/content`, `/nzbs`, `/.ids`, `/completed-symlinks`) must behave exactly like 1.x; everything else is new in 2.0.
-- 2.0 is an alpha for early testers. Not yet available: global bandwidth limit, global connection cap, search, indexers.
+- 2.0 is a beta. Not yet available: global bandwidth limit, global connection cap, search, indexers.
 - Terminology: "unowned" and "unlinked" files, never "orphan". Providers come from a managed catalog and share a backbone; there is no storage-group setting. Provider priority levels are pools; cascade routing is always on.
 - Arr configuration is one list of instances, each with a type profile; never per-Arr lists.
 - Data sizes and speeds use decimal units (KB, MB, GB, TB; MB/s), never MiB/GiB or bits. SABnzbd API fields keep SABnzbd's meaning.
