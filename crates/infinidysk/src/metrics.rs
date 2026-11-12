@@ -23,7 +23,7 @@ use infinidysk_db::metrics::{
 use infinidysk_health::Health;
 use infinidysk_nntp::{Client, LATENCY_BUCKETS, Phase, ProviderStats, Workload};
 use infinidysk_queue::Queue;
-use infinidysk_stream::Cache;
+use infinidysk_stream::{Cache, CacheStats};
 use infinidysk_vfs::{Delivery, Kernel, Session, Vfs};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
@@ -37,6 +37,8 @@ use crate::admin::{Admin, Fail};
 
 const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 const SAMPLES_PER_MINUTE: usize = 30;
+/// Swap and `/proc/self/status` are read this often, not every sample.
+const SLOW_READ_EVERY: Duration = Duration::from_mins(1);
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
 const DAY_MS: i64 = 24 * HOUR_MS;
@@ -104,6 +106,8 @@ struct Sampled {
     /// Since when the kernel holds a full background window of FUSE requests we have not
     /// received, and whether that was logged.
     kernel_queued: Option<(Instant, bool)>,
+    /// The last [`SlowRead`].
+    slow: Option<SlowRead>,
 }
 
 #[derive(Clone, Default)]
@@ -192,7 +196,12 @@ struct LiveImport {
     eta_ms: Option<u64>,
 }
 
-/// CPU and memory of infinidysk's cgroup: the whole container under Docker.
+/// CPU and memory of infinidysk's cgroup (the whole container under Docker), and of this
+/// process alone in `process_memory`. Apart from `cgroup_swap_bytes`, `cgroup_<kind>_bytes`
+/// are the kinds in the cgroup's `memory.stat`, none when this kernel does not report one.
+/// They overlap, so never add them to each other or to the `memory_*` fields: `kernel`
+/// includes `slab`, `slab` includes `slab_reclaimable`, `anon_thp` is part of `anon` and
+/// `file` includes `shmem`.
 #[derive(Clone, Copy, Serialize, ToSchema)]
 struct Resources {
     /// Cores busy on average since the previous sample; none on the first.
@@ -212,6 +221,59 @@ struct Resources {
     memory_limit_bytes: u64,
     /// Whether `memory_limit_bytes` is a cgroup limit rather than the host's memory.
     memory_limited: bool,
+    /// Sum of the segment lengths the in-memory cache holds, not capped like
+    /// `memory_segment_cache_bytes`. Logical bytes, not resident memory.
+    segment_cache_logical_bytes: u64,
+    /// Configured size of the in-memory segment cache, also while it is off.
+    segment_cache_capacity_bytes: u64,
+    cgroup_anon_bytes: Option<u64>,
+    cgroup_file_bytes: Option<u64>,
+    cgroup_kernel_bytes: Option<u64>,
+    cgroup_sock_bytes: Option<u64>,
+    cgroup_slab_bytes: Option<u64>,
+    cgroup_slab_reclaimable_bytes: Option<u64>,
+    cgroup_anon_thp_bytes: Option<u64>,
+    cgroup_shmem_bytes: Option<u64>,
+    /// `memory.swap.current`, read once a minute with `process_memory`; none without swap
+    /// accounting.
+    cgroup_swap_bytes: Option<u64>,
+    process_memory: ProcessMemory,
+}
+
+impl Resources {
+    /// Fills in the in-memory segment cache fields from `cache`.
+    fn set_segment_cache(&mut self, cache: &CacheStats) {
+        self.memory_segment_cache_bytes = cache.memory_bytes.min(self.memory_process_bytes);
+        self.memory_segment_cache_limit_bytes = if cache.memory_enabled {
+            cache.memory_capacity
+        } else {
+            0
+        };
+        self.segment_cache_logical_bytes = cache.memory_bytes;
+        self.segment_cache_capacity_bytes = cache.memory_capacity;
+    }
+}
+
+/// This process alone, from `/proc/self/status` once a minute; none for a line this kernel
+/// does not report.
+#[derive(Clone, Copy, Default, Serialize, ToSchema)]
+struct ProcessMemory {
+    /// When it was read, Unix milliseconds.
+    at: i64,
+    /// Since the process last started; a restart from the UI resets it.
+    uptime_ms: u64,
+    /// `VmRSS`.
+    rss_bytes: Option<u64>,
+    /// `RssAnon`: the heap and other anonymous memory.
+    rss_anon_bytes: Option<u64>,
+    /// `RssFile`: mapped files such as the binary.
+    rss_file_bytes: Option<u64>,
+    /// `VmHWM`: the most `rss_bytes` has been since the process last started.
+    rss_peak_bytes: Option<u64>,
+    /// `VmSwap`.
+    swap_bytes: Option<u64>,
+    /// `Threads`.
+    threads: Option<u32>,
 }
 
 #[derive(Clone, Serialize, ToSchema)]
@@ -810,11 +872,16 @@ impl Metrics {
         let sessions = self.sources.vfs.sessions();
         let ended = sessions.take_ended();
         let open = sessions.open();
+        let last = self.state().slow;
         let resources = self
             .cgroup
             .as_ref()
             .map_err(String::clone)
-            .and_then(Cgroup::read);
+            .and_then(|cgroup| {
+                let (usec, r) = cgroup.read()?;
+                let status = Path::new("/proc/self/status");
+                Ok((usec, r, cgroup.read_slow(status, last, now)))
+            });
 
         let mut guard = self.state();
         let state = &mut *guard;
@@ -823,19 +890,16 @@ impl Metrics {
         });
         state.last_at = Some(now);
         let (resources, resources_unavailable) = match resources {
-            Ok((usec, mut r)) => {
+            Ok((usec, mut r, slow)) => {
                 r.cpu_cores = state.cpu.replace((now, usec)).and_then(|(then, prev)| {
                     let wall = (now - then).as_secs_f64();
                     let busy = u32::try_from(usec.saturating_sub(prev)).unwrap_or(u32::MAX);
                     (wall > 0.0).then(|| f64::from(busy) / 1e6 / wall)
                 });
-                let cache = self.sources.cache.stats();
-                r.memory_segment_cache_bytes = cache.memory_bytes.min(r.memory_process_bytes);
-                r.memory_segment_cache_limit_bytes = if cache.memory_enabled {
-                    cache.memory_capacity
-                } else {
-                    0
-                };
+                r.set_segment_cache(&self.sources.cache.stats());
+                r.cgroup_swap_bytes = slow.cgroup_swap_bytes;
+                r.process_memory = slow.process;
+                state.slow = Some(slow);
                 (Some(r), None)
             }
             Err(reason) => {
@@ -2204,6 +2268,14 @@ struct Cgroup {
     host_memory: u64,
 }
 
+/// Swap and this process's memory, read once a minute rather than every sample.
+#[derive(Clone, Copy)]
+struct SlowRead {
+    at: Instant,
+    cgroup_swap_bytes: Option<u64>,
+    process: ProcessMemory,
+}
+
 impl Cgroup {
     fn find() -> Result<Self, String> {
         if !cfg!(target_os = "linux") {
@@ -2222,13 +2294,13 @@ impl Cgroup {
         let host_memory = fs::read_to_string("/proc/meminfo")
             .ok()
             .as_deref()
-            .and_then(mem_total)
+            .and_then(|meminfo| kb_field(meminfo, "MemTotal"))
             .ok_or("/proc/meminfo has no MemTotal.")?;
         Ok(Self { dir, host_memory })
     }
 
-    /// CPU time used so far in microseconds, and resources without `cpu_cores` and the
-    /// segment cache.
+    /// CPU time used so far in microseconds, and resources without `cpu_cores`, the segment
+    /// cache, swap and process memory.
     fn read(&self) -> Result<(u64, Resources), String> {
         let read = |name: &str| {
             fs::read_to_string(self.dir.join(name))
@@ -2238,7 +2310,8 @@ impl Cgroup {
             .ok_or("cgroup cpu.stat has no usage_usec.")?;
         let current =
             limit(&read("memory.current")?).ok_or("cgroup memory.current is not a number.")?;
-        let cache = kernel_cache(&read("memory.stat")?).min(current);
+        let stat = read("memory.stat")?;
+        let cache = kernel_cache(&stat).min(current);
         let max = limit(&read("memory.max")?);
         // cpu.max is missing when the cpu controller is not delegated.
         let quota = read("cpu.max").ok().as_deref().and_then(cpu_quota);
@@ -2260,8 +2333,40 @@ impl Cgroup {
                 memory_kernel_cache_bytes: cache,
                 memory_limit_bytes: max.map_or(self.host_memory, |m| m.min(self.host_memory)),
                 memory_limited: max.is_some_and(|m| m < self.host_memory),
+                segment_cache_logical_bytes: 0,
+                segment_cache_capacity_bytes: 0,
+                cgroup_anon_bytes: stat_field(&stat, "anon"),
+                cgroup_file_bytes: stat_field(&stat, "file"),
+                cgroup_kernel_bytes: stat_field(&stat, "kernel"),
+                cgroup_sock_bytes: stat_field(&stat, "sock"),
+                cgroup_slab_bytes: stat_field(&stat, "slab"),
+                cgroup_slab_reclaimable_bytes: stat_field(&stat, "slab_reclaimable"),
+                cgroup_anon_thp_bytes: stat_field(&stat, "anon_thp"),
+                cgroup_shmem_bytes: stat_field(&stat, "shmem"),
+                cgroup_swap_bytes: None,
+                process_memory: ProcessMemory::default(),
             },
         ))
+    }
+
+    /// `last` while it is younger than [`SLOW_READ_EVERY`], else swap and `status`
+    /// (`/proc/self/status`) read again; a missing or unreadable file leaves its values none.
+    fn read_slow(&self, status: &Path, last: Option<SlowRead>, now: Instant) -> SlowRead {
+        if let Some(last) = last
+            && now - last.at < SLOW_READ_EVERY
+        {
+            return last;
+        }
+        let cgroup_swap_bytes = fs::read_to_string(self.dir.join("memory.swap.current"))
+            .ok()
+            .as_deref()
+            .and_then(limit);
+        let status = fs::read_to_string(status).unwrap_or_default();
+        SlowRead {
+            at: now,
+            cgroup_swap_bytes,
+            process: process_memory(&status, now_ms(), crate::logs::started_ms()),
+        }
     }
 }
 
@@ -2296,16 +2401,35 @@ fn cpu_quota(text: &str) -> Option<f64> {
     (period > 0).then(|| f64::from(quota) / f64::from(period))
 }
 
-fn mem_total(meminfo: &str) -> Option<u64> {
-    let kib: u64 = meminfo
+/// A `<key>: <n> kB` line of `/proc/meminfo` or `/proc/self/status` in bytes; `kB` is 1024
+/// bytes there.
+fn kb_field(text: &str, key: &str) -> Option<u64> {
+    let kib: u64 = text
         .lines()
-        .find_map(|l| l.strip_prefix("MemTotal:"))?
+        .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))?
         .trim()
         .strip_suffix("kB")?
         .trim()
         .parse()
         .ok()?;
     kib.checked_mul(1024)
+}
+
+/// This process's memory from `/proc/self/status`, read at `at` by a process that started at
+/// `started`, both Unix milliseconds.
+fn process_memory(status: &str, at: i64, started: i64) -> ProcessMemory {
+    ProcessMemory {
+        at,
+        uptime_ms: (at - started).max(0).cast_unsigned(),
+        rss_bytes: kb_field(status, "VmRSS"),
+        rss_anon_bytes: kb_field(status, "RssAnon"),
+        rss_file_bytes: kb_field(status, "RssFile"),
+        rss_peak_bytes: kb_field(status, "VmHWM"),
+        swap_bytes: kb_field(status, "VmSwap"),
+        threads: status
+            .lines()
+            .find_map(|l| l.strip_prefix("Threads:")?.trim().parse().ok()),
+    }
 }
 
 #[cfg(test)]
@@ -2415,8 +2539,30 @@ mod tests {
         assert_eq!(cpu_quota("150000 100000\n"), Some(1.5));
         assert_eq!(cpu_quota("max 100000\n"), None);
         assert_eq!(
-            mem_total("MemTotal:       16 kB\nMemFree: 1 kB\n"),
+            kb_field("MemTotal:       16 kB\nMemFree: 1 kB\n", "MemTotal"),
             Some(16 * 1024)
+        );
+        // Any order, unknown lines ignored, a missing line is none; kB is 1024 bytes.
+        let status = "Name:\tinfinidysk\nVmHWM:\t    3000 kB\nVmRSS:\t    2000 kB\n\
+            RssAnon:\t    1500 kB\nRssFile:\t     500 kB\nRssShmem:\t       0 kB\nThreads:\t42\n";
+        assert_eq!(
+            serde_json::to_value(process_memory(status, 61_000, 1_000))
+                .expect("process memory serializes"),
+            serde_json::json!({
+                "at": 61_000,
+                "uptime_ms": 60_000,
+                "rss_bytes": 2000 * 1024,
+                "rss_anon_bytes": 1500 * 1024,
+                "rss_file_bytes": 500 * 1024,
+                "rss_peak_bytes": 3000 * 1024,
+                "swap_bytes": null,
+                "threads": 42,
+            })
+        );
+        assert_eq!(
+            kb_field(&format!("VmSwap:\t{} kB\n", u64::MAX), "VmSwap"),
+            None,
+            "a value that overflows bytes is unavailable"
         );
     }
 
@@ -2432,7 +2578,8 @@ mod tests {
         write("memory.max", "max\n");
         write(
             "memory.stat",
-            "anon 100\nfile 2048\nslab_reclaimable 512\nslab_unreclaimable 64\n",
+            "slab 576\nanon_thp 64\nfile_mapped 7\nanon 100\nshmem 32\nfile 2048\n\
+             slab_reclaimable 512\nslab_unreclaimable 64\nsock 16\n",
         );
         let cgroup = Cgroup {
             dir: dir.clone(),
@@ -2440,18 +2587,147 @@ mod tests {
         };
 
         write("memory.current", "4096\n");
-        let (usec, r) = cgroup.read().expect("all cgroup files exist");
+        let (usec, mut r) = cgroup.read().expect("all cgroup files exist");
         assert_eq!(usec, 42);
         assert_eq!(r.memory_kernel_cache_bytes, 2560);
         assert_eq!(r.memory_process_bytes, 1536);
         assert_eq!(r.memory_limit_bytes, 1 << 40);
         assert!(!r.memory_limited);
+        assert_eq!(
+            [
+                r.cgroup_anon_bytes,
+                r.cgroup_file_bytes,
+                r.cgroup_kernel_bytes,
+                r.cgroup_sock_bytes,
+                r.cgroup_slab_bytes,
+                r.cgroup_slab_reclaimable_bytes,
+                r.cgroup_anon_thp_bytes,
+                r.cgroup_shmem_bytes,
+            ],
+            [
+                Some(100),
+                Some(2048),
+                None,
+                Some(16),
+                Some(576),
+                Some(512),
+                Some(64),
+                Some(32)
+            ]
+        );
+        let json = serde_json::to_value(r).expect("resources serialize");
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .expect("resources serialize as an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "cgroup_anon_bytes",
+                "cgroup_anon_thp_bytes",
+                "cgroup_file_bytes",
+                "cgroup_kernel_bytes",
+                "cgroup_shmem_bytes",
+                "cgroup_slab_bytes",
+                "cgroup_slab_reclaimable_bytes",
+                "cgroup_sock_bytes",
+                "cgroup_swap_bytes",
+                "cpu_cores",
+                "cpu_limit_cores",
+                "memory_kernel_cache_bytes",
+                "memory_limit_bytes",
+                "memory_limited",
+                "memory_process_bytes",
+                "memory_segment_cache_bytes",
+                "memory_segment_cache_limit_bytes",
+                "process_memory",
+                "segment_cache_capacity_bytes",
+                "segment_cache_logical_bytes",
+            ]
+        );
+        // More cached than app memory: the old field stays capped, the new one does not.
+        r.set_segment_cache(&CacheStats {
+            memory_enabled: true,
+            memory_bytes: 4096,
+            memory_capacity: 8192,
+            ..CacheStats::default()
+        });
+        assert_eq!(
+            (r.memory_segment_cache_bytes, r.segment_cache_logical_bytes),
+            (1536, 4096)
+        );
+        assert_eq!(
+            (
+                r.memory_segment_cache_limit_bytes,
+                r.segment_cache_capacity_bytes
+            ),
+            (8192, 8192)
+        );
+        // Turned off: the limit reads 0, the raw capacity stays.
+        r.set_segment_cache(&CacheStats {
+            memory_capacity: 8192,
+            ..CacheStats::default()
+        });
+        assert_eq!(
+            (
+                r.memory_segment_cache_limit_bytes,
+                r.segment_cache_capacity_bytes
+            ),
+            (0, 8192)
+        );
 
         // The stat can briefly exceed memory.current; the cache is clamped.
         write("memory.current", "2000\n");
         let (_, r) = cgroup.read().expect("all cgroup files exist");
         assert_eq!(r.memory_kernel_cache_bytes, 2000);
         assert_eq!(r.memory_process_bytes, 0);
+
+        fs::remove_dir_all(&dir).expect("temp dir is removable");
+    }
+
+    #[test]
+    fn swap_and_process_memory_are_read_once_a_minute() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-cgroup-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("temp dir is writable");
+        let cgroup = Cgroup {
+            dir: dir.clone(),
+            host_memory: 1 << 40,
+        };
+        let start = Instant::now();
+        let swap = dir.join("memory.swap.current");
+        let status = dir.join("status");
+
+        // Missing files are unavailable, not 0.
+        let first = cgroup.read_slow(&status, None, start);
+        assert_eq!(
+            (first.cgroup_swap_bytes, first.process.rss_bytes),
+            (None, None)
+        );
+        fs::write(&swap, "4096\n").expect("temp dir is writable");
+        fs::write(&status, "VmRSS:\t       2 kB\n").expect("temp dir is writable");
+        let kept = cgroup.read_slow(&status, Some(first), start + SAMPLE_EVERY);
+        assert_eq!(
+            (kept.at, kept.cgroup_swap_bytes, kept.process.rss_bytes),
+            (start, None, None),
+            "a sample 2 s later reuses the last read"
+        );
+        let next = cgroup.read_slow(&status, Some(kept), start + SLOW_READ_EVERY);
+        assert_eq!(
+            (next.at, next.cgroup_swap_bytes, next.process.rss_bytes),
+            (start + SLOW_READ_EVERY, Some(4096), Some(2048))
+        );
+        // Missing or unreadable after a good read: the old values are not kept.
+        fs::remove_file(&swap).expect("temp file is removable");
+        fs::remove_file(&status).expect("temp file is removable");
+        fs::create_dir(&status).expect("temp dir is writable");
+        let failed = cgroup.read_slow(&status, Some(next), start + 2 * SLOW_READ_EVERY);
+        assert_eq!(
+            (failed.cgroup_swap_bytes, failed.process.rss_bytes),
+            (None, None)
+        );
 
         fs::remove_dir_all(&dir).expect("temp dir is removable");
     }

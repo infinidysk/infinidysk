@@ -3348,6 +3348,52 @@ export interface components {
             path: string;
             reason: string;
         };
+        /**
+         * @description This process alone, from `/proc/self/status` once a minute; none for a line this kernel
+         *     does not report.
+         */
+        ProcessMemory: {
+            /**
+             * Format: int64
+             * @description When it was read, Unix milliseconds.
+             */
+            at: number;
+            /**
+             * Format: int64
+             * @description `RssAnon`: the heap and other anonymous memory.
+             */
+            rss_anon_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `VmRSS`.
+             */
+            rss_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `RssFile`: mapped files such as the binary.
+             */
+            rss_file_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `VmHWM`: the most `rss_bytes` has been since the process last started.
+             */
+            rss_peak_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `VmSwap`.
+             */
+            swap_bytes?: number | null;
+            /**
+             * Format: int32
+             * @description `Threads`.
+             */
+            threads?: number | null;
+            /**
+             * Format: int64
+             * @description Since the process last started; a restart from the UI resets it.
+             */
+            uptime_ms: number;
+        };
         Progress: {
             /** Format: int64 */
             converted: number;
@@ -3774,8 +3820,37 @@ export interface components {
              */
             used_bytes?: number;
         };
-        /** @description CPU and memory of infinidysk's cgroup: the whole container under Docker. */
+        /**
+         * @description CPU and memory of infinidysk's cgroup (the whole container under Docker), and of this
+         *     process alone in `process_memory`. Apart from `cgroup_swap_bytes`, `cgroup_<kind>_bytes`
+         *     are the kinds in the cgroup's `memory.stat`, none when this kernel does not report one.
+         *     They overlap, so never add them to each other or to the `memory_*` fields: `kernel`
+         *     includes `slab`, `slab` includes `slab_reclaimable`, `anon_thp` is part of `anon` and
+         *     `file` includes `shmem`.
+         */
         Resources: {
+            /** Format: int64 */
+            cgroup_anon_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_anon_thp_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_file_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_kernel_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_shmem_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_slab_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_slab_reclaimable_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_sock_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `memory.swap.current`, read once a minute with `process_memory`; none without swap
+             *     accounting.
+             */
+            cgroup_swap_bytes?: number | null;
             /**
              * Format: double
              * @description Cores busy on average since the previous sample; none on the first.
@@ -3814,6 +3889,18 @@ export interface components {
              * @description Configured size of the in-memory segment cache; 0 when it is off.
              */
             memory_segment_cache_limit_bytes: number;
+            process_memory: components["schemas"]["ProcessMemory"];
+            /**
+             * Format: int64
+             * @description Configured size of the in-memory segment cache, also while it is off.
+             */
+            segment_cache_capacity_bytes: number;
+            /**
+             * Format: int64
+             * @description Sum of the segment lengths the in-memory cache holds, not capped like
+             *     `memory_segment_cache_bytes`. Logical bytes, not resident memory.
+             */
+            segment_cache_logical_bytes: number;
         };
         RevealedKey: {
             value: string;
