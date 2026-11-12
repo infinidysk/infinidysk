@@ -5,14 +5,17 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
 // Whole addresses, not IPs: IPv6 link-local answers carry a scope id.
 type Outcome = Result<Arc<[SocketAddr]>, (io::ErrorKind, String)>;
 type Slot = watch::Receiver<Option<Outcome>>;
-type Map = Arc<Mutex<HashMap<String, Slot>>>;
+type Map = Arc<Mutex<HashMap<String, (Slot, Instant)>>>;
+
+/// How long new callers join a pending lookup before starting their own.
+const MAX_AGE: Duration = Duration::from_secs(5);
 
 /// Lookups for provider connects, shared by the whole process.
 pub(crate) static PROVIDERS: LazyLock<Lookups> = LazyLock::new(Lookups::default);
@@ -23,28 +26,35 @@ pub(crate) async fn system(host: String) -> io::Result<Vec<SocketAddr>> {
 }
 
 /// Lookups in flight, by host name.
-// ponytail: a lookup has no timeout of its own, so a resolver call that never returns
-// blocks new connects to that host until it does. Upgrade path: a maximum age after
-// which a new caller replaces the entry (`Remove` then needs an identity check; the
-// stuck blocking thread is still lost).
+// ponytail: a resolver call that never returns still holds its blocking thread; past
+// `MAX_AGE` new callers only stop waiting on it. Upgrade path: a resolver with its own
+// timeout (e.g. an async DNS client) instead of the system's blocking call.
 #[derive(Default)]
 pub(crate) struct Lookups {
     map: Map,
 }
 
-/// Removes a lookup's entry when its task ends, even if it never ran.
+/// Removes a lookup's entry when its task ends, even if it never ran, unless a newer
+/// lookup has replaced it.
 struct Remove {
     map: Map,
     host: String,
+    slot: Slot,
 }
 
 impl Drop for Remove {
     fn drop(&mut self) {
-        lock(&self.map).remove(&self.host);
+        let mut map = lock(&self.map);
+        if map
+            .get(&self.host)
+            .is_some_and(|(slot, _)| slot.same_channel(&self.slot))
+        {
+            map.remove(&self.host);
+        }
     }
 }
 
-fn lock(map: &Map) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {
+fn lock(map: &Map) -> std::sync::MutexGuard<'_, HashMap<String, (Slot, Instant)>> {
     map.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -68,23 +78,27 @@ impl Lookups {
         wait(slot, host, port, lookup).await
     }
 
-    /// Subscribes to `host`'s lookup in flight, or starts one.
+    /// Subscribes to `host`'s lookup in flight, or starts one when there is none or it
+    /// is older than [`MAX_AGE`].
     fn join<L, F>(&self, host: &str, lookup: &L) -> Slot
     where
         L: Fn(String) -> F,
         F: Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'static,
     {
         let mut map = lock(&self.map);
-        if let Some(slot) = map.get(host) {
+        if let Some((slot, started)) = map.get(host)
+            && started.elapsed() < MAX_AGE
+        {
             return slot.clone();
         }
         let (tx, slot) = watch::channel(None);
-        map.insert(host.to_owned(), slot.clone());
+        map.insert(host.to_owned(), (slot.clone(), Instant::now()));
         drop(map);
         // Built before the spawn, so the entry goes even if the task is dropped unpolled.
         let remove = Remove {
             map: Arc::clone(&self.map),
             host: host.to_owned(),
+            slot: slot.clone(),
         };
         let resolving = lookup(host.to_owned());
         tokio::spawn(async move {
@@ -329,6 +343,34 @@ mod tests {
             gate.notify_one();
         });
         a.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_lookup_is_replaced_and_its_cleanup_keeps_the_new_one() {
+        let lookups = Lookups::default();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let (old_gate, new_gate) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let stuck = counting(&runs, Some(&old_gate));
+        let fresh = counting(&runs, Some(&new_gate));
+        let old = lookups.join("news.example", &stuck);
+        let aged = Instant::now()
+            .checked_sub(MAX_AGE)
+            .expect("test host uptime exceeds MAX_AGE");
+        lock(&lookups.map).get_mut("news.example").unwrap().1 = aged;
+        let new = lookups.join("news.example", &fresh);
+        assert!(!new.same_channel(&old));
+        old_gate.notify_one();
+        wait(old, "news.example", 563, &stuck).await.unwrap();
+        tokio::task::yield_now().await;
+        let joined = lookups.join("news.example", &fresh);
+        assert!(
+            joined.same_channel(&new),
+            "old cleanup removed the new lookup"
+        );
+        new_gate.notify_one();
+        wait(joined, "news.example", 563, &fresh).await.unwrap();
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+        until_empty(&lookups).await;
     }
 
     #[tokio::test]
