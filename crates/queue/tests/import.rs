@@ -1632,6 +1632,12 @@ async fn an_inspection_fails_like_the_import() {
         assert_eq!((failure.kind, failure.step), (kind, step));
         assert_eq!(Some(failure.message), history.fail_message);
         assert_eq!(report.missing_first_segments, missing);
+        if kind == FailureKind::Unsupported {
+            assert!(
+                !report.files.is_empty(),
+                "known unread members survive a later archive failure"
+            );
+        }
     }
 }
 

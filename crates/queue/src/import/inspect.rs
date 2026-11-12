@@ -279,8 +279,9 @@ pub struct Inspected {
     reason = "independent facts of one report, each an API field"
 )]
 pub struct Inspection {
-    /// Whether [`Self::files`] lists every file inside the NZB that an import would
-    /// publish. Says nothing about passwords or about articles being available.
+    /// Whether the inner file list is complete. An archive left as a file is listed
+    /// without its members. Such an archive, a reached limit or an unfinished plan
+    /// makes this false. Says nothing about passwords or article availability.
     pub manifest_complete: bool,
     pub files: Vec<Inspected>,
     pub archives: Vec<ArchiveSet>,
@@ -553,20 +554,16 @@ impl Inspector {
                 .unwrap_or_else(|_| Err(job.over(TIMED_OUT)));
             (planned, timings.step())
         };
-        let mut notes = std::mem::take(&mut *self.run.notes());
         let planned = match planned {
             Ok((_, Some(raw))) => {
+                *self.run.notes() = Notes::default();
                 self.followed += 1;
                 return Level::Nzb(raw);
             }
-            planned => planned.and_then(|(outputs, _)| {
-                let outputs = filter(outputs, job);
-                if outputs.is_empty() && notes.unread.is_empty() {
-                    return Err(failed("No importable files found."));
-                }
-                Ok(outputs)
-            }),
+            Ok((outputs, None)) => self.files(job, outputs, release).await,
+            Err(error) => Err(error),
         };
+        let mut notes = std::mem::take(&mut *self.run.notes());
         // An import stops at the first error the inspection went past, before any later one.
         let failure = notes
             .failure
@@ -574,36 +571,19 @@ impl Inspector {
             .map(|error| Failure::of(error, Step::Archives))
             .or_else(|| planned.as_ref().err().map(|error| Failure::of(error, step)));
         let listed = planned.is_ok();
-        let mut files = Vec::new();
-        if let Ok(outputs) = planned {
-            let raw: Vec<String> = outputs.iter().map(|o| o.path.join("/")).collect();
-            files.extend(
-                name(outputs, release)
-                    .into_iter()
-                    .zip(raw)
-                    .map(|(output, raw_path)| Inspected {
-                        raw_path,
-                        planned_name: output.path.join("/"),
-                        size: Some(output.meta.size()),
-                        source: output.origin.source,
-                        set: output.origin.set,
-                    }),
-            );
-            files.extend(notes.unread.drain(..).map(|unread| {
-                let path = unread.path.join("/");
-                Inspected {
-                    raw_path: path.clone(),
-                    planned_name: path,
-                    size: unread.size,
-                    source: NameSource::ArchiveHeader,
-                    set: unread.set,
-                }
-            }));
-        }
-        if files.len() > limits.reported {
-            files.truncate(limits.reported);
-            notes.exceeded = true;
-        }
+        let mut files = planned.unwrap_or_default();
+        let remaining = limits.reported.saturating_sub(files.len());
+        notes.exceeded |= notes.unread.len() > remaining;
+        files.extend(notes.unread.drain(..).take(remaining).map(|unread| {
+            let path = unread.path.join("/");
+            Inspected {
+                raw_path: path.clone(),
+                planned_name: path,
+                size: unread.size,
+                source: NameSource::ArchiveHeader,
+                set: unread.set,
+            }
+        }));
         let missing_first_segments = nzb
             .files
             .iter()
@@ -630,6 +610,45 @@ impl Inspector {
             article_requests: self.progress.issued.load(Ordering::Relaxed),
             inner_nzbs: self.followed,
         })
+    }
+
+    /// Filters and names the report within the same deadline as the planner.
+    async fn files(
+        &self,
+        job: &Job,
+        outputs: Vec<Output>,
+        release: &str,
+    ) -> Result<Vec<Inspected>, Error> {
+        let listing = async {
+            let outputs = filter(outputs, job);
+            if outputs.is_empty() && self.run.notes().unread.is_empty() {
+                return Err(failed("No importable files found."));
+            }
+            let limit = self.run.limits.reported;
+            if outputs.len() > limit {
+                self.run.notes().exceeded = true;
+            }
+            let raw: Vec<_> = outputs
+                .iter()
+                .take(limit)
+                .map(|o| o.path.join("/"))
+                .collect();
+            Ok(name(outputs, release, limit)
+                .await
+                .into_iter()
+                .zip(raw)
+                .map(|(output, raw_path)| Inspected {
+                    raw_path,
+                    planned_name: output.path.join("/"),
+                    size: Some(output.meta.size()),
+                    source: output.origin.source,
+                    set: output.origin.set,
+                })
+                .collect())
+        };
+        tokio::time::timeout_at(self.deadline, listing)
+            .await
+            .unwrap_or_else(|_| Err(job.over(TIMED_OUT)))
     }
 
     /// The report when the inspection stops before it reads the next NZB.
@@ -858,6 +877,39 @@ mod tests {
             assert!(report.limit_exceeded && !report.manifest_complete);
             assert!(report.article_requests <= 2);
         }
+    }
+
+    #[tokio::test]
+    async fn an_inspection_can_time_out_while_naming_its_report() {
+        use infinidysk_core::{FileMeta, MultipartFile};
+
+        let inspector = Inspector::with(Limits {
+            reported: 1,
+            timeout: Duration::ZERO,
+            ..Limits::DEFAULT
+        });
+        let client = Arc::new(Client::new([]));
+        let job = super::super::job(
+            &client,
+            &Rules::default(),
+            None,
+            Arc::clone(&inspector.progress),
+            Some(Arc::clone(&inspector.run)),
+        );
+        let output = Output {
+            path: vec!["Readable Name.txt".to_owned()],
+            meta: FileMeta::Multipart(MultipartFile {
+                parts: Vec::new(),
+                crypt: None,
+            }),
+            origin: crate::import::Origin {
+                source: NameSource::Subject,
+                set: None,
+            },
+        };
+        let result = inspector.files(&job, vec![output; 512], "job").await;
+        assert!(matches!(result, Err(Error::Limit(TIMED_OUT))));
+        assert!(inspector.run.notes().exceeded);
     }
 
     #[tokio::test]

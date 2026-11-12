@@ -664,7 +664,7 @@ pub async fn import(
     }
     let required = rules.owners.get(&category.to_lowercase());
     require(&outputs, required.map_or(&[], Vec::as_slice))?;
-    let outputs = name(outputs, release);
+    let outputs = name(outputs, release, usize::MAX).await;
     let outputs = check_articles(job, outputs, rules.check_percent).await?;
     let check_at = started.elapsed();
     // Every article answered STAT just now; only the health check's reads remain.
@@ -2057,17 +2057,20 @@ fn require(outputs: &[Output], kinds: &[media::Kind]) -> Result<(), Error> {
     Err(failed(format!("No {} files found.", wanted.join(" or "))))
 }
 
-/// Renames obfuscated videos and gives duplicate paths a ` (n)` suffix.
-fn name(outputs: Vec<Output>, release: &str) -> Vec<Output> {
+/// Renames obfuscated videos and gives duplicate paths a ` (n)` suffix. Deobfuscates the
+/// whole list before limiting the output, yielding so inspections can time out.
+async fn name(outputs: Vec<Output>, release: &str, limit: usize) -> Vec<Output> {
     let mut kept = outputs;
-    deobfuscate(&mut kept, release);
+    deobfuscate(&mut kept, release).await;
     let mut taken = HashSet::new();
     let mut out = Vec::new();
-    for mut output in kept {
+    for mut output in kept.into_iter().take(limit) {
+        tokio::task::consume_budget().await;
         let base = output.path.last().cloned().unwrap_or_default();
         let mut n = 1;
         // Case-insensitive, as Windows clients see the tree.
         while !taken.insert(output.path.join("/").to_lowercase()) {
+            tokio::task::consume_budget().await;
             n += 1;
             let renamed = match base.rsplit_once('.') {
                 Some((stem, ext)) if !stem.is_empty() => format!("{stem} ({n}).{ext}"),
@@ -2084,9 +2087,10 @@ fn name(outputs: Vec<Output>, release: &str) -> Vec<Output> {
 
 /// Names obfuscated videos, and files sharing their stem such as subtitles, after the
 /// nearest folder with a readable name, or the release.
-fn deobfuscate(outputs: &mut [Output], release: &str) {
+async fn deobfuscate(outputs: &mut [Output], release: &str) {
     let mut renames: Vec<(Vec<String>, String, String)> = Vec::new();
     for output in outputs.iter() {
+        tokio::task::consume_budget().await;
         let (file, dirs) = output.path.split_last().expect("paths are never empty");
         let Some((stem, _)) = file.rsplit_once('.') else {
             continue;
@@ -2101,12 +2105,14 @@ fn deobfuscate(outputs: &mut [Output], release: &str) {
         }
     }
     for output in outputs {
+        tokio::task::consume_budget().await;
         let (file, dirs) = output.path.split_last_mut().expect("paths are never empty");
-        if let Some((_, prefix, name)) = renames
-            .iter()
-            .find(|(d, prefix, _)| d == dirs && file.starts_with(prefix.as_str()))
-        {
-            *file = format!("{name}.{}", &file[prefix.len()..]);
+        for (dir, prefix, name) in &renames {
+            tokio::task::consume_budget().await;
+            if dir == dirs && file.starts_with(prefix.as_str()) {
+                *file = format!("{name}.{}", &file[prefix.len()..]);
+                break;
+            }
         }
     }
 }
@@ -2242,8 +2248,8 @@ mod tests {
         assert_eq!(p.snapshot().percent, 99);
     }
 
-    #[test]
-    fn names_obfuscated_videos_after_their_folder_or_release() {
+    #[tokio::test]
+    async fn names_obfuscated_videos_after_their_folder_or_release() {
         let out = |path: &str| Output {
             path: path.split('/').map(str::to_owned).collect(),
             meta: FileMeta::Multipart(MultipartFile {
@@ -2259,7 +2265,7 @@ mod tests {
             out("Readable Name.mkv"),
         ];
         outputs.push(out("READABLE Name.mkv"));
-        let outputs = name(outputs, "Release");
+        let outputs = name(outputs, "Release", usize::MAX).await;
         let paths: Vec<String> = outputs.iter().map(|o| o.path.join("/")).collect();
         assert_eq!(
             paths,
@@ -2271,6 +2277,14 @@ mod tests {
                 "READABLE Name (2).mkv"
             ]
         );
+        let capped = name(
+            vec![out("a1b2c3d4e5f6.en.srt"), out("a1b2c3d4e5f6.mkv")],
+            "Release",
+            1,
+        )
+        .await;
+        assert_eq!(capped.len(), 1);
+        assert_eq!(capped[0].path, ["Release.en.srt"]);
     }
 
     #[test]

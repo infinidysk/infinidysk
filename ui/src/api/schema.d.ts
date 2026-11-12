@@ -3232,8 +3232,9 @@ export interface components {
             diagnostics: components["schemas"]["InspectDiagnostics"];
             files: components["schemas"]["InspectedFile"][];
             /**
-             * @description Whether `files` lists every file inside the NZB that an import would publish. It
-             *     says nothing about passwords or about articles being available.
+             * @description Whether the inner file list is complete. An archive left as a file is listed in
+             *     `files` without its members. Such an archive, a reached limit or an unfinished
+             *     plan makes this false. It says nothing about passwords or article availability.
              */
             manifest_complete: boolean;
         };
