@@ -10,6 +10,7 @@ use std::time::Duration;
 use infinidysk_core::{FileMeta, ItemId, blob, media};
 use infinidysk_db::{Db, Handoff, JobStatus};
 use infinidysk_nntp::{Client, Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
+use infinidysk_queue::import::{self, Inspection};
 use infinidysk_queue::{HandoffJob, HandoffWriter, Queue, Submission, Written};
 use infinidysk_testkit::{Article, LoopbackServer, post};
 use infinidysk_yenc::crc32;
@@ -1393,4 +1394,504 @@ async fn inner_nzbs_are_followed_three_deep_and_no_further() {
         "{:?}",
         history.fail_message
     );
+}
+
+/// Inspects `xml` submitted as `job.nzb`.
+async fn inspect(queue: &Queue, xml: &[u8], password: Option<&str>) -> Inspection {
+    let slot = queue.start_inspection().expect("no inspection is running");
+    slot.inspect("job.nzb", xml, password).await.unwrap()
+}
+
+/// The NZB and the articles of `files`, posted as one release.
+fn release_of(files: &[(&str, Vec<u8>)]) -> (Vec<u8>, Vec<Article>) {
+    let posted: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(i, (name, v))| (*name, post(&format!("v{i}"), name, v, 16 << 10), v.len()))
+        .collect();
+    let xml = nzb(&posted
+        .iter()
+        .map(|(n, a, len)| (*n, a.as_slice(), *len, 16 << 10))
+        .collect::<Vec<_>>());
+    let articles = posted.into_iter().flat_map(|(_, a, _)| a).collect();
+    (xml, articles)
+}
+
+/// Posts `files` as one release, inspects it, checks that nothing was stored, then
+/// imports it.
+async fn inspect_then_import(
+    files: &[(&str, Vec<u8>)],
+) -> (Inspection, infinidysk_db::HistoryEntry, Db) {
+    let (xml, articles) = release_of(files);
+    inspect_then_import_nzb(&xml, articles, None).await
+}
+
+/// Inspects `xml` with `password`, checks that nothing was stored, then imports it
+/// without a password.
+async fn inspect_then_import_nzb(
+    xml: &[u8],
+    articles: Vec<Article>,
+    password: Option<&str>,
+) -> (Inspection, infinidysk_db::HistoryEntry, Db) {
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+    let report = inspect(&queue, xml, password).await;
+    assert!(db.queue().await.unwrap().is_empty(), "queued");
+    assert!(db.history().await.unwrap().is_empty(), "in history");
+    let content = db.children(ItemId::CONTENT).await.unwrap();
+    assert!(content.is_empty(), "published");
+    let history = run(&queue, &db, xml).await;
+    (report, history, db)
+}
+
+/// Paths and sizes of the files below `/content/tv/job`.
+async fn published(db: &Db) -> Vec<(String, u64)> {
+    let mut files = Vec::new();
+    let mut dirs = vec![db.item_by_path("/content/tv/job").await.unwrap().unwrap()];
+    while let Some(dir) = dirs.pop() {
+        for item in db.children(dir.id).await.unwrap() {
+            match item.size {
+                Some(size) => files.push((item.path["/content/tv/job/".len()..].to_owned(), size)),
+                None => dirs.push(item),
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inspection_lists_what_the_import_publishes_and_stores_nothing() {
+    let vols = rar5_set("Clip.A.mkv", &mkv(40_000, 5), 3);
+    let split = mkv(40_000, 6);
+    // `set.par2` names this file `a.bin`.
+    let indexed: Vec<u8> = (0..100_000usize)
+        .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
+        .collect();
+    let (report, history, db) = inspect_then_import(&[
+        ("k3j9x0q2.part01.rar", vols[0].clone()),
+        ("k3j9x0q2.part02.rar", vols[1].clone()),
+        ("k3j9x0q2.part03.rar", vols[2].clone()),
+        ("0a1b2c3d4e5f.mkv", mkv(20_000, 6)),
+        ("0a1b2c3d4e5f.en.srt", vec![7; 3000]),
+        ("notes.nfo", vec![8; 3000]),
+        ("0123abcdef", indexed),
+        ("x.par2", fixture("par2/tests/fixtures/set.par2")),
+        ("Clip.B.mkv.001", split[..20_000].to_vec()),
+        ("Clip.B.mkv.002", split[20_000..].to_vec()),
+    ])
+    .await;
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+    assert!(report.manifest_complete && report.failure.is_none());
+    let mut planned: Vec<_> = report
+        .files
+        .iter()
+        .map(|f| (f.planned_name.clone(), f.size.unwrap()))
+        .collect();
+    planned.sort();
+    assert_eq!(planned, published(&db).await);
+    let listed: Vec<_> = report
+        .files
+        .iter()
+        .map(|f| {
+            (
+                f.raw_path.as_str(),
+                f.planned_name.as_str(),
+                f.source,
+                f.set,
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (
+                "0a1b2c3d4e5f.mkv",
+                "job.mkv",
+                import::NameSource::Subject,
+                None
+            ),
+            (
+                "0a1b2c3d4e5f.en.srt",
+                "job.en.srt",
+                import::NameSource::Subject,
+                None
+            ),
+            ("a.bin", "a.bin", import::NameSource::Par2, None),
+            (
+                "Clip.A.mkv",
+                "Clip.A.mkv",
+                import::NameSource::ArchiveHeader,
+                Some(0)
+            ),
+            (
+                "Clip.B.mkv",
+                "Clip.B.mkv",
+                import::NameSource::Subject,
+                Some(1)
+            ),
+        ]
+    );
+    let sets: Vec<_> = report
+        .archives
+        .iter()
+        .map(|s| (s.kind, s.depth, s.encryption, s.access(), s.streamable()))
+        .collect();
+    let plain = |kind| {
+        (
+            kind,
+            0,
+            import::Encrypted::None,
+            import::Access::Plain,
+            Some(true),
+        )
+    };
+    assert_eq!(
+        sets,
+        [
+            plain(import::ArchiveType::Rar5),
+            plain(import::ArchiveType::Split)
+        ]
+    );
+    assert!(report.article_requests > 0 && report.timings.archives.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inspection_fails_like_the_import() {
+    use import::{FailureKind, Step};
+
+    let lzma = fixture("archive/tests/fixtures/7Zip.LZMA.7z");
+    let compressed = sevenzip(&[("in.7z", &lzma)]);
+    let mut cut = rar5_set("Clip.mkv", &mkv(40_000, 5), 3);
+    cut.pop();
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let cases = [
+        (
+            release_of(&[("x.7z", compressed.clone())]),
+            FailureKind::Unsupported,
+            Step::Archives,
+            vec![],
+        ),
+        // An import stops at the compressed member before it looks for an NZB file,
+        (
+            release_of(&[(
+                "x.7z",
+                sevenzip(&[("in.7z", &lzma), ("release.nzb", &release)]),
+            )]),
+            FailureKind::Unsupported,
+            Step::Archives,
+            vec![],
+        ),
+        // and before it reads a broken archive after it.
+        (
+            release_of(&[("x.7z", compressed), ("y.7z", vec![8; 3000])]),
+            FailureKind::Unsupported,
+            Step::Archives,
+            vec![],
+        ),
+        (
+            release_of(&[
+                ("k3j9x0q2.part01.rar", cut[0].clone()),
+                ("k3j9x0q2.part02.rar", cut[1].clone()),
+            ]),
+            FailureKind::MissingArticles,
+            Step::Archives,
+            vec![],
+        ),
+        (
+            release_of(&[("notes.nfo", vec![8; 3000])]),
+            FailureKind::Other,
+            Step::Archives,
+            vec![],
+        ),
+        // No provider has the first article of the video.
+        (
+            (release.clone(), clip[1..].to_vec()),
+            FailureKind::MissingArticles,
+            Step::Layouts,
+            vec!["Clip.mkv"],
+        ),
+        // The NZB leaves out the first segment; every article it lists is there.
+        (
+            (nzb(&[("Clip.mkv", &clip[1..], 3000, 1000)]), clip.clone()),
+            FailureKind::MissingArticles,
+            Step::Layouts,
+            vec![],
+        ),
+    ];
+    for ((xml, articles), kind, step, missing) in cases {
+        let (report, history, _db) = inspect_then_import_nzb(&xml, articles, None).await;
+        assert_eq!(history.status, JobStatus::Failed);
+        let failure = report.failure.expect("the import failed");
+        assert_eq!((failure.kind, failure.step), (kind, step));
+        assert_eq!(Some(failure.message), history.fail_message);
+        assert_eq!(report.missing_first_segments, missing);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inspection_reports_nesting_and_archives_left_unopened() {
+    let five = sevenzip(&[("Deep.Clip.mkv", &mkv(1000, 8))]);
+    let four = sevenzip(&[("Layer.Five.7z", &five)]);
+    let three = sevenzip(&[("Layer.Four.7z", &four)]);
+    let two = sevenzip(&[
+        ("Shallow.Clip.mkv", &mkv(40_000, 7)),
+        ("sub/Layer.Three.7z", &three),
+    ]);
+    let one = sevenzip(&[("Layer.Two.7z", &two)]);
+    let a = rar5_set("Clip.A.mkv", &mkv(40_000, 5), 2);
+    let b = rar5_set("Clip.B.mkv", &mkv(40_000, 6), 2);
+    let (report, history, _db) = inspect_then_import(&[
+        ("Layer.One.7z", one),
+        ("a.part01.rar", a[0].clone()),
+        ("a.part02.rar", a[1].clone()),
+        ("b.part01.rar", b[0].clone()),
+        ("b.part02.rar", b[1].clone()),
+    ])
+    .await;
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+    assert!(!report.manifest_complete, "Layer.Five.7z stays a file");
+    assert!(report.nested_archive_opaque);
+    assert!(report.failure.is_none() && !report.limit_exceeded);
+    let sets: Vec<_> = report.archives.iter().map(|s| (s.kind, s.depth)).collect();
+    assert_eq!(
+        sets,
+        [
+            (import::ArchiveType::Rar5, 0),
+            (import::ArchiveType::Rar5, 0),
+            (import::ArchiveType::SevenZip, 0),
+            (import::ArchiveType::SevenZip, 1),
+            (import::ArchiveType::SevenZip, 2),
+            (import::ArchiveType::SevenZip, 3),
+        ]
+    );
+    let mut files: Vec<_> = report
+        .files
+        .iter()
+        .map(|f| (f.raw_path.as_str(), f.set))
+        .collect();
+    files.sort_unstable();
+    assert_eq!(
+        files,
+        [
+            ("Clip.A.mkv", Some(0)),
+            ("Clip.B.mkv", Some(1)),
+            ("Shallow.Clip.mkv", Some(3)),
+            ("sub/Layer.Five.7z", Some(5)),
+        ]
+    );
+}
+
+/// Posts archive fixtures under `names` and inspects them with `password`.
+async fn inspect_fixtures(names: &[(&str, &str)], password: Option<&str>) -> Inspection {
+    let posted: Vec<_> = names
+        .iter()
+        .enumerate()
+        .map(|(i, (name, file))| {
+            let data = fixture(&format!("archive/tests/fixtures/{file}"));
+            (
+                *name,
+                post(&format!("v{i}"), name, &data, 16 << 10),
+                data.len(),
+            )
+        })
+        .collect();
+    let xml = nzb(&posted
+        .iter()
+        .map(|(n, a, len)| (*n, a.as_slice(), *len, 16 << 10))
+        .collect::<Vec<_>>());
+    let articles = posted.into_iter().flat_map(|(_, a, _)| a).collect();
+    let (_server, queue) = setup(articles).await;
+    inspect(&queue, &xml, password).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inspection_says_what_a_password_opened() {
+    use import::{Access, ArchiveType, Encrypted, FailureKind};
+
+    let volumes = [
+        ("p.part1.rar", "aes-5v.part1.rar"),
+        ("p.part2.rar", "aes-5v.part2.rar"),
+        ("p.part3.rar", "aes-5v.part3.rar"),
+    ];
+    let member = |report: &Inspection| {
+        let [file] = &report.files[..] else {
+            panic!("one member: {:?}", report.files)
+        };
+        (file.raw_path.clone(), file.size, file.set)
+    };
+    let data_bin = ("data.bin".to_owned(), Some(9001), Some(0));
+
+    // RAR5 stores a check value: the right password is confirmed, a wrong one caught.
+    let right = inspect_fixtures(&volumes, Some("test")).await;
+    let set = &right.archives[0];
+    assert_eq!(
+        (set.kind, set.encryption, set.access(), set.streamable()),
+        (
+            ArchiveType::Rar5,
+            Encrypted::Data,
+            Access::PasswordValidated,
+            Some(true)
+        )
+    );
+    assert!(right.manifest_complete && right.failure.is_none());
+    assert!(!right.password_not_validated);
+    assert_eq!(member(&right), data_bin);
+
+    // Without a password the headers still list the member.
+    for (password, message) in [(None, "has no password"), (Some("nope"), "wrong archive")] {
+        let locked = inspect_fixtures(&volumes, password).await;
+        let set = &locked.archives[0];
+        assert_eq!(
+            (set.encryption, set.access(), set.streamable()),
+            (Encrypted::Data, Access::PasswordRequired, Some(true))
+        );
+        assert!(locked.manifest_complete, "{password:?}");
+        assert_eq!(member(&locked), data_bin);
+        let failure = locked.failure.expect("an import fails");
+        assert_eq!(failure.kind, FailureKind::Password);
+        assert!(failure.message.contains(message), "{}", failure.message);
+    }
+
+    // Encrypted headers hide the members, and so whether they can be streamed.
+    let hidden = inspect_fixtures(&[("p.rar", "aes-5hp.rar")], None).await;
+    let set = &hidden.archives[0];
+    assert_eq!(
+        (set.encryption, set.access(), set.streamable()),
+        (Encrypted::Headers, Access::PasswordRequired, None)
+    );
+    assert!(!hidden.manifest_complete && hidden.files.is_empty());
+    assert_eq!(hidden.failure.unwrap().kind, FailureKind::Password);
+    let shown = inspect_fixtures(&[("p.rar", "aes-5hp.rar")], Some("test")).await;
+    assert_eq!(shown.archives[0].access(), Access::PasswordValidated);
+    assert_eq!(member(&shown), data_bin);
+
+    // RAR4 and 7z derive a key from any password; the headers then do not decode.
+    for (posted, file) in [("p.rar", "aes-4hp.rar"), ("p.7z", "aes-7he.7z")] {
+        let wrong = inspect_fixtures(&[(posted, file)], Some("nope")).await;
+        assert_eq!(
+            wrong.archives[0].access(),
+            Access::PasswordRequired,
+            "{file}"
+        );
+        assert!(!wrong.manifest_complete && !wrong.password_not_validated);
+        assert_eq!(wrong.failure.unwrap().kind, FailureKind::Password, "{file}");
+    }
+
+    // RAR4 data has nothing to check a password against.
+    let unchecked = inspect_fixtures(&[("p.rar", "aes-4.rar")], Some("nope")).await;
+    let set = &unchecked.archives[0];
+    assert_eq!(
+        (set.kind, set.encryption, set.access()),
+        (ArchiveType::Rar4, Encrypted::Data, Access::Unknown)
+    );
+    assert!(unchecked.password_not_validated && unchecked.failure.is_none());
+
+    // Compressed members are listed, and no password makes them streamable.
+    let compressed = inspect_fixtures(&[("p.7z", "7Zip.LZMA.7z")], None).await;
+    let set = &compressed.archives[0];
+    assert_eq!(
+        (set.kind, set.access(), set.streamable()),
+        (ArchiveType::SevenZip, Access::Unsupported, Some(false))
+    );
+    assert!(compressed.manifest_complete && !compressed.files.is_empty());
+    assert_eq!(compressed.failure.unwrap().kind, FailureKind::Unsupported);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inspection_reads_remembered_misses_but_adds_none() {
+    let c = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let xml = nzb(&[("Clip.mkv", &c, 4000, 1000)]);
+    // The first provider lacks the first article; the second has every one.
+    let partial = LoopbackServer::start(c[1..].to_vec()).await.unwrap();
+    let full = LoopbackServer::start(c.clone()).await.unwrap();
+    let queue = queue_on(&[&partial, &full]).await;
+    let db = queue.db().clone();
+    let asked = |before: usize| partial.body_commands() - before;
+
+    let report = inspect(&queue, &xml, None).await;
+    assert!(report.manifest_complete, "{:?}", report.failure);
+    assert!(
+        report.missing_first_segments.is_empty(),
+        "the second provider had it"
+    );
+    let first = asked(0);
+    let before = partial.body_commands();
+    inspect(&queue, &xml, None).await;
+    assert_eq!(asked(before), first, "the miss was not remembered");
+
+    // An import remembers the miss, and an inspection then skips that provider for it.
+    let history = run(&queue, &db, &xml).await;
+    assert_eq!(history.status, JobStatus::Completed);
+    let before = partial.body_commands();
+    inspect(&queue, &xml, None).await;
+    assert_eq!(asked(before), first - 1, "a remembered miss is honoured");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inspection_of_a_rejected_release_fetches_nothing() {
+    let c = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let xml = nzb(&[("Clip.mkv", &c, 4000, 1000)]);
+    let (server, queue) = setup(c.clone()).await;
+    let ids: Vec<&str> = c.iter().map(|a| a.message_id.as_str()).collect();
+    queue
+        .db()
+        .reject_release("other", &ids[..1], i64::MAX)
+        .await
+        .unwrap();
+    let report = inspect(&queue, &xml, None).await;
+    let failure = report.failure.expect("health replaced this release");
+    assert_eq!(
+        (failure.kind, failure.step),
+        (import::FailureKind::Rejected, import::Step::Starting)
+    );
+    assert!(!report.manifest_complete);
+    assert_eq!(server.body_commands(), 0, "nothing was fetched");
+    assert!(queue.db().history().await.unwrap().is_empty(), "in history");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inspection_follows_an_nzb_file_like_the_import() {
+    // The inner NZB opens its archive with its own password, not the request's.
+    let archive = fixture("archive/tests/fixtures/aes-5.rar");
+    let packed = post("a", "pack.rar", &archive, 1000);
+    let release = String::from_utf8(nzb(&[("pack.rar", &packed, archive.len(), 1000)]))
+        .unwrap()
+        .replacen(
+            "<nzb>",
+            "<nzb><head><meta type=\"password\">test</meta></head>",
+            1,
+        );
+    let mut articles = packed;
+    let outer = wrap("n", release.as_bytes(), &mut articles);
+    let (report, history, db) = inspect_then_import_nzb(&outer, articles, Some("wrong")).await;
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+    assert!(report.manifest_complete, "{:?}", report.failure);
+    assert_eq!((report.inner_nzbs, report.failure), (1, None));
+    let planned: Vec<_> = report
+        .files
+        .iter()
+        .map(|f| (f.planned_name.clone(), f.size.unwrap()))
+        .collect();
+    assert_eq!(planned, published(&db).await);
+    let [set] = &report.archives[..] else {
+        panic!("the inner NZB's archive only")
+    };
+    assert_eq!(set.access(), import::Access::PasswordValidated);
 }

@@ -18,7 +18,10 @@ use infinidysk_nntp::Client;
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
 
-use crate::import::{self, Imported, Output, Progress, Snapshot, Step, Verifier};
+use crate::import::{
+    self, FailureKind, Imported, Inspection, Inspector, Level, Output, Progress, Snapshot, Step,
+    Verifier,
+};
 use crate::{names, nzb};
 
 /// Waits after each failed attempt in a row; the last one repeats forever.
@@ -42,6 +45,7 @@ const STALL: Duration = Duration::from_mins(5);
 const STUCK_LIMIT: u32 = 3;
 /// NZB files followed from a job's content to its release, as deep as nested archives.
 const INNER_NZBS: usize = 3;
+const NESTED_TOO_DEEP: &str = "The download contains NZB files nested too deep.";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -139,6 +143,64 @@ pub struct Queue {
     rules: Mutex<Arc<import::Rules>>,
     handoff: OnceLock<Arc<dyn HandoffWriter>>,
     verifier: OnceLock<Arc<dyn Verifier>>,
+    /// An inspection is running; one at a time.
+    inspecting: AtomicBool,
+}
+
+/// The one inspection that may run; dropping it admits the next.
+pub struct InspectionSlot<'a>(&'a Queue);
+
+impl Drop for InspectionSlot<'_> {
+    fn drop(&mut self) {
+        self.0.inspecting.store(false, Ordering::Release);
+    }
+}
+
+impl InspectionSlot<'_> {
+    /// Reports what an import of the NZB `raw` (plain or gzip) submitted as `file_name`
+    /// would publish, following an NZB file it holds as an import does. Nothing is stored,
+    /// queued or published. `password` wins over one in `file_name` or in the NZB, and like
+    /// the one in `file_name` opens only what `raw` posts. An NZB that does not parse is
+    /// [`Error::Nzb`].
+    pub async fn inspect(
+        &self,
+        file_name: &str,
+        raw: &[u8],
+        password: Option<&str>,
+    ) -> Result<Inspection, Error> {
+        let queue = self.0;
+        let raw = raw.to_vec();
+        let mut parsed =
+            blocking(move || nzb::decompress(&raw).and_then(|xml| nzb::parse(&xml))).await?;
+        let job_name = names::job_name(file_name);
+        let rules = Arc::clone(&queue.rules.lock().unwrap_or_else(PoisonError::into_inner));
+        let mut inspector = Inspector::default();
+        tokio::time::timeout_at(inspector.deadline(), async {
+            for level in 0..=INNER_NZBS {
+                if queue.rejected(&job_name, &parsed).await? {
+                    return Ok(inspector.failed(FailureKind::Rejected, REJECTED.to_owned()));
+                }
+                let named = password
+                    .or_else(|| names::password(file_name))
+                    .filter(|_| level == 0);
+                let opens = named.or_else(|| parsed.meta("password").next());
+                let raw = match inspector
+                    .inspect(&queue.client, &parsed, &job_name, &rules, opens)
+                    .await
+                {
+                    Level::Report(report) => return Ok(report),
+                    Level::Nzb(raw) => raw,
+                };
+                parsed = match parse_inner(raw).await {
+                    Ok((_, next)) => next,
+                    Err(message) => return Ok(inspector.failed(FailureKind::Other, message)),
+                };
+            }
+            Ok(inspector.failed(FailureKind::Other, NESTED_TOO_DEEP.to_owned()))
+        })
+        .await
+        .unwrap_or_else(|_| Ok(inspector.timed_out()))
+    }
 }
 
 /// Imports since start.
@@ -211,7 +273,16 @@ impl Queue {
             rules: Mutex::default(),
             handoff: OnceLock::new(),
             verifier: OnceLock::new(),
+            inspecting: AtomicBool::new(false),
         }
+    }
+
+    /// Takes the inspection slot; `None` while another inspection holds it.
+    pub fn start_inspection(&self) -> Option<InspectionSlot<'_>> {
+        self.inspecting
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| InspectionSlot(self))
     }
 
     /// Hands finished jobs off through `writer`; without one, SAB derives each job's
@@ -778,22 +849,12 @@ impl Queue {
                 Err(import::Error::Retry(error)) => return Ok(Outcome::Retry(error.to_string())),
                 Err(error) => return Ok(Outcome::Failed(error.to_string())),
             };
-            let read = blocking(move || -> Result<_, nzb::Error> {
-                let xml = nzb::decompress(&raw)?.into_owned();
-                let parsed = nzb::parse(&xml)?;
-                Ok((xml, parsed))
-            })
-            .await;
-            let xml = match read {
+            let xml = match parse_inner(raw).await {
                 Ok((xml, next)) => {
                     parsed = next;
                     xml
                 }
-                Err(error) => {
-                    return Ok(Outcome::Failed(format!(
-                        "The NZB file in this download is not usable: {error}"
-                    )));
-                }
+                Err(message) => return Ok(Outcome::Failed(message)),
             };
             tracing::info!(job = %job.id, "the download is an NZB file; importing that NZB");
             inner = Some(Inner {
@@ -801,9 +862,7 @@ impl Queue {
                 total_bytes: parsed.files.iter().map(nzb::File::bytes).sum(),
             });
         }
-        Ok(Outcome::Failed(
-            "The download contains NZB files nested too deep.".to_owned(),
-        ))
+        Ok(Outcome::Failed(NESTED_TOO_DEEP.to_owned()))
     }
 
     /// Returns once `progress` stood still for the stall timeout. Time with every download
@@ -954,6 +1013,17 @@ fn tree(
 
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// An NZB file found in a download, as XML and parsed; the error is the job's failure.
+async fn parse_inner(raw: Vec<u8>) -> Result<(Vec<u8>, nzb::Nzb), String> {
+    blocking(move || -> Result<_, nzb::Error> {
+        let xml = nzb::decompress(&raw)?.into_owned();
+        let parsed = nzb::parse(&xml)?;
+        Ok((xml, parsed))
+    })
+    .await
+    .map_err(|error| format!("The NZB file in this download is not usable: {error}"))
 }
 
 /// Runs CPU-heavy NZB work (hundreds of ms for a large NZB) off the async runtime.

@@ -27,6 +27,13 @@ use tokio::task::JoinSet;
 use crate::names::{self, Kind};
 use crate::nzb::{self, Nzb};
 
+mod inspect;
+
+pub use inspect::{
+    Access, ArchiveSet, ArchiveType, Encrypted, Failure, FailureKind, Inspected, Inspection,
+    Inspector, Level, Timings,
+};
+
 /// Requests in flight per import, across all its steps.
 const CONCURRENCY: usize = 16;
 /// Futures one [`join_all`] runs at once: enough to keep every request slot busy.
@@ -201,6 +208,26 @@ pub struct Output {
     /// Sanitized path components below the job directory.
     pub path: Vec<String>,
     pub meta: FileMeta,
+    pub origin: Origin,
+}
+
+/// What gave an output its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameSource {
+    /// The PAR2 index, matched by the hash of the file's first 16 KB.
+    Par2,
+    /// The NZB subject.
+    Subject,
+    /// A RAR or 7z header.
+    ArchiveHeader,
+}
+
+/// How the planner found an output; an inspection reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Origin {
+    pub source: NameSource,
+    /// The inspected archive set it is a member of; always `None` in an import.
+    pub set: Option<usize>,
 }
 
 /// What an import found.
@@ -223,8 +250,17 @@ pub enum Error {
     /// Articles are gone on every provider.
     #[error("{0}")]
     Missing(String),
+    /// An archive is encrypted and the job has no password, or a wrong one.
+    #[error("{0}")]
+    Password(String),
+    /// Archive content that cannot be streamed with any password.
+    #[error("{0}")]
+    Unsupported(String),
     #[error("{0}")]
     Failed(String),
+    /// An inspection reached one of its limits; an import has none.
+    #[error("{0}")]
+    Limit(&'static str),
 }
 
 fn failed(msg: impl Into<String>) -> Error {
@@ -258,6 +294,7 @@ pub trait Verifier: Send + Sync {
 /// One NZB file entry.
 struct Input {
     name: String,
+    source: NameSource,
     kind: Kind,
     ids: Vec<String>,
     first: Option<Body>,
@@ -294,6 +331,8 @@ struct Job {
     keys: Mutex<HashMap<Kdf, Arc<tokio::sync::OnceCell<Derived>>>>,
     /// Request time by what it waited on; `budget` is a slot of [`CONCURRENCY`].
     waits: Mutex<Causes>,
+    /// Set for a dry run: the inspection's budget and what the planner saw.
+    inspection: Option<Arc<inspect::Run>>,
 }
 
 impl Job {
@@ -365,28 +404,15 @@ impl Articles for Job {
     }
 }
 
-/// Imports `nzb` into `category`. Non-media files with missing articles are left out;
-/// missing media data, broken archives and media of the wrong kind fail the import.
-/// Obfuscated names are replaced using `release`. Encrypted archives open with
-/// `password`. Every provider request is counted in `progress`. At a 100 % sample,
-/// `verifier` runs each output's first health check, returned by output index.
-/// A job holding only an NZB file returns that file instead, as SABnzbd queues it.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one caller; each is a separate input of the attempt"
-)]
-pub async fn import(
+/// One attempt's access to the providers; with `inspection` it is a dry run.
+fn job(
     client: &Arc<Client>,
-    nzb: &Nzb,
-    release: &str,
-    category: &str,
     rules: &Rules,
     password: Option<&str>,
     progress: Arc<Progress>,
-    verifier: Option<&dyn Verifier>,
-) -> Result<Imported, Error> {
-    let started = Instant::now();
-    let job = &Arc::new(Job {
+    inspection: Option<Arc<inspect::Run>>,
+) -> Arc<Job> {
+    Arc::new(Job {
         client: Arc::clone(client),
         requests: Semaphore::new(CONCURRENCY),
         progress,
@@ -395,8 +421,20 @@ pub async fn import(
         password: password.map(str::to_owned),
         keys: Mutex::default(),
         waits: Mutex::default(),
-    });
-    let percent = rules.check_percent;
+        inspection,
+    })
+}
+
+/// The files of `nzb` before filtering and naming: first articles, PAR2 names, segment
+/// layouts, then archive members. `at` gets the time each step ended; `percent` only
+/// sizes the progress estimate.
+async fn plan(
+    job: &Arc<Job>,
+    nzb: &Nzb,
+    percent: u8,
+    started: Instant,
+    at: &mut Timings,
+) -> Result<Vec<Output>, Error> {
     let data: Vec<_> = nzb
         .files
         .iter()
@@ -419,11 +457,11 @@ pub async fn import(
     .await
     .into_iter()
     .collect::<Result<Vec<_>, _>>()?;
-    let firsts_at = started.elapsed();
+    at.headers = Some(started.elapsed());
 
     job.progress.plan(Step::Par2, rest);
     let par2 = read_par2(job, nzb, &firsts).await?;
-    let par2_at = started.elapsed();
+    at.par2 = Some(started.elapsed());
     let inputs: Vec<Input> = nzb
         .files
         .iter()
@@ -456,6 +494,11 @@ pub async fn import(
             };
             Input {
                 name,
+                source: if matched.is_some() {
+                    NameSource::Par2
+                } else {
+                    NameSource::Subject
+                },
                 kind,
                 ids: file.segments.iter().map(|s| s.id.clone()).collect(),
                 first,
@@ -527,6 +570,8 @@ pub async fn import(
             Err(error) => return Err(error),
         }
     }
+    // Set only now: a layout that failed above fails this step.
+    at.layouts = Some(layouts_at);
 
     // Archive and split sets, keyed by kind and set name, volumes in name order.
     let mut sets: BTreeMap<(u8, String), Vec<(u32, usize)>> = BTreeMap::new();
@@ -543,7 +588,13 @@ pub async fn import(
                 sets.entry((2, set.clone())).or_default().push((*volume, i));
             }
             Kind::Par2 => {}
-            Kind::Plain => outputs.extend(volumes.remove(&i).and_then(plain)),
+            Kind::Plain => {
+                let origin = Origin {
+                    source: inputs[i].source,
+                    set: None,
+                };
+                outputs.extend(volumes.remove(&i).and_then(|v| plain(v, origin)));
+            }
         }
     }
     job.progress.plan(Step::Archives, sets.len() + downstream);
@@ -554,14 +605,55 @@ pub async fn import(
             .filter_map(|(_, i)| volumes.remove(i))
             .collect();
         let numbers: Vec<u32> = members.iter().map(|(n, _)| *n).collect();
+        let archive = match kind {
+            0 => ArchiveType::Rar5,
+            1 => ArchiveType::SevenZip,
+            _ => ArchiveType::Split,
+        };
+        let set = job.open_set(archive, 0, &[])?;
         let found = match kind {
-            0 => rar_set(job, vols).await?,
-            1 => sevenzip_set(job, vols, &numbers).await?,
-            _ => split_set(vols).into_iter().collect(),
+            0 => rar_set(job, vols, set).await?,
+            1 => sevenzip_set(job, vols, &numbers, set).await?,
+            _ => {
+                let origin = Origin {
+                    source: inputs[members[0].1].source,
+                    set,
+                };
+                split_set(vols, origin).into_iter().collect()
+            }
         };
         outputs.extend(expand(job, found, 1).await?);
     }
-    let sets_at = started.elapsed();
+    at.archives = Some(started.elapsed());
+    Ok(outputs)
+}
+
+/// Imports `nzb` into `category`. Non-media files with missing articles are left out;
+/// missing media data, broken archives and media of the wrong kind fail the import.
+/// Obfuscated names are replaced using `release`. Encrypted archives open with
+/// `password`. Every provider request is counted in `progress`. At a 100 % sample,
+/// `verifier` runs each output's first health check, returned by output index.
+/// A job holding only an NZB file returns that file instead, as SABnzbd queues it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one caller; each is a separate input of the attempt"
+)]
+pub async fn import(
+    client: &Arc<Client>,
+    nzb: &Nzb,
+    release: &str,
+    category: &str,
+    rules: &Rules,
+    password: Option<&str>,
+    progress: Arc<Progress>,
+    verifier: Option<&dyn Verifier>,
+) -> Result<Imported, Error> {
+    let started = Instant::now();
+    let job = &job(client, rules, password, progress, None);
+    let mut at = Timings::default();
+    let outputs = plan(job, nzb, rules.check_percent, started, &mut at).await?;
+    let [firsts_at, par2_at, layouts_at, sets_at] =
+        [at.headers, at.par2, at.layouts, at.archives].map(Option::unwrap_or_default);
 
     if let Some(inner) = inner_nzb(job, &outputs).await? {
         return Ok(Imported::Nzb(inner));
@@ -714,18 +806,30 @@ where
 async fn fetch(job: &Job, id: &str, begin: Option<u64>) -> Result<Option<Body>, Error> {
     use infinidysk_nntp::Error as E;
     let (_slot, probe) = job.slot().await;
+    // After the slot: only the requests in flight can pass the budget.
+    job.charge()?;
     job.progress.request();
-    let body = job
-        .client
-        .body_with(id, Workload::Queue, Some(&probe), None, begin)
-        .await;
+    let body = if job.inspected() {
+        job.client
+            .body_unremembered(id, Workload::Queue, Some(&probe), begin)
+            .await
+    } else {
+        job.client
+            .body_with(id, Workload::Queue, Some(&probe), None, begin)
+            .await
+    };
     job.progress.answer();
     job.done(&probe);
     match body {
-        Ok(body) => Ok(Some(body)),
-        Err(
-            E::NotFound | E::CrcMismatch { .. } | E::Yenc(_) | E::TooLarge | E::InvalidArgument(_),
-        ) => Ok(None),
+        Ok(body) => {
+            job.received(body.data.len())?;
+            Ok(Some(body))
+        }
+        Err(E::NotFound) => {
+            job.missed(id);
+            Ok(None)
+        }
+        Err(E::CrcMismatch { .. } | E::Yenc(_) | E::TooLarge | E::InvalidArgument(_)) => Ok(None),
         Err(error) => Err(Error::Retry(error)),
     }
 }
@@ -1198,7 +1302,7 @@ fn path_of(name: &str) -> Vec<String> {
 }
 
 /// A posted file whole; its volume has a single part.
-fn plain(v: Volume) -> Option<Output> {
+fn plain(v: Volume, origin: Origin) -> Option<Output> {
     let path = path_of(&v.name);
     let part = v.parts.into_iter().next()?;
     (!path.is_empty()).then_some(Output {
@@ -1207,6 +1311,7 @@ fn plain(v: Volume) -> Option<Output> {
             segments: part.segments,
             proof: part.proof,
         }),
+        origin,
     })
 }
 
@@ -1214,13 +1319,13 @@ fn plain(v: Volume) -> Option<Output> {
 /// cannot decrypt.
 fn streamable(name: &str, kind: &str, stored: bool, encrypted: bool) -> Result<(), Error> {
     if !stored {
-        return Err(failed(format!(
+        return Err(Error::Unsupported(format!(
             "{name}: compressed {kind} archives cannot be streamed; \
              only stored (uncompressed) archive contents are supported."
         )));
     }
     if encrypted {
-        return Err(failed(format!(
+        return Err(Error::Unsupported(format!(
             "{name}: {kind} encryption older than AES is not supported."
         )));
     }
@@ -1230,7 +1335,7 @@ fn streamable(name: &str, kind: &str, stored: bool, encrypted: bool) -> Result<(
 /// The key for `kdf` from the job's password, derived once per job off the runtime.
 async fn key(job: &Job, name: &str, kdf: &Kdf) -> Result<Derived, Error> {
     let Some(password) = &job.password else {
-        return Err(failed(format!(
+        return Err(Error::Password(format!(
             "{name}: the archive is encrypted and the NZB has no password. \
              Add it to the NZB name as {{{{password}}}}."
         )));
@@ -1286,14 +1391,24 @@ struct Member {
     parts: Vec<FilePart>,
 }
 
-async fn rar_set(job: &Arc<Job>, vols: Vec<Volume>) -> Result<Vec<Output>, Error> {
+async fn rar_set(
+    job: &Arc<Job>,
+    vols: Vec<Volume>,
+    set: Option<usize>,
+) -> Result<Vec<Output>, Error> {
     let scans = join_all(vols.into_iter().map(|vol| {
         let job = Arc::clone(job);
-        async move { scan_rar(&job, vol).await }
+        // A wrong password fails the key (RAR5) or the header decode (RAR4).
+        async move {
+            scan_rar(&job, vol, set)
+                .await
+                .inspect_err(|error| job.lock(set, error))
+        }
     }))
     .await
     .into_iter()
     .collect::<Result<Vec<_>, _>>()?;
+    job.note_set(set, ArchiveSet::scanned);
     let mut scans = scans;
     // Repeated numbers are interleaved sets; member names keep them apart.
     if scans.iter().all(|(_, v, _)| v.number.is_some()) {
@@ -1352,11 +1467,26 @@ async fn rar_set(job: &Arc<Job>, vols: Vec<Volume>) -> Result<Vec<Output>, Error
                 m.name
             )));
         }
-        streamable(&m.name, "RAR", m.stored, m.encrypted && m.crypt.is_none())?;
+        if m.encrypted {
+            job.note_set(set, |s| s.seen(Encrypted::Data));
+        }
+        if let Err(error) = streamable(&m.name, "RAR", m.stored, m.encrypted && m.crypt.is_none()) {
+            job.unreadable(set, error, &m.name, m.size)?;
+            continue;
+        }
         let len: u64 = m.parts.iter().map(|p| p.data.len()).sum();
         let crypt = match (&m.crypt, m.size) {
             (Some(enc), Some(size)) if m.encrypted => {
-                Some(member_crypt(job, &m.name, enc, size).await?)
+                match member_crypt(job, &m.name, enc, size).await {
+                    Ok(crypt) => {
+                        job.unlocked(set, &enc.kdf);
+                        Some(crypt)
+                    }
+                    Err(error) => {
+                        job.unreadable(set, error, &m.name, m.size)?;
+                        continue;
+                    }
+                }
             }
             _ => None,
         };
@@ -1380,13 +1510,22 @@ async fn rar_set(job: &Arc<Job>, vols: Vec<Volume>) -> Result<Vec<Output>, Error
             out.push(Output {
                 path,
                 meta: FileMeta::Multipart(meta),
+                origin: Origin {
+                    source: NameSource::ArchiveHeader,
+                    set,
+                },
             });
         }
     }
+    job.note_set(set, ArchiveSet::checked);
     Ok(out)
 }
 
-async fn scan_rar(job: &Job, vol: Volume) -> Result<(Volume, rar::Volume, Vec<rar::Entry>), Error> {
+async fn scan_rar(
+    job: &Job,
+    vol: Volume,
+    set: Option<usize>,
+) -> Result<(Volume, rar::Volume, Vec<rar::Entry>), Error> {
     let mut scanner = rar::Scanner::new();
     let mut entries = Vec::new();
     let (mut at, mut buf) = (0, Vec::new());
@@ -1412,12 +1551,17 @@ async fn scan_rar(job: &Job, vol: Volume) -> Result<(Volume, rar::Volume, Vec<ra
             }
             rar::Step::Entry(entry) => entries.push(entry),
             rar::Step::Key(kdf) => {
+                job.note_set(set, |s| {
+                    s.rar(scanner.format());
+                    s.seen(Encrypted::Headers);
+                });
                 let derived = key(job, &vol.name, &kdf).await?;
                 scanner.add_key(kdf, derived);
             }
             rar::Step::End { .. } => break,
         }
     }
+    job.note_set(set, |s| s.rar(scanner.format()));
     let header = scanner.volume().clone();
     Ok((vol, header, entries))
 }
@@ -1425,13 +1569,18 @@ async fn scan_rar(job: &Job, vol: Volume) -> Result<(Volume, rar::Volume, Vec<ra
 fn archive_error(name: &str, error: &infinidysk_archive::Error) -> Error {
     match error {
         infinidysk_archive::Error::WrongPassword => {
-            failed(format!("{name}: wrong archive password."))
+            Error::Password(format!("{name}: wrong archive password."))
         }
         other => failed(format!("{name}: {other}")),
     }
 }
 
-async fn sevenzip_set(job: &Job, vols: Vec<Volume>, numbers: &[u32]) -> Result<Vec<Output>, Error> {
+async fn sevenzip_set(
+    job: &Job,
+    vols: Vec<Volume>,
+    numbers: &[u32],
+    set: Option<usize>,
+) -> Result<Vec<Output>, Error> {
     let name = vols.first().map(|v| v.name.clone()).unwrap_or_default();
     if numbers.iter().enumerate().any(|(i, n)| *n as usize != i) {
         return Err(Error::Missing(format!("{name}: 7z volumes are missing")));
@@ -1452,9 +1601,11 @@ async fn sevenzip_set(job: &Job, vols: Vec<Volume>, numbers: &[u32]) -> Result<V
     let mut reader = sevenzip::Reader::new();
     let (mut at, mut buf) = (0, Vec::new());
     let entries = loop {
+        // A wrong password fails the header decode; 7z keys take any password.
         match reader
             .next(at, &buf)
-            .map_err(|e| archive_error(&name, &e))?
+            .map_err(|e| archive_error(&name, &e))
+            .inspect_err(|error| job.lock(set, error))?
         {
             sevenzip::Step::Need { offset, len } => {
                 if offset.saturating_add(len) > total || (offset == at && buf.len() as u64 >= len) {
@@ -1475,17 +1626,24 @@ async fn sevenzip_set(job: &Job, vols: Vec<Volume>, numbers: &[u32]) -> Result<V
                 at = offset;
             }
             sevenzip::Step::Key(kdf) => {
-                let derived = key(job, &name, &kdf).await?;
+                job.note_set(set, |s| s.seen(Encrypted::Headers));
+                let derived = key(job, &name, &kdf)
+                    .await
+                    .inspect_err(|error| job.lock(set, error))?;
                 reader.add_key(kdf, derived);
             }
             sevenzip::Step::Done(entries) => break entries,
         }
     };
+    job.note_set(set, ArchiveSet::scanned);
 
     let mut out = Vec::new();
     for e in entries {
         if job.blocks(&e.name) {
             continue;
+        }
+        if e.encrypted {
+            job.note_set(set, |s| s.seen(Encrypted::Data));
         }
         let parts = match e.data {
             Some(range) => {
@@ -1502,12 +1660,20 @@ async fn sevenzip_set(job: &Job, vols: Vec<Volume>, numbers: &[u32]) -> Result<V
             }
             None if e.size == 0 => Vec::new(),
             None => {
-                streamable(&e.name, "7z", false, e.encrypted)?;
-                Vec::new()
+                if let Err(error) = streamable(&e.name, "7z", false, e.encrypted) {
+                    job.unreadable(set, error, &e.name, Some(e.size))?;
+                }
+                continue;
             }
         };
         let crypt = match &e.crypt {
-            Some(enc) => Some(member_crypt(job, &e.name, enc, e.size).await?),
+            Some(enc) => match member_crypt(job, &e.name, enc, e.size).await {
+                Ok(crypt) => Some(crypt),
+                Err(error) => {
+                    job.unreadable(set, error, &e.name, Some(e.size))?;
+                    continue;
+                }
+            },
             None => None,
         };
         let path = path_of(&e.name);
@@ -1515,13 +1681,18 @@ async fn sevenzip_set(job: &Job, vols: Vec<Volume>, numbers: &[u32]) -> Result<V
             out.push(Output {
                 path,
                 meta: FileMeta::Multipart(MultipartFile { parts, crypt }),
+                origin: Origin {
+                    source: NameSource::ArchiveHeader,
+                    set,
+                },
             });
         }
     }
+    job.note_set(set, ArchiveSet::checked);
     Ok(out)
 }
 
-fn split_set(vols: Vec<Volume>) -> Option<Output> {
+fn split_set(vols: Vec<Volume>, origin: Origin) -> Option<Output> {
     let name = vols.first()?.name.clone();
     let (stem, _) = name.rsplit_once('.')?;
     let path = path_of(stem);
@@ -1534,6 +1705,7 @@ fn split_set(vols: Vec<Volume>) -> Option<Output> {
     (!path.is_empty()).then_some(Output {
         path,
         meta: FileMeta::Multipart(MultipartFile { parts, crypt: None }),
+        origin,
     })
 }
 
@@ -1550,6 +1722,7 @@ type Sets = BTreeMap<(u8, Vec<String>, String), Vec<(u32, Volume)>>;
 fn expand(job: &Arc<Job>, outputs: Vec<Output>, level: usize) -> Outputs<'_> {
     Box::pin(async move {
         if level > NESTED_DEPTH {
+            job.opaque(&outputs);
             return Ok(outputs);
         }
         let mut sets = Sets::new();
@@ -1561,6 +1734,7 @@ fn expand(job: &Arc<Job>, outputs: Vec<Output>, level: usize) -> Outputs<'_> {
             // ponytail: archives inside encrypted members stay files; mapping their
             // members needs reads of decrypted volumes threaded through `Volume::part`.
             if matches!(&o.meta, FileMeta::Multipart(m) if m.crypt.is_some()) {
+                job.opaque(std::slice::from_ref(&o));
                 out.push(o);
                 continue;
             }
@@ -1594,9 +1768,15 @@ fn expand(job: &Arc<Job>, outputs: Vec<Output>, level: usize) -> Outputs<'_> {
             members.sort_unstable_by_key(|(n, _)| *n);
             let numbers: Vec<u32> = members.iter().map(|(n, _)| *n).collect();
             let vols = members.into_iter().map(|(_, v)| v).collect();
+            let archive = if kind == 0 {
+                ArchiveType::Rar5
+            } else {
+                ArchiveType::SevenZip
+            };
+            let set = job.open_set(archive, level, &dir)?;
             let mut found = match kind {
-                0 => rar_set(job, vols).await?,
-                _ => sevenzip_set(job, vols, &numbers).await?,
+                0 => rar_set(job, vols, set).await?,
+                _ => sevenzip_set(job, vols, &numbers, set).await?,
             };
             for o in &mut found {
                 o.path.splice(0..0, dir.iter().cloned());
@@ -1935,6 +2115,11 @@ fn deobfuscate(outputs: &mut [Output], release: &str) {
 mod tests {
     use super::*;
 
+    const POSTED: Origin = Origin {
+        source: NameSource::Subject,
+        set: None,
+    };
+
     #[tokio::test]
     async fn a_full_check_fails_at_the_first_missing_video_segment() {
         use infinidysk_nntp::{Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
@@ -1971,6 +2156,7 @@ mod tests {
             password: None,
             keys: Mutex::default(),
             waits: Mutex::default(),
+            inspection: None,
         });
         let output = Output {
             path: vec!["media.mkv".to_owned()],
@@ -1988,6 +2174,7 @@ mod tests {
                 },
                 proof: None,
             }),
+            origin: POSTED,
         };
 
         let error = check_articles(&job, vec![output], 100).await.unwrap_err();
@@ -2008,6 +2195,7 @@ mod tests {
             password: Some("secret".to_owned()),
             keys: Mutex::default(),
             waits: Mutex::default(),
+            inspection: None,
         });
         let kdf = Kdf::SevenZip {
             salt: Vec::new(),
@@ -2062,6 +2250,7 @@ mod tests {
                 parts: Vec::new(),
                 crypt: None,
             }),
+            origin: POSTED,
         };
         let mut outputs = vec![
             out("a1b2c3d4e5f6.mkv"),
@@ -2094,6 +2283,7 @@ mod tests {
                 parts: Vec::new(),
                 crypt: None,
             }),
+            origin: POSTED,
         }];
         assert!(require(&disc, &[media::Kind::Video]).is_err());
         assert!(require(&disc, &[]).is_ok(), "unowned categories keep it");
