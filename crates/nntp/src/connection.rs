@@ -19,7 +19,7 @@ use tokio_rustls::client::TlsStream;
 use tokio_util::either::Either;
 
 use crate::article::{Body, MAX_DECODED_LEN, crc_field, field};
-use crate::{Bandwidth, Credentials, Error, Usage, tls};
+use crate::{Bandwidth, Credentials, Error, Usage, resolve, tls};
 
 /// Socket read buffer; large enough that one TLS record batch fits per fill.
 const READ_BUFFER_LEN: usize = 128 * 1024;
@@ -406,17 +406,14 @@ impl Connection {
     ) -> Result<Self, Error> {
         let timeout_after = endpoint.timeout;
         let started = Instant::now();
-        let addrs: Vec<_> = timeout(
-            timeout_after,
-            tokio::net::lookup_host((endpoint.host.as_str(), endpoint.port)),
-        )
-        .await
-        .map_err(|_| Error::Timeout)??
-        .collect();
+        let addrs = resolve::PROVIDERS
+            .resolve(&endpoint.host, endpoint.port, resolve::system)
+            .await?;
         let resolved = Instant::now();
         *stage = Stage::Tcp;
         let tcp = connect_addresses(&addrs, deadline, TcpStream::connect).await?;
         let connected = Instant::now();
+        let peer = tcp.peer_addr().ok();
         tcp.set_nodelay(true)?;
         SockRef::from(&tcp).set_tcp_keepalive(
             &TcpKeepalive::new()
@@ -474,6 +471,7 @@ impl Connection {
         let ms = |from: Instant, to: Instant| to.duration_since(from).as_millis();
         tracing::debug!(
             host = endpoint.host.as_str(),
+            peer = ?peer,
             dns_ms = ms(started, resolved),
             tcp_ms = ms(resolved, connected),
             tls_ms = ms(connected, secured),

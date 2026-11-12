@@ -9,6 +9,7 @@ mod connection;
 mod downloads;
 mod missing;
 mod pool;
+mod resolve;
 mod stats;
 mod tls;
 mod usage;
