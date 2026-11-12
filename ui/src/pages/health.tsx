@@ -402,10 +402,10 @@ export function Health() {
       <PageHeader title="Health" description="Article checks against your providers from the last 30 days" />
       <Disabled />
       <Summary />
-      <Par2Scan />
       <Reconcile />
       <Attention />
       <Schedule />
+      <Par2Scan />
       <Rejected />
       <h2 className="mb-3 font-medium">History</h2>
       <div className="mb-3 flex flex-wrap items-center gap-2">
