@@ -1757,7 +1757,7 @@ async fn an_inspection_says_what_a_password_opened() {
             (set.encryption, set.access(), set.streamable()),
             (Encrypted::Data, Access::PasswordRequired, Some(true))
         );
-        assert!(locked.manifest_complete, "{password:?}");
+        assert!(locked.manifest_complete);
         assert_eq!(member(&locked), data_bin);
         let failure = locked.failure.expect("an import fails");
         assert_eq!(failure.kind, FailureKind::Password);
