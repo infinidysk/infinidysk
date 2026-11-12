@@ -742,6 +742,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/indexers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_indexers"];
+        put?: never;
+        post: operations["post_indexer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/indexers/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_indexer_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/indexers/search/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["post_indexer_search_queue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/indexers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_indexer"];
+        post?: never;
+        delete: operations["delete_indexer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/indexers/{id}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch_indexer_enabled"];
+        trace?: never;
+    };
+    "/api/v1/indexers/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["post_indexer_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library": {
         parameters: {
             query?: never;
@@ -1311,7 +1407,7 @@ export interface paths {
             cookie?: never;
         };
         get: operations["get_settings"];
-        /** Replaces every setting; provider, `WebDAV` and Arr changes apply at once. */
+        /** Saves global settings. Indexer changes use dedicated endpoints. */
         put: operations["put_settings"];
         post?: never;
         delete?: never;
@@ -2328,6 +2424,65 @@ export interface components {
              * @default
              */
             strm_key: components["schemas"]["Secret"];
+        };
+        Indexer: {
+            /** @default  */
+            api_key: components["schemas"]["Secret"];
+            /** @default  */
+            base_url: string;
+            /** @default true */
+            enabled: boolean;
+            /**
+             * Format: uuid
+             * @default 00000000-0000-0000-0000-000000000000
+             */
+            id: string;
+            /** @default  */
+            name: string;
+        };
+        IndexerCreate: {
+            api_key: components["schemas"]["Secret"];
+            base_url: string;
+            /** @description Defaults to true when omitted. */
+            enabled?: boolean | null;
+            name: string;
+        };
+        IndexerEnabled: {
+            enabled: boolean;
+        };
+        IndexerRead: {
+            api_key: components["schemas"]["Secret"];
+            base_url: string;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            revision: string;
+        };
+        IndexerSearchResponse: {
+            indexers: components["schemas"]["IndexerSearchStatus"][];
+            results: components["schemas"]["SearchResult"][];
+        };
+        IndexerSearchStatus: {
+            error?: string | null;
+            /** Format: uuid */
+            indexer_id: string;
+            indexer_name: string;
+            ok: boolean;
+            result_count: number;
+        };
+        IndexerTest: {
+            error?: string | null;
+            success: boolean;
+        };
+        IndexerUpdate: {
+            api_key: components["schemas"]["Secret"];
+            base_url: string;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            revision: string;
         };
         /**
          * @description Where a file is in the health state machine.
@@ -3994,6 +4149,27 @@ export interface components {
             name: string;
             state: components["schemas"]["ItemHealth"];
         };
+        SearchQueueRequest: {
+            category: string;
+            nzb_ref: string;
+        };
+        /** @enum {string} */
+        SearchQueueStatus: "created" | "existing" | "rejected";
+        SearchQueued: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["SearchQueueStatus"];
+        };
+        SearchResult: {
+            can_queue: boolean;
+            /** Format: uuid */
+            indexer_id: string;
+            indexer_name: string;
+            nzb_ref: string;
+            /** Format: int64 */
+            size_bytes: number;
+            title: string;
+        };
         /** @description A password or key. `Debug` never prints it. */
         Secret: string;
         SegmentStats: {
@@ -4065,6 +4241,8 @@ export interface components {
              *     }
              */
             imports: components["schemas"]["Imports"];
+            /** @default [] */
+            indexers: components["schemas"]["Indexer"][];
             /**
              * @default {
              *       "backup": {
@@ -4160,11 +4338,17 @@ export interface components {
              */
             webdav: components["schemas"]["WebDav"];
         };
+        SettingsUpdate: components["schemas"]["Settings"] & {
+            /** Format: uuid */
+            indexers_revision: string;
+        };
         SettingsView: {
             /** @description Experiments `INFINIDYSK_EXPERIMENTS` switches on whatever the settings say. */
             env_experiments: string[];
             /** @description What `settings.experiments` may name. */
             experiments: components["schemas"]["Experiment"][];
+            /** Format: uuid */
+            indexers_revision: string;
             /** @description Dotted paths fixed by environment variables. */
             locked: string[];
             /**
@@ -5870,6 +6054,279 @@ export interface operations {
             };
         };
     };
+    get_indexers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerRead"][];
+                };
+            };
+        };
+    };
+    post_indexer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndexerCreate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerRead"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_indexer_search: {
+        parameters: {
+            query: {
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerSearchResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_indexer_search_queue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchQueueRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchQueued"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchQueued"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchQueued"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    put_indexer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndexerUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerRead"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    delete_indexer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    patch_indexer_enabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndexerEnabled"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerRead"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_indexer_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerTest"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     get_library: {
         parameters: {
             query?: never;
@@ -6840,7 +7297,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Settings"];
+                "application/json": components["schemas"]["SettingsUpdate"];
             };
         };
         responses: {
@@ -6854,6 +7311,15 @@ export interface operations {
             };
             /** @description Invalid or locked by the environment */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Indexer state changed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

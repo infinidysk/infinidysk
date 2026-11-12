@@ -58,6 +58,7 @@ import {
   useDiscardGuard,
 } from "../ui";
 import { ArrInstances } from "./arr";
+import { Indexers } from "./indexers";
 import { PerformanceSettings } from "./performance";
 import { Providers } from "./providers";
 
@@ -107,6 +108,12 @@ const categories = [
     slug: "arr",
     title: "Arr instances",
     description: "Used to repair: when a file loses articles, the Arr that imported it is asked for a replacement",
+  },
+  {
+    group: "Automation",
+    slug: "indexers",
+    title: "Indexers",
+    description: "Manage Newznab indexers and test their connections",
   },
   {
     group: "Automation",
@@ -556,6 +563,7 @@ export function Settings() {
   const [refused, setRefused] = useState<PreviewRequest | null>(null);
   // The server document the draft started from, so updates from elsewhere keep the user's edits.
   const base = useRef<Doc | null>(null);
+  const baseRevision = useRef<string | null>(null);
   useEffect(() => {
     if (!settings.data) return;
     const next = settings.data.settings;
@@ -563,6 +571,7 @@ export function Settings() {
     const prev = base.current;
     setDraft((d) => (d && prev ? (rebase(d, prev, next) as Doc) : next));
     base.current = next;
+    baseRevision.current = settings.data.indexers_revision;
   }, [settings.data]);
   const dirty = !!draft && !!settings.data && !same(draft, settings.data.settings);
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname);
@@ -617,7 +626,7 @@ export function Settings() {
       toast.error(passwordOffRefusal);
       return;
     }
-    save.mutate(draft, {
+    save.mutate({ settings: draft, indexers_revision: baseRevision.current ?? view.indexers_revision }, {
       onSuccess: (view) => {
         reset(view.settings);
         toast.success("Settings saved");
@@ -651,6 +660,7 @@ export function Settings() {
         <div className="min-w-0">
           {category.slug === "providers" && <Providers title={category.title} description={category.description} />}
           {category.slug === "arr" && <ArrInstances title={category.title} description={category.description} />}
+          {category.slug === "indexers" && <Indexers title={category.title} description={category.description} />}
           {category.slug === "database" && <DatabasePanel title={category.title} description={category.description} />}
           <form id="settings" onSubmit={submit}>
             {category.slug === "download-client" && (

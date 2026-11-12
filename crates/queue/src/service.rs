@@ -8,6 +8,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use futures_util::FutureExt;
 use infinidysk_core::{BlobId, FileMeta, ItemId, ItemKind, JobId, blob, media};
@@ -63,6 +64,28 @@ pub enum Error {
     /// Handing a finished job off failed; the job retries with the transient backoff.
     #[error("Could not write the files for the Arr: {0}")]
     Handoff(String),
+}
+
+pub struct PreparedNzb {
+    xml: Arc<Vec<u8>>,
+    parsed: nzb::Nzb,
+    content_hash: String,
+    encoded: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnqueueOutcome {
+    Created(JobId),
+    Existing(JobId),
+    Rejected(JobId),
+}
+
+impl EnqueueOutcome {
+    pub const fn id(self) -> JobId {
+        match self {
+            Self::Created(id) | Self::Existing(id) | Self::Rejected(id) => id,
+        }
+    }
 }
 
 /// A job's submission parameters.
@@ -335,13 +358,17 @@ impl Queue {
         self.active.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Validates and stores an NZB (plain or gzip) and queues it; an identical stored NZB
-    /// is reused. The same content already
-    /// queued returns that job instead. An invalid NZB is recorded as failed and returns its
-    /// error; a release health rejected is recorded as failed and returns that job.
-    pub async fn enqueue(&self, job: &Submission<'_>, raw: &[u8]) -> Result<JobId, Error> {
+    /// Validates an NZB and pre-encodes its blob before a queue commit.
+    pub async fn prepare(raw: &[u8]) -> Result<PreparedNzb, Error> {
+        if raw.len() as u64 > nzb::MAX_NZB {
+            return Err(Error::Nzb(nzb::Error::TooLarge));
+        }
+        let permit = CPU_PERMITS
+            .acquire()
+            .await
+            .expect("static CPU semaphore is never closed");
         let raw = raw.to_vec();
-        let checked = blocking(move || -> Result<_, nzb::Error> {
+        blocking_with_permit(permit, move || -> Result<PreparedNzb, Error> {
             let decompressed = match nzb::decompress(&raw)? {
                 Cow::Owned(xml) => Some(xml),
                 Cow::Borrowed(_) => None,
@@ -349,25 +376,53 @@ impl Queue {
             let xml = decompressed.unwrap_or(raw);
             let parsed = nzb::parse(&xml)?;
             let content_hash = parsed.content_hash();
-            Ok((Arc::new(xml), parsed, content_hash))
+            let encoded = blob::encode_nzb(&xml)?;
+            Ok(PreparedNzb {
+                xml: Arc::new(xml),
+                parsed,
+                content_hash,
+                encoded,
+            })
         })
-        .await;
-        let (xml, parsed, content_hash) = match checked {
-            Ok(valid) => valid,
-            Err(error) => {
-                let job = self.refuse(job, 0, error.to_string()).await?;
-                return Err(Error::Invalid { job, error });
+        .await
+    }
+
+    /// SAB-compatible submission, including failed-history records for invalid NZBs.
+    pub async fn enqueue(&self, job: &Submission<'_>, raw: &[u8]) -> Result<JobId, Error> {
+        let prepared = match Self::prepare(raw).await {
+            Ok(prepared) => prepared,
+            Err(Error::Nzb(error)) => {
+                let id = self.refuse(job, 0, error.to_string()).await?;
+                return Err(Error::Invalid { job: id, error });
             }
+            Err(error) => return Err(error),
         };
+        Ok(self.enqueue_prepared(job, prepared).await?.id())
+    }
+
+    /// Commits a previously parsed NZB, preserving duplicate and health outcomes.
+    pub async fn enqueue_prepared(
+        &self,
+        job: &Submission<'_>,
+        prepared: PreparedNzb,
+    ) -> Result<EnqueueOutcome, Error> {
+        let PreparedNzb {
+            xml,
+            parsed,
+            content_hash,
+            encoded,
+        } = prepared;
         let total_bytes = parsed.files.iter().map(nzb::File::bytes).sum();
         let job_name = names::job_name(job.file_name);
         let _submit = self.submit.lock().await;
         if let Some(id) = self.db.job_with_content(&content_hash).await? {
             tracing::info!(job = %id, "same NZB already queued; returning that job");
-            return Ok(id);
+            return Ok(EnqueueOutcome::Existing(id));
         }
         if self.rejected(&job_name, &parsed).await? {
-            return self.refuse(job, total_bytes, REJECTED.to_owned()).await;
+            return Ok(EnqueueOutcome::Rejected(
+                self.refuse(job, total_bytes, REJECTED.to_owned()).await?,
+            ));
         }
         let mut nzb_blob = BlobId::new();
         for id in self.db.nzbs_with_content(&content_hash).await? {
@@ -399,14 +454,9 @@ impl Queue {
             last_error: None,
             content_hash: Some(content_hash),
         };
-        let encoded = blocking({
-            let xml = Arc::clone(&xml);
-            move || blob::encode_nzb(&xml)
-        })
-        .await?;
         self.db.enqueue(&entry, &encoded).await?;
         self.wake.notify_one();
-        Ok(entry.id)
+        Ok(EnqueueOutcome::Created(entry.id))
     }
 
     /// Records a submission that never queues as a failed job, without its NZB.
@@ -956,9 +1006,27 @@ fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+static CPU_PERMITS: Semaphore = Semaphore::const_new(2);
+
 /// Runs CPU-heavy NZB work (hundreds of ms for a large NZB) off the async runtime.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
-    match tokio::task::spawn_blocking(f).await {
+    let permit = CPU_PERMITS
+        .acquire()
+        .await
+        .expect("static CPU semaphore is never closed");
+    blocking_with_permit(permit, f).await
+}
+
+async fn blocking_with_permit<T: Send + 'static>(
+    permit: SemaphorePermit<'static>,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        f()
+    })
+    .await
+    {
         Ok(value) => value,
         // Cancellation only happens at runtime shutdown.
         Err(error) => std::panic::resume_unwind(
@@ -1007,6 +1075,38 @@ fn history(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cpu_intensive_queue_work_is_bounded_across_parallel_requests() {
+        let current = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(tokio::sync::Barrier::new(9));
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let current = Arc::clone(&current);
+            let peak = Arc::clone(&peak);
+            let start = Arc::clone(&start);
+            tasks.push(tokio::spawn(async move {
+                start.wait().await;
+                super::blocking(move || {
+                    let active = current.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(active, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(150));
+                    current.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await;
+            }));
+        }
+        start.wait().await;
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert!(peak.load(Ordering::SeqCst) <= 2);
+    }
+
     #[test]
     fn backoff_doubles_to_fifteen_minutes_then_stays() {
         let minutes: Vec<i64> = [0, 1, 2, 3, 4, 5, u32::MAX]

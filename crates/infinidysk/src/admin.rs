@@ -1,9 +1,10 @@
 //! Admin API for the UI under `/api/v1`, behind [`auth::require`]. `/api/v1/openapi.json`
 //! describes it.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
@@ -12,7 +13,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use futures_util::{Stream, stream};
+use base64::Engine as _;
+use futures_util::{Stream, StreamExt, stream};
 use infinidysk_core::JobId;
 use infinidysk_core::trace::Summary;
 use infinidysk_db::{
@@ -21,12 +23,13 @@ use infinidysk_db::{
 };
 use infinidysk_health::Health;
 use infinidysk_nntp::{Client, catalog};
-use infinidysk_queue::{Queue, Submission, service};
+use infinidysk_queue::{EnqueueOutcome, Queue, Submission, service};
 use infinidysk_vfs::{Delivery, Session, Tracing, Vfs};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{RwLock, Semaphore, watch};
 use tokio_util::sync::CancellationToken;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{IntoParams, Modify, OpenApi, ToSchema};
@@ -36,7 +39,7 @@ use crate::app::Live;
 use crate::arr;
 use crate::auth::{self, Auth};
 use crate::backup;
-use crate::config::{self, ConfigStore, ImportStrategy, Settings};
+use crate::config::{self, ConfigStore, ImportStrategy, Indexer, Settings};
 use crate::database;
 use crate::files;
 use crate::library;
@@ -55,8 +58,16 @@ mod support;
 const DEFAULT_PAGE: usize = 500;
 const MAX_PAGE: usize = 10_000;
 
+pub(crate) const INDEXER_WORK_LIMIT: usize = 12;
+pub(crate) const INDEXER_DOWNLOAD_LIMIT: usize = 3;
+const SEARCH_RESPONSE_MAX_BYTES: usize = 1_000_000;
+const SEARCH_RESPONSE_MAX_RESULTS: usize = 1_000;
+
 pub struct Admin {
     pub config: Arc<RwLock<ConfigStore>>,
+    pub search_refs: SearchReferences,
+    pub indexer_work: Semaphore,
+    pub indexer_downloads: Semaphore,
     pub queue: Arc<Queue>,
     pub client: Arc<Client>,
     pub vfs: Arc<Vfs>,
@@ -126,6 +137,14 @@ pub struct Admin {
         get_arr_status,
         post_arr_discover,
         post_arr_test,
+        get_indexers,
+        post_indexer,
+        put_indexer,
+        patch_indexer_enabled,
+        delete_indexer,
+        post_indexer_test,
+        get_indexer_search,
+        post_indexer_search_queue,
         get_reconcile,
         post_reconcile_confirm,
         delete_reconcile,
@@ -280,6 +299,21 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         .route("/api/v1/arr/status", get(get_arr_status))
         .route("/api/v1/arr/discover", post(post_arr_discover))
         .route("/api/v1/arr/test", post(post_arr_test))
+        .route("/api/v1/indexers", get(get_indexers).post(post_indexer))
+        .route(
+            "/api/v1/indexers/{id}",
+            put(put_indexer).delete(delete_indexer),
+        )
+        .route(
+            "/api/v1/indexers/{id}/enabled",
+            axum::routing::patch(patch_indexer_enabled),
+        )
+        .route("/api/v1/indexers/{id}/test", post(post_indexer_test))
+        .route("/api/v1/indexers/search", get(get_indexer_search))
+        .route(
+            "/api/v1/indexers/search/queue",
+            post(post_indexer_search_queue),
+        )
         .route("/api/v1/arr/reconcile", get(get_reconcile))
         .route(
             "/api/v1/arr/reconcile/{instance}/{at}",
@@ -478,6 +512,7 @@ pub struct ApiError {
 struct SettingsView {
     /// Secrets are masked; send the mask back to keep them.
     settings: Settings,
+    indexers_revision: Uuid,
     /// Dotted paths fixed by environment variables.
     locked: Vec<String>,
     /// Saved changes that apply only after a restart (mount directory, built-in FUSE
@@ -492,6 +527,7 @@ struct SettingsView {
 fn view(admin: &Admin, store: &ConfigStore) -> SettingsView {
     SettingsView {
         settings: store.settings().masked(),
+        indexers_revision: store.indexers_revision(),
         locked: store.locked().collect(),
         restart_required: admin.live.restart_required(store.settings()),
         experiments: &config::EXPERIMENTS,
@@ -506,16 +542,29 @@ async fn get_settings(State(admin): State<Arc<Admin>>) -> Json<SettingsView> {
     Json(view(&admin, &store))
 }
 
-/// Replaces every setting; provider, `WebDAV` and Arr changes apply at once.
-#[utoipa::path(put, path = "/api/v1/settings", tag = "settings", request_body = Settings,
+#[derive(Deserialize, ToSchema)]
+struct SettingsUpdate {
+    #[serde(flatten)]
+    settings: Settings,
+    indexers_revision: Uuid,
+}
+
+/// Saves global settings. Indexer changes use dedicated endpoints.
+#[utoipa::path(put, path = "/api/v1/settings", tag = "settings", request_body = SettingsUpdate,
     responses(
         (status = 200, body = SettingsView),
         (status = 400, body = ApiError, description = "Invalid or locked by the environment"),
+        (status = 409, body = ApiError, description = "Indexer state changed"),
     ))]
 async fn put_settings(
     State(admin): State<Arc<Admin>>,
-    Json(settings): Json<Settings>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<SettingsView>, Fail> {
+    let has_indexers = body.get("indexers").is_some();
+    let SettingsUpdate {
+        mut settings,
+        indexers_revision,
+    } = serde_json::from_value(body).map_err(|error| Fail::Bad(error.to_string()))?;
     // The probe can hang on a dead share, so it runs before the settings lock.
     let wanted = |current: &config::Imports| {
         let next = &settings.imports;
@@ -543,6 +592,14 @@ async fn put_settings(
             "Settings changed while the STRM folder was checked; save again".to_owned(),
         ));
     }
+    if indexers_revision != store.indexers_revision()
+        || (has_indexers && settings.indexers != store.settings().masked().indexers)
+    {
+        return Err(Fail::Conflict(
+            "Indexer settings changed; reload and use the indexer API.".to_owned(),
+        ));
+    }
+    settings.indexers.clone_from(&store.settings().indexers);
     store.save(settings).await?;
     store.generate_missing_secrets().await?;
     if let Err(error) = admin.live.apply(store.settings()).await {
@@ -1920,4 +1977,1135 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
     }
     body.push('\n');
     Ok(body)
+}
+
+#[derive(Serialize, ToSchema)]
+struct IndexerRead {
+    id: Uuid,
+    name: String,
+    base_url: String,
+    api_key: config::Secret,
+    enabled: bool,
+    revision: String,
+}
+
+fn indexer_read(settings: &Settings, indexer: &Indexer) -> IndexerRead {
+    let mut digest = Sha256::new();
+    digest.update(settings.auth.session_key.0.as_bytes());
+    digest.update([0]);
+    digest.update(serde_json::to_vec(indexer).unwrap_or_default());
+    IndexerRead {
+        id: indexer.id,
+        name: indexer.name.clone(),
+        base_url: indexer.public_base_url().to_owned(),
+        api_key: config::Secret(if indexer.api_key.0.is_empty() {
+            String::new()
+        } else {
+            config::MASK.to_owned()
+        }),
+        enabled: indexer.enabled,
+        revision: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest.finalize()),
+    }
+}
+
+fn saved_indexer(settings: &Settings, id: Uuid) -> Result<IndexerRead, Fail> {
+    settings
+        .indexers
+        .iter()
+        .find(|i| i.id == id)
+        .map(|i| indexer_read(settings, i))
+        .ok_or(Fail::NotFound)
+}
+
+#[utoipa::path(get, path = "/api/v1/indexers", tag = "indexer",
+    responses((status = 200, body = [IndexerRead])))]
+async fn get_indexers(State(admin): State<Arc<Admin>>) -> Json<Vec<IndexerRead>> {
+    let store = admin.config.read().await;
+    Json(
+        store
+            .settings()
+            .indexers
+            .iter()
+            .map(|i| indexer_read(store.settings(), i))
+            .collect(),
+    )
+}
+
+#[derive(Deserialize, ToSchema)]
+struct IndexerCreate {
+    name: String,
+    base_url: String,
+    api_key: config::Secret,
+    #[doc = "Defaults to true when omitted."]
+    enabled: Option<bool>,
+}
+
+#[utoipa::path(post, path = "/api/v1/indexers", tag = "indexer",
+    request_body = IndexerCreate,
+    responses((status = 200, body = IndexerRead), (status = 400, body = ApiError)))]
+async fn post_indexer(
+    State(admin): State<Arc<Admin>>,
+    Json(input): Json<IndexerCreate>,
+) -> Result<Json<IndexerRead>, Fail> {
+    let id = Uuid::now_v7();
+    let indexer = Indexer {
+        id,
+        name: input.name.trim().to_owned(),
+        base_url: input.base_url,
+        api_key: input.api_key,
+        enabled: input.enabled.unwrap_or(true),
+    };
+    let mut store = admin.config.write().await;
+    let mut settings = store.settings().clone();
+    settings.indexers.push(indexer);
+    store.save(settings).await?;
+    Ok(Json(saved_indexer(store.settings(), id)?))
+}
+
+#[derive(Deserialize, ToSchema)]
+struct IndexerUpdate {
+    id: Uuid,
+    name: String,
+    base_url: String,
+    api_key: config::Secret,
+    enabled: bool,
+    revision: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+struct IndexerEnabled {
+    enabled: bool,
+}
+
+#[utoipa::path(patch, path = "/api/v1/indexers/{id}/enabled", tag = "indexer",
+    params(("id" = Uuid, Path)),
+    request_body = IndexerEnabled,
+    responses((status = 200, body = IndexerRead), (status = 404, body = ApiError)))]
+async fn patch_indexer_enabled(
+    State(admin): State<Arc<Admin>>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<IndexerEnabled>,
+) -> Result<Json<IndexerRead>, Fail> {
+    let mut store = admin.config.write().await;
+    let mut settings = store.settings().clone();
+    settings
+        .indexers
+        .iter_mut()
+        .find(|i| i.id == id)
+        .ok_or(Fail::NotFound)?
+        .enabled = input.enabled;
+    store.save(settings).await?;
+    admin.search_refs.invalidate(id)?;
+    Ok(Json(saved_indexer(store.settings(), id)?))
+}
+
+#[utoipa::path(put, path = "/api/v1/indexers/{id}", tag = "indexer",
+    params(("id" = Uuid, Path)),
+    request_body = IndexerUpdate,
+    responses((status = 200, body = IndexerRead), (status = 404, body = ApiError),
+              (status = 409, body = ApiError)))]
+async fn put_indexer(
+    State(admin): State<Arc<Admin>>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<IndexerUpdate>,
+) -> Result<Json<IndexerRead>, Fail> {
+    if id != input.id {
+        return Err(Fail::Bad("Indexer ID does not match the URL".to_owned()));
+    }
+    let mut store = admin.config.write().await;
+    let mut settings = store.settings().clone();
+    let current_revision = saved_indexer(&settings, id)?.revision;
+    if current_revision != input.revision {
+        return Err(Fail::Conflict(
+            "Indexer was updated in another session.".to_owned(),
+        ));
+    }
+    let indexer = Indexer {
+        id,
+        name: input.name.trim().to_owned(),
+        base_url: input.base_url,
+        api_key: input.api_key,
+        enabled: input.enabled,
+    };
+    *settings
+        .indexers
+        .iter_mut()
+        .find(|i| i.id == id)
+        .ok_or(Fail::NotFound)? = indexer;
+    store.save(settings).await?;
+    admin.search_refs.invalidate(id)?;
+    Ok(Json(saved_indexer(store.settings(), id)?))
+}
+
+#[utoipa::path(delete, path = "/api/v1/indexers/{id}", tag = "indexer",
+    params(("id" = Uuid, Path)),
+    responses((status = 204), (status = 404, body = ApiError)))]
+async fn delete_indexer(
+    State(admin): State<Arc<Admin>>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, Fail> {
+    let mut store = admin.config.write().await;
+    let mut settings = store.settings().clone();
+    let count = settings.indexers.len();
+    settings.indexers.retain(|i| i.id != id);
+    if settings.indexers.len() == count {
+        return Err(Fail::NotFound);
+    }
+    store.save(settings).await?;
+    admin.search_refs.forget(id)?;
+    drop(store);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+const SEARCH_REF_TTL: Duration = Duration::from_mins(15);
+const SEARCH_REF_LIMIT: usize = 10_000;
+const SEARCH_REF_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone)]
+struct SearchReference {
+    indexer_id: Uuid,
+    revision: Uuid,
+    base_url: String,
+    key_hash: [u8; 32],
+    url: String,
+    title: String,
+    source_dns: Option<crate::fetch::IndexerDns>,
+    created: Instant,
+}
+
+#[derive(Default)]
+pub struct SearchReferences(
+    Mutex<HashMap<String, SearchReference>>,
+    Mutex<HashMap<Uuid, Uuid>>,
+);
+
+fn search_reference_bytes(key: &String, reference: &SearchReference) -> usize {
+    std::mem::size_of::<(String, SearchReference)>()
+        + 48
+        + key.capacity()
+        + reference.base_url.capacity()
+        + reference.url.capacity()
+        + reference.title.capacity()
+        + reference
+            .source_dns
+            .as_ref()
+            .map_or(0, crate::fetch::IndexerDns::memory_bytes)
+}
+
+impl SearchReferences {
+    fn revision(&self, id: Uuid) -> Result<Uuid, Fail> {
+        let mut revisions = self.1.lock().map_err(|_| Fail::Internal)?;
+        Ok(*revisions.entry(id).or_insert_with(Uuid::new_v4))
+    }
+
+    fn has_revision(&self, id: Uuid, revision: Uuid) -> Result<bool, Fail> {
+        let revisions = self.1.lock().map_err(|_| Fail::Internal)?;
+        Ok(revisions.get(&id) == Some(&revision))
+    }
+
+    fn invalidate(&self, id: Uuid) -> Result<(), Fail> {
+        self.1
+            .lock()
+            .map_err(|_| Fail::Internal)?
+            .insert(id, Uuid::new_v4());
+        self.0
+            .lock()
+            .map_err(|_| Fail::Internal)?
+            .retain(|_, entry| entry.indexer_id != id);
+        Ok(())
+    }
+
+    fn forget(&self, id: Uuid) -> Result<(), Fail> {
+        self.1.lock().map_err(|_| Fail::Internal)?.remove(&id);
+        self.0
+            .lock()
+            .map_err(|_| Fail::Internal)?
+            .retain(|_, entry| entry.indexer_id != id);
+        Ok(())
+    }
+
+    fn remember(
+        &self,
+        indexer: &Indexer,
+        revision: Uuid,
+        results: &mut [crate::newznab::SearchResult],
+    ) -> Result<bool, Fail> {
+        let revisions = self.1.lock().map_err(|_| Fail::Internal)?;
+        if revisions.get(&indexer.id) != Some(&revision) {
+            return Ok(false);
+        }
+        let mut entries = self.0.lock().map_err(|_| Fail::Internal)?;
+        entries.retain(|_, entry| entry.created.elapsed() < SEARCH_REF_TTL);
+        let key_hash = Sha256::digest(indexer.api_key.0.as_bytes()).into();
+        for result in results.iter() {
+            if let Some(url) = &result.download_url {
+                entries.insert(
+                    result.nzb_ref.clone(),
+                    SearchReference {
+                        indexer_id: indexer.id,
+                        revision,
+                        base_url: indexer.base_url.clone(),
+                        key_hash,
+                        url: url.clone(),
+                        title: result.title.clone(),
+                        source_dns: result.source_dns.clone(),
+                        created: Instant::now(),
+                    },
+                );
+            }
+        }
+        let mut bytes: usize = entries
+            .iter()
+            .map(|(key, reference)| search_reference_bytes(key, reference))
+            .sum();
+        if entries.len() > SEARCH_REF_LIMIT || bytes > SEARCH_REF_MAX_BYTES {
+            let mut oldest: Vec<_> = entries
+                .iter()
+                .map(|(key, reference)| (key.clone(), reference.created))
+                .collect();
+            oldest.sort_unstable_by_key(|(_, created)| *created);
+            for (key, _) in oldest {
+                if entries.len() <= SEARCH_REF_LIMIT && bytes <= SEARCH_REF_MAX_BYTES {
+                    break;
+                }
+                if let Some(entry) = entries.remove(&key) {
+                    bytes = bytes.saturating_sub(search_reference_bytes(&key, &entry));
+                }
+            }
+        }
+        for result in results.iter_mut() {
+            if result.can_queue && !entries.contains_key(&result.nzb_ref) {
+                result.can_queue = false;
+                result.download_url = None;
+            }
+        }
+        drop(entries);
+        drop(revisions);
+        Ok(true)
+    }
+
+    fn mark_available(&self, results: &mut [crate::newznab::SearchResult]) -> Result<(), Fail> {
+        let entries = self.0.lock().map_err(|_| Fail::Internal)?;
+        for result in results.iter_mut() {
+            if result.can_queue
+                && entries
+                    .get(&result.nzb_ref)
+                    .is_none_or(|entry| entry.created.elapsed() >= SEARCH_REF_TTL)
+            {
+                result.can_queue = false;
+                result.download_url = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve(&self, reference: &str) -> Result<SearchReference, Fail> {
+        if reference.len() > 128 || reference.is_empty() {
+            return Err(Fail::NotFound);
+        }
+        let mut entries = self.0.lock().map_err(|_| Fail::Internal)?;
+        entries.retain(|_, entry| entry.created.elapsed() < SEARCH_REF_TTL);
+        entries.get(reference).cloned().ok_or(Fail::NotFound)
+    }
+}
+
+fn reference_is_current(
+    settings: &Settings,
+    reference: &SearchReference,
+    refs: &SearchReferences,
+) -> Result<bool, Fail> {
+    Ok(refs.has_revision(reference.indexer_id, reference.revision)?
+        && settings.indexers.iter().any(|indexer| {
+            indexer.id == reference.indexer_id
+                && indexer.enabled
+                && indexer.base_url == reference.base_url
+                && <[u8; 32]>::from(Sha256::digest(indexer.api_key.0.as_bytes()))
+                    == reference.key_hash
+        }))
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct SearchQueueRequest {
+    nzb_ref: String,
+    category: String,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum SearchQueueStatus {
+    Created,
+    Existing,
+    Rejected,
+}
+
+#[derive(Serialize, ToSchema)]
+struct SearchQueued {
+    id: Uuid,
+    status: SearchQueueStatus,
+}
+
+#[utoipa::path(post, path = "/api/v1/indexers/search/queue", tag = "indexer",
+    request_body = SearchQueueRequest,
+    responses((status = 201, body = SearchQueued), (status = 200, body = SearchQueued),
+              (status = 422, body = SearchQueued), (status = 400, body = ApiError),
+              (status = 404, body = ApiError), (status = 503, body = ApiError)))]
+async fn post_indexer_search_queue(
+    State(admin): State<Arc<Admin>>,
+    Json(request): Json<SearchQueueRequest>,
+) -> Result<(StatusCode, Json<SearchQueued>), Fail> {
+    let category = request.category.trim();
+    let reference = admin.search_refs.resolve(&request.nzb_ref)?;
+    let (endpoint, indexer_key) = {
+        let store = admin.config.read().await;
+        let settings = store.settings();
+        if !reference_is_current(settings, &reference, &admin.search_refs)? {
+            return Err(Fail::NotFound);
+        }
+        if category.is_empty() || !settings.sab.categories().any(|known| known == category) {
+            return Err(Fail::Bad("Select a configured queue category.".to_owned()));
+        }
+        let indexer = settings
+            .indexers
+            .iter()
+            .find(|indexer| indexer.id == reference.indexer_id)
+            .ok_or(Fail::NotFound)?;
+        let endpoint = crate::newznab::endpoint(indexer).map_err(|_| Fail::NotFound)?;
+        let key = indexer.api_key.0.clone();
+        drop(store);
+        (endpoint, key)
+    };
+    let _download_permit = admin
+        .indexer_downloads
+        .acquire()
+        .await
+        .map_err(|_| Fail::Unavailable("Indexer downloads are unavailable.".to_owned()))?;
+    let permit = admin
+        .indexer_work
+        .acquire()
+        .await
+        .map_err(|_| Fail::Unavailable("Indexer downloads are unavailable.".to_owned()))?;
+    let fetched = crate::fetch::Fetcher::fetch_indexer(
+        &reference.url,
+        &endpoint,
+        &indexer_key,
+        reference.source_dns.as_ref(),
+    )
+    .await
+    .map_err(|_| Fail::Unavailable("Could not retrieve the indexer NZB.".to_owned()))?;
+    drop(permit);
+    let prepared = Queue::prepare(&fetched.body).await;
+    let fallback_title = if crate::fetch::contains_api_key(&reference.title, &indexer_key) {
+        "Indexer download"
+    } else {
+        &reference.title
+    };
+    let file_name = fetched
+        .file_name
+        .as_deref()
+        .filter(|name| !name.trim().trim_start_matches('.').is_empty())
+        .and_then(|name| crate::sab::nzb_file_name(name).ok())
+        .unwrap_or_else(|| search_nzb_file_name(fallback_title));
+    let job = Submission {
+        file_name: &file_name,
+        category,
+        priority: 0,
+        post_processing: 0,
+    };
+    commit_indexer_queue(
+        &admin.config,
+        &admin.search_refs,
+        &admin.queue,
+        &reference,
+        &job,
+        prepared,
+    )
+    .await
+}
+
+async fn commit_indexer_queue(
+    config: &RwLock<ConfigStore>,
+    refs: &SearchReferences,
+    queue: &Queue,
+    reference: &SearchReference,
+    job: &Submission<'_>,
+    prepared: Result<service::PreparedNzb, service::Error>,
+) -> Result<(StatusCode, Json<SearchQueued>), Fail> {
+    let _writing = queue.db().write_permit().await;
+    let store = config.read().await;
+    if !reference_is_current(store.settings(), reference, refs)?
+        || !store
+            .settings()
+            .sab
+            .categories()
+            .any(|known| known == job.category)
+    {
+        return Err(Fail::NotFound);
+    }
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(service::Error::Nzb(_)) => return Err(Fail::Bad("Invalid NZB data.".to_owned())),
+        Err(_) => return Err(Fail::Internal),
+    };
+    let (code, status, id) = match queue.enqueue_prepared(job, prepared).await {
+        Ok(EnqueueOutcome::Created(id)) => (StatusCode::CREATED, SearchQueueStatus::Created, id),
+        Ok(EnqueueOutcome::Existing(id)) => (StatusCode::OK, SearchQueueStatus::Existing, id),
+        Ok(EnqueueOutcome::Rejected(id)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SearchQueueStatus::Rejected,
+            id,
+        ),
+        Err(_) => return Err(Fail::Internal),
+    };
+    drop(store);
+    Ok((code, Json(SearchQueued { id: id.0, status })))
+}
+
+fn search_nzb_file_name(title: &str) -> String {
+    let mut cleaned = String::new();
+    for c in title.chars() {
+        if cleaned.len() + c.len_utf8() > 240 {
+            break;
+        }
+        if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            cleaned.push(' ');
+        } else {
+            cleaned.push(c);
+        }
+    }
+    let cleaned = cleaned.trim_matches(|c: char| c.is_whitespace() || c == '.');
+    if cleaned.is_empty() {
+        return "Indexer download.nzb".to_owned();
+    }
+    crate::sab::nzb_file_name(cleaned).unwrap_or_else(|_| "Indexer download.nzb".to_owned())
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct IndexerSearchQuery {
+    q: String,
+    #[serde(default)]
+    limit: Option<u16>,
+}
+
+#[cfg(test)]
+mod search_reference_tests {
+    use super::*;
+
+    #[test]
+    fn reference_cache_evicts_oldest_and_ignores_non_downloadable_results() {
+        let indexer = Indexer {
+            id: Uuid::now_v7(),
+            name: "mock".into(),
+            base_url: "https://indexer.example/api".into(),
+            api_key: config::Secret("secret".into()),
+            enabled: true,
+        };
+        let make = |n: usize, can_queue: bool| crate::newznab::SearchResult {
+            title: format!("Result {n}"),
+            size_bytes: 123,
+            indexer_id: indexer.id,
+            indexer_name: "mock".into(),
+            nzb_ref: format!("{}:{n}", indexer.id),
+            can_queue,
+            download_url: can_queue.then(|| format!("https://indexer.example/nzb/{n}")),
+            source_dns: None,
+        };
+        let refs = SearchReferences::default();
+        let revision = refs.revision(indexer.id).ok().unwrap();
+        let mut first: Vec<_> = (0..SEARCH_REF_LIMIT).map(|n| make(n, true)).collect();
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut first).ok(),
+            Some(true)
+        );
+        assert_eq!(refs.0.lock().unwrap().len(), SEARCH_REF_LIMIT);
+        let old = format!("{}:0", indexer.id);
+        refs.0.lock().unwrap().get_mut(&old).unwrap().created =
+            Instant::now().checked_sub(Duration::from_secs(30)).unwrap();
+        let mut nonqueue: Vec<_> = (30_000..45_000).map(|n| make(n, false)).collect();
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut nonqueue).ok(),
+            Some(true)
+        );
+        assert_eq!(refs.0.lock().unwrap().len(), SEARCH_REF_LIMIT);
+        assert!(refs.resolve(&old).is_ok());
+        let mut more: Vec<_> = (20_000..20_005).map(|n| make(n, true)).collect();
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut more).ok(),
+            Some(true)
+        );
+        assert_eq!(refs.0.lock().unwrap().len(), SEARCH_REF_LIMIT);
+        assert!(matches!(refs.resolve(&old), Err(Fail::NotFound)));
+        assert!(refs.resolve(&format!("{}:9999", indexer.id)).is_ok());
+        assert!(refs.resolve(&format!("{}:20004", indexer.id)).is_ok());
+
+        let mut huge: Vec<_> = (50_000..62_345).map(|n| make(n, true)).collect();
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut huge).ok(),
+            Some(true)
+        );
+        assert!(
+            huge.iter()
+                .all(|result| !result.can_queue || refs.resolve(&result.nzb_ref).is_ok())
+        );
+        assert_eq!(refs.0.lock().unwrap().len(), SEARCH_REF_LIMIT);
+        assert!(matches!(
+            refs.resolve(&format!("{}:50000", indexer.id)),
+            Err(Fail::NotFound)
+        ));
+        assert!(refs.resolve(&format!("{}:62344", indexer.id)).is_ok());
+        let mut duplicated = vec![make(62_344, true), make(62_344, true)];
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut duplicated).ok(),
+            Some(true)
+        );
+        assert_eq!(refs.0.lock().unwrap().len(), SEARCH_REF_LIMIT);
+    }
+
+    #[test]
+    fn stale_revision_cannot_restore_invalidated_cache_entries() {
+        let indexer = Indexer {
+            id: Uuid::new_v4(),
+            name: "Mock".into(),
+            base_url: "https://indexer.invalid/api".into(),
+            api_key: config::Secret("key".into()),
+            enabled: true,
+        };
+        let refs = SearchReferences::default();
+        let stale = refs.revision(indexer.id).ok().unwrap();
+        refs.invalidate(indexer.id).ok().unwrap();
+        let mut results = [crate::newznab::SearchResult {
+            title: "Result".into(),
+            size_bytes: 100,
+            indexer_id: indexer.id,
+            indexer_name: indexer.name.clone().into(),
+            nzb_ref: Uuid::new_v4().to_string(),
+            can_queue: true,
+            download_url: Some("https://indexer.invalid/get".into()),
+            source_dns: None,
+        }];
+        assert_eq!(
+            refs.remember(&indexer, stale, &mut results).ok(),
+            Some(false)
+        );
+        assert!(matches!(
+            refs.resolve(&results[0].nzb_ref),
+            Err(Fail::NotFound)
+        ));
+        let current = refs.revision(indexer.id).ok().unwrap();
+        assert_ne!(current, stale);
+        assert_eq!(
+            refs.remember(&indexer, current, &mut results).ok(),
+            Some(true)
+        );
+        assert!(refs.resolve(&results[0].nzb_ref).is_ok());
+    }
+
+    #[test]
+    fn cache_memory_budget_downgrades_unstored_queueable_results() {
+        let indexer = Indexer {
+            id: Uuid::new_v4(),
+            name: "Mock".into(),
+            base_url: "https://indexer.invalid/api".into(),
+            api_key: config::Secret("key".into()),
+            enabled: true,
+        };
+        let refs = SearchReferences::default();
+        let revision = refs.revision(indexer.id).ok().unwrap();
+        let mut results: Vec<_> = (0..32)
+            .map(|n| crate::newznab::SearchResult {
+                title: "x".repeat(650_000),
+                size_bytes: 10,
+                indexer_id: indexer.id,
+                indexer_name: "Mock".into(),
+                nzb_ref: format!("ref-{n}"),
+                can_queue: true,
+                download_url: Some(format!("https://indexer.invalid/get/{n}")),
+                source_dns: None,
+            })
+            .collect();
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut results).ok(),
+            Some(true)
+        );
+        let entries = refs.0.lock().unwrap();
+        let bytes: usize = entries
+            .iter()
+            .map(|(key, value)| search_reference_bytes(key, value))
+            .sum();
+        assert!(bytes <= SEARCH_REF_MAX_BYTES);
+        assert!(results.iter().any(|item| !item.can_queue));
+        assert!(
+            results
+                .iter()
+                .all(|item| !item.can_queue || entries.contains_key(&item.nzb_ref))
+        );
+        drop(entries);
+    }
+
+    #[test]
+    fn unsafe_download_names_fall_back_to_sanitized_titles() {
+        assert_eq!(search_nzb_file_name("My Movie"), "My Movie.nzb");
+        assert_eq!(
+            search_nzb_file_name(" ../My/Movie:Part?.nzb "),
+            "My Movie Part .nzb"
+        );
+        assert_eq!(
+            search_nzb_file_name(" \\\\/:*?<>| "),
+            "Indexer download.nzb"
+        );
+        let long = search_nzb_file_name(&"ü".repeat(1000));
+        assert!(long.len() <= 255);
+        assert!(
+            std::path::Path::new(&long)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("nzb"))
+        );
+    }
+
+    #[tokio::test]
+    async fn search_reference_cache_keeps_local_dns_pin() {
+        let indexer = Indexer {
+            id: Uuid::now_v7(),
+            name: "mock".into(),
+            base_url: "http://127.0.0.1:1234/api".into(),
+            api_key: config::Secret("mock-key".into()),
+            enabled: true,
+        };
+        let dns =
+            crate::fetch::IndexerDns::lookup(&reqwest::Url::parse(&indexer.base_url).unwrap())
+                .await
+                .unwrap();
+        let result = crate::newznab::SearchResult {
+            title: "Result".into(),
+            size_bytes: 123,
+            indexer_id: indexer.id,
+            indexer_name: indexer.name.clone().into(),
+            nzb_ref: "opaque-reference".into(),
+            can_queue: true,
+            download_url: Some("http://127.0.0.1:1234/get".into()),
+            source_dns: Some(dns),
+        };
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("source_dns")
+        );
+        let refs = SearchReferences::default();
+        let revision = refs.revision(indexer.id).ok().unwrap();
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut [result]).ok(),
+            Some(true)
+        );
+        assert!(
+            refs.resolve("opaque-reference")
+                .ok()
+                .unwrap()
+                .source_dns
+                .unwrap()
+                .is_local()
+        );
+    }
+
+    #[test]
+    fn refs_expire_and_reject_tampering_or_disabled_indexers() {
+        let indexer = Indexer {
+            id: Uuid::now_v7(),
+            name: "mock".into(),
+            base_url: "https://indexer.invalid/api".into(),
+            api_key: config::Secret("secret".into()),
+            enabled: true,
+        };
+        let reference = format!("{}:opaque-token", indexer.id);
+        let result = crate::newznab::SearchResult {
+            title: "sample".into(),
+            size_bytes: 12,
+            indexer_id: indexer.id,
+            indexer_name: indexer.name.clone().into(),
+            nzb_ref: reference.clone(),
+            can_queue: true,
+            download_url: Some("https://indexer.invalid/get".into()),
+            source_dns: None,
+        };
+        let refs = SearchReferences::default();
+        let revision = refs.revision(indexer.id).ok().unwrap();
+        assert_eq!(
+            refs.remember(&indexer, revision, &mut [result]).ok(),
+            Some(true)
+        );
+        assert!(refs.resolve(&reference).is_ok());
+        assert!(matches!(
+            refs.resolve(&(reference.clone() + "x")),
+            Err(Fail::NotFound)
+        ));
+        assert!(matches!(
+            refs.resolve("http://example.com/file.nzb"),
+            Err(Fail::NotFound)
+        ));
+        let settings = Settings {
+            indexers: vec![indexer],
+            ..Settings::default()
+        };
+        let saved = refs.resolve(&reference).ok().unwrap();
+        assert_eq!(
+            reference_is_current(&settings, &saved, &refs).ok(),
+            Some(true)
+        );
+        let mut disabled = settings.clone();
+        disabled.indexers[0].enabled = false;
+        assert_eq!(
+            reference_is_current(&disabled, &saved, &refs).ok(),
+            Some(false)
+        );
+        disabled.indexers.clear();
+        assert_eq!(
+            reference_is_current(&disabled, &saved, &refs).ok(),
+            Some(false)
+        );
+        let mut rotated = settings;
+        rotated.indexers[0].api_key = config::Secret("new-secret".into());
+        assert_eq!(
+            reference_is_current(&rotated, &saved, &refs).ok(),
+            Some(false)
+        );
+        refs.0.lock().unwrap().get_mut(&reference).unwrap().created =
+            Instant::now().checked_sub(SEARCH_REF_TTL).unwrap();
+        assert!(matches!(refs.resolve(&reference), Err(Fail::NotFound)));
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+struct IndexerSearchStatus {
+    indexer_id: Uuid,
+    indexer_name: String,
+    ok: bool,
+    result_count: usize,
+    error: Option<&'static str>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct IndexerSearchResponse {
+    results: Vec<crate::newznab::SearchResult>,
+    indexers: Vec<IndexerSearchStatus>,
+}
+
+#[utoipa::path(get, path = "/api/v1/indexers/search", tag = "indexer",
+    params(IndexerSearchQuery),
+    responses((status = 200, body = IndexerSearchResponse), (status = 400, body = ApiError)))]
+async fn get_indexer_search(
+    State(admin): State<Arc<Admin>>,
+    Query(request): Query<IndexerSearchQuery>,
+) -> Result<Json<IndexerSearchResponse>, Fail> {
+    let query = request.q.trim();
+    if query.is_empty() || query.chars().count() > 250 {
+        return Err(Fail::Bad(
+            "Search query must contain 1-250 characters.".to_owned(),
+        ));
+    }
+    let limit = request.limit.unwrap_or(100);
+    if !(1..=500).contains(&limit) {
+        return Err(Fail::Bad("Search limit must be 1-500.".to_owned()));
+    }
+    let indexers: Vec<_> = {
+        let store = admin.config.read().await;
+        store
+            .settings()
+            .indexers
+            .iter()
+            .filter(|indexer| indexer.enabled)
+            .map(|indexer| Ok((indexer.clone(), admin.search_refs.revision(indexer.id)?)))
+            .collect::<Result<Vec<_>, Fail>>()?
+    };
+    let status_room = indexers.iter().try_fold(64usize, |total, (indexer, _)| {
+        let public_name = indexer.name.replace(&indexer.api_key.0, "[redacted]");
+        let name_bytes = serde_json::to_string(&public_name)
+            .map_err(|_| Fail::Internal)?
+            .len();
+        Ok::<usize, Fail>(total.saturating_add(name_bytes + 256))
+    })?;
+    let result_budget = SEARCH_RESPONSE_MAX_BYTES.saturating_sub(status_room);
+    let mut used_bytes = 0usize;
+    let mut results = Vec::new();
+    let mut statuses = Vec::with_capacity(indexers.len());
+    let pending = indexers.clone();
+    let mut searched = stream::iter(pending.into_iter().map(|(indexer, revision)| {
+        let admin = Arc::clone(&admin);
+        async move {
+            let permit = admin
+                .indexer_work
+                .acquire()
+                .await
+                .map_err(|_| "Indexer searches are unavailable.")?;
+            if !admin
+                .search_refs
+                .has_revision(indexer.id, revision)
+                .map_err(|_| "Indexer searches are unavailable.")?
+            {
+                return Err("Indexer configuration changed during search.");
+            }
+            let searched = crate::newznab::search(&indexer, query, limit).await;
+            drop(permit);
+            searched
+        }
+    }))
+    .buffered(INDEXER_WORK_LIMIT);
+    for (indexer, revision) in &indexers {
+        let Some(outcome) = searched.next().await else {
+            break;
+        };
+        let public_name = indexer.name.replace(&indexer.api_key.0, "[redacted]");
+        match outcome {
+            Ok(items) => {
+                let mut accepted = Vec::new();
+                let mut accepted_bytes = 0usize;
+                let mut truncated = false;
+                for item in items {
+                    if results.len() + accepted.len() >= SEARCH_RESPONSE_MAX_RESULTS {
+                        truncated = true;
+                        break;
+                    }
+                    let row_bytes =
+                        serde_json::to_vec(&item).map_err(|_| Fail::Internal)?.len() + 2;
+                    if row_bytes > result_budget.saturating_sub(used_bytes) {
+                        truncated = true;
+                        break;
+                    }
+                    used_bytes += row_bytes;
+                    accepted_bytes += row_bytes;
+                    accepted.push(item);
+                }
+                let current = {
+                    let store = admin.config.read().await;
+                    store
+                        .settings()
+                        .indexers
+                        .iter()
+                        .any(|saved| saved.enabled && saved == indexer)
+                        && admin
+                            .search_refs
+                            .remember(indexer, *revision, &mut accepted)?
+                };
+                if !current {
+                    used_bytes -= accepted_bytes;
+                    statuses.push(IndexerSearchStatus {
+                        indexer_id: indexer.id,
+                        indexer_name: public_name,
+                        ok: false,
+                        result_count: 0,
+                        error: Some("Indexer configuration changed during search."),
+                    });
+                    continue;
+                }
+                statuses.push(IndexerSearchStatus {
+                    indexer_id: indexer.id,
+                    indexer_name: public_name,
+                    ok: true,
+                    result_count: accepted.len(),
+                    error: truncated.then_some("Search results truncated to response limit."),
+                });
+                results.append(&mut accepted);
+            }
+            Err(error) => {
+                statuses.push(IndexerSearchStatus {
+                    indexer_id: indexer.id,
+                    indexer_name: public_name,
+                    ok: false,
+                    result_count: 0,
+                    error: Some(error),
+                });
+            }
+        }
+    }
+    drop(searched);
+    admin.search_refs.mark_available(&mut results)?;
+    let response = IndexerSearchResponse {
+        results,
+        indexers: statuses,
+    };
+    debug_assert!(
+        serde_json::to_vec(&response).is_ok_and(|bytes| bytes.len() <= SEARCH_RESPONSE_MAX_BYTES)
+    );
+    Ok(Json(response))
+}
+
+#[utoipa::path(post, path = "/api/v1/indexers/{id}/test", tag = "indexer",
+    params(("id" = Uuid, Path)),
+    responses((status = 200, body = IndexerTest), (status = 404, body = ApiError)))]
+async fn post_indexer_test(
+    State(admin): State<Arc<Admin>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<IndexerTest>, Fail> {
+    let indexer = admin
+        .config
+        .read()
+        .await
+        .settings()
+        .indexers
+        .iter()
+        .find(|i| i.id == id)
+        .cloned()
+        .ok_or(Fail::NotFound)?;
+    let permit = admin
+        .indexer_work
+        .acquire()
+        .await
+        .map_err(|_| Fail::Internal)?;
+    let error = crate::newznab::test(&indexer).await.err();
+    drop(permit);
+    if let Some(reason) = error {
+        tracing::warn!(reason, "Indexer connection test failed");
+    }
+    Ok(Json(IndexerTest {
+        success: error.is_none(),
+        error,
+    }))
+}
+
+#[derive(Serialize, ToSchema)]
+struct IndexerTest {
+    success: bool,
+    error: Option<&'static str>,
+}
+
+#[cfg(test)]
+mod indexer_commit_tests {
+    use super::*;
+    use infinidysk_db::Db;
+    use infinidysk_nntp::Provider;
+
+    #[tokio::test]
+    async fn queue_commit_rechecks_indexer_and_category_after_write_gate() {
+        for disable_indexer in [true, false] {
+            let db = Db::connect("sqlite::memory:").await.unwrap();
+            let queue = Arc::new(Queue::new(
+                db.clone(),
+                Arc::new(Client::new(Vec::<Provider>::new())),
+            ));
+            let indexer = Indexer {
+                id: Uuid::now_v7(),
+                name: "sample".to_owned(),
+                base_url: "https://indexer.example/api".to_owned(),
+                api_key: config::Secret("sample-key".to_owned()),
+                enabled: true,
+            };
+            let mut store = ConfigStore::load(db.clone(), []).await.unwrap();
+            let mut settings = store.settings().clone();
+            settings.indexers.push(indexer.clone());
+            store.save(settings).await.unwrap();
+            let config = Arc::new(RwLock::new(store));
+            let refs = Arc::new(SearchReferences::default());
+            let revision = refs.revision(indexer.id).ok().unwrap();
+            let reference = SearchReference {
+                indexer_id: indexer.id,
+                revision,
+                base_url: indexer.base_url,
+                key_hash: Sha256::digest(indexer.api_key.0.as_bytes()).into(),
+                url: "https://indexer.example/file.nzb".to_owned(),
+                title: "sample".to_owned(),
+                source_dns: None,
+                created: Instant::now(),
+            };
+            let prepared = Queue::prepare(br#"<?xml version="1.0"?><nzb><file poster="p" date="0" subject="a.mkv"><groups><group>a.b</group></groups><segments><segment bytes="100" number="1">a@b</segment></segments></file></nzb>"#)
+                .await
+                .unwrap();
+            let pause = db.pause_writes().await;
+            let start = Arc::new(tokio::sync::Barrier::new(2));
+            let task = tokio::spawn({
+                let config = Arc::clone(&config);
+                let refs = Arc::clone(&refs);
+                let queue = Arc::clone(&queue);
+                let start = Arc::clone(&start);
+                async move {
+                    let job = Submission {
+                        file_name: "sample.nzb",
+                        category: "movies",
+                        priority: 0,
+                        post_processing: 0,
+                    };
+                    start.wait().await;
+                    commit_indexer_queue(&config, &refs, &queue, &reference, &job, Ok(prepared))
+                        .await
+                }
+            });
+            start.wait().await;
+            tokio::task::yield_now().await;
+            {
+                let mut store = tokio::time::timeout(Duration::from_secs(2), config.write())
+                    .await
+                    .expect("queue commit must not hold config while awaiting DB write gate");
+                let mut settings = store.settings().clone();
+                if disable_indexer {
+                    settings.indexers[0].enabled = false;
+                } else {
+                    settings
+                        .sab
+                        .categories
+                        .retain(|category| category != "movies");
+                }
+                store.save(settings).await.unwrap();
+                if disable_indexer {
+                    assert!(refs.invalidate(indexer.id).is_ok());
+                }
+                drop(store);
+            }
+            drop(pause);
+            assert!(matches!(task.await.unwrap(), Err(Fail::NotFound)));
+            assert_eq!(db.queue().await.unwrap().len(), 0);
+            db.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_indexer_nzb_returns_bad_request_without_changing_history() {
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        let queue = Queue::new(db.clone(), Arc::new(Client::new(Vec::<Provider>::new())));
+        let indexer = Indexer {
+            id: Uuid::now_v7(),
+            name: "sample".to_owned(),
+            base_url: "https://indexer.example/api".to_owned(),
+            api_key: config::Secret("sample-key".to_owned()),
+            enabled: true,
+        };
+        let mut store = ConfigStore::load(db.clone(), []).await.unwrap();
+        let mut settings = store.settings().clone();
+        settings.indexers.push(indexer.clone());
+        store.save(settings).await.unwrap();
+        let config = RwLock::new(store);
+        let refs = SearchReferences::default();
+        let reference = SearchReference {
+            indexer_id: indexer.id,
+            revision: refs.revision(indexer.id).ok().unwrap(),
+            base_url: indexer.base_url,
+            key_hash: Sha256::digest(indexer.api_key.0.as_bytes()).into(),
+            url: "https://indexer.example/file.nzb".to_owned(),
+            title: "sample".to_owned(),
+            source_dns: None,
+            created: Instant::now(),
+        };
+        let prior = Submission {
+            file_name: "prior.nzb",
+            category: "movies",
+            priority: 0,
+            post_processing: 0,
+        };
+        queue
+            .refuse(&prior, 0, "prior failure".to_owned())
+            .await
+            .unwrap();
+        let before = db.history().await.unwrap();
+        assert_eq!(before.len(), 1);
+        let job = Submission {
+            file_name: "invalid.nzb",
+            category: "movies",
+            priority: 0,
+            post_processing: 0,
+        };
+        let prepared = Queue::prepare(b"Not an NZB").await;
+        assert!(matches!(prepared, Err(service::Error::Nzb(_))));
+        let result = commit_indexer_queue(&config, &refs, &queue, &reference, &job, prepared).await;
+        assert!(matches!(result, Err(Fail::Bad(_))));
+        assert_eq!(db.history().await.unwrap(), before);
+        assert_eq!(db.queue().await.unwrap().len(), 0);
+        db.close().await;
+    }
 }

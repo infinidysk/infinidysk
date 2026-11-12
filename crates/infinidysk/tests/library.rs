@@ -165,6 +165,7 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
 
     let (_, view) = admin(addr, "GET", "/api/v1/settings", "").await;
     let mut settings = view["settings"].clone();
+    settings["indexers_revision"] = view["indexers_revision"].clone();
     let sonarr_id = ItemId::new().0;
     let chaptarr_id = ItemId::new().0;
     settings["arr_instances"] = json!([{

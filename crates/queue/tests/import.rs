@@ -1394,3 +1394,62 @@ async fn inner_nzbs_are_followed_three_deep_and_no_further() {
         history.fail_message
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prepared_queue_attachments_report_new_existing_and_rejected_jobs() {
+    use infinidysk_queue::EnqueueOutcome;
+    let articles = post("p", "Clip.mkv", &mkv(4000, 1), 1000);
+    let xml = nzb(&[("Clip.mkv", &articles, 4000, 1000)]);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+    let job = |name, category| Submission {
+        file_name: name,
+        category,
+        priority: 0,
+        post_processing: 0,
+    };
+    let prepared = Queue::prepare(&xml).await.unwrap();
+    assert_eq!(db.queue().await.unwrap().len(), 0);
+    let created = queue
+        .enqueue_prepared(&job("job.nzb", "tv"), prepared)
+        .await
+        .unwrap();
+    let EnqueueOutcome::Created(id) = created else {
+        panic!("new job must be recorded as created");
+    };
+    assert_eq!(
+        queue
+            .enqueue_prepared(
+                &job("job.nzb", "movies"),
+                Queue::prepare(&xml).await.unwrap()
+            )
+            .await
+            .unwrap(),
+        EnqueueOutcome::Existing(id)
+    );
+    let queued = db.queue().await.unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].category, "tv");
+
+    db.reject_release("blocked", &[], i64::MAX / 2)
+        .await
+        .unwrap();
+    let other_articles = post("q", "Clip.mkv", &mkv(4000, 2), 1000);
+    let other = nzb(&[("Clip.mkv", &other_articles, 4000, 1000)]);
+    let outcome = queue
+        .enqueue_prepared(
+            &job("blocked.nzb", "movies"),
+            Queue::prepare(&other).await.unwrap(),
+        )
+        .await
+        .unwrap();
+    let EnqueueOutcome::Rejected(id) = outcome else {
+        panic!("health rejection must not look queued");
+    };
+    assert_eq!(
+        db.history_entry(id).await.unwrap().unwrap().status,
+        JobStatus::Failed
+    );
+    assert_eq!(db.queue().await.unwrap().len(), 1);
+    assert!(Queue::prepare(b"<nzb/>").await.is_err());
+}

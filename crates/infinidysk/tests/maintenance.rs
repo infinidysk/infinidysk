@@ -180,6 +180,7 @@ async fn removes_only_files_no_library_link_points_to() {
 
     let (_, view) = admin(addr, "GET", "/api/v1/settings", "").await;
     let mut settings = view["settings"].clone();
+    settings["indexers_revision"] = view["indexers_revision"].clone();
     settings["imports"]["library_dirs"] = json!([{ "path": lib, "arr_path": "/tv" }]);
     settings["health"]["enabled"] = json!(false);
     let (code, _) = admin(addr, "PUT", "/api/v1/settings", &settings.to_string()).await;
@@ -309,6 +310,7 @@ async fn links_into_the_upgraded_installs_mount_folder_stay_ours() {
     let (addr, server, cancel) = start(&root, &[]).await;
     let (_, view) = admin(addr, "GET", "/api/v1/settings", "").await;
     let mut settings = view["settings"].clone();
+    settings["indexers_revision"] = view["indexers_revision"].clone();
     settings["imports"]["library_dirs"] = json!([{ "path": lib, "arr_path": "/tv" }]);
     settings["health"]["enabled"] = json!(false);
     let (code, _) = admin(addr, "PUT", "/api/v1/settings", &settings.to_string()).await;
@@ -396,6 +398,7 @@ async fn removes_dead_links_and_has_the_arr_search_again() {
         start(&root, &[("INFINIDYSK__IMPORTS__STRM_KEY", "strmkey")]).await;
     let (_, view) = admin(addr, "GET", "/api/v1/settings", "").await;
     let mut settings = view["settings"].clone();
+    settings["indexers_revision"] = view["indexers_revision"].clone();
     assert_eq!(
         settings["maintenance"]["scheduled"],
         json!(["remove-dead-links"]),

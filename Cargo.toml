@@ -26,6 +26,7 @@ futures-util = { version = "0.3.34", default-features = false }
 hmac = "0.13.0"
 http-body-util = "0.1.5"
 httpdate = "1.0.3"
+idna = "1.1.0"
 ipnet = "2.12.2"
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-always"] }
 lzma-rs = { version = "0.3.0", default-features = false }

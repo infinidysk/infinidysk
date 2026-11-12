@@ -17,6 +17,7 @@ mod library;
 pub mod logs;
 mod maintenance;
 pub mod metrics;
+mod newznab;
 mod oidc;
 mod probe;
 mod provider_status;

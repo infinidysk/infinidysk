@@ -3,4 +3,6 @@ pub mod names;
 pub mod nzb;
 pub mod service;
 
-pub use service::{HandoffFile, HandoffJob, HandoffWriter, Queue, Stats, Submission, Written};
+pub use service::{
+    EnqueueOutcome, HandoffFile, HandoffJob, HandoffWriter, Queue, Stats, Submission, Written,
+};
