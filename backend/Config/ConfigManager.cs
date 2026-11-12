@@ -1078,7 +1078,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
     /// <summary>
     /// How many NZB queue items may process concurrently. Default 1 preserves
-    /// historical single-item behavior. Clamped to 1–10.
+    /// historical single-item behavior. Clamped to 1–32.
     /// Workers share <see cref="GetMaxQueueConnections"/>.
     /// </summary>
     public int GetQueueWorkerCount()
@@ -1086,7 +1086,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.QueueWorkerCount));
         if (configured is null || !int.TryParse(configured, out var value))
             return 1;
-        return Math.Clamp(value, 1, 10);
+        return Math.Clamp(value, 1, 32);
     }
 
     public int GetQueueMaxItems()

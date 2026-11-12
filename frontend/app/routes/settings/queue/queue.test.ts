@@ -71,7 +71,7 @@ describe("Queue settings", () => {
     expect(
       isQueueSettingsValid({
         ...validConfig,
-        "queue.worker-count": "10",
+        "queue.worker-count": "32",
         "usenet.max-queue-connections": "20",
         "queue.max-items": "50",
         "queue.resume-threshold": "25",
@@ -83,7 +83,7 @@ describe("Queue settings", () => {
     expect(
       isQueueSettingsValid({
         ...validConfig,
-        "queue.worker-count": "11",
+        "queue.worker-count": "33",
       }),
     ).toBe(false);
     expect(
