@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["vendor/*"]
 
 [workspace.package]
 # ponytail: crate versions stay 0.0.0; release-please owns the product version in version.txt.
@@ -126,9 +125,3 @@ codegen-units = 1
 [profile.profiling]
 inherits = "release"
 debug = "line-tables-only"
-
-# ponytail: sqlx-sqlite 0.9.0 caps libsqlite3-sys below 0.38, which bundles SQLite < 3.54 (RUSTSEC-2026-0459).
-# The vendored copy only widens that range to <0.40, as sqlx main does (launchbadge/sqlx 10462fa441).
-# Delete vendor/, this patch and the Dockerfile `COPY vendor/` once a sqlx release allows libsqlite3-sys >= 0.39.
-[patch.crates-io]
-sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
