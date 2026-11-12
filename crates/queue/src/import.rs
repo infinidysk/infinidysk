@@ -47,9 +47,11 @@ const PAR2_TOTAL_ARTICLES: usize = 256;
 const STAT_ATTEMPTS: usize = 3;
 /// Archive key derivations running at once across all imports: half the cores, at least one,
 /// so the rest stay free for playback.
-static DERIVATIONS: LazyLock<Semaphore> = LazyLock::new(|| {
-    Semaphore::new(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
-});
+static DERIVATIONS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(derivation_slots()));
+
+fn derivation_slots() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2))
+}
 /// Requests a first health check expects per file: two random bodies and a box walk; the
 /// first segment is usually held already.
 const FIRST_CHECK_REQUESTS: usize = 3;
@@ -2224,8 +2226,9 @@ mod tests {
             salt: Vec::new(),
             cycles: 0,
         };
+        // Other tests share the static semaphore, so wait for every slot, not just the free ones.
         let held = DERIVATIONS
-            .acquire_many(u32::try_from(DERIVATIONS.available_permits()).unwrap())
+            .acquire_many(u32::try_from(derivation_slots()).unwrap())
             .await
             .unwrap();
 
@@ -2273,9 +2276,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
         task.abort();
 
-        let slots =
-            u32::try_from(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
-                .unwrap();
+        let slots = u32::try_from(derivation_slots()).unwrap();
         let all = tokio::time::timeout(Duration::from_secs(10), DERIVATIONS.acquire_many(slots))
             .await
             .expect("the abandoned derivation kept its slot");
