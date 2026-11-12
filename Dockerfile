@@ -26,6 +26,8 @@ RUN cargo chef prepare --recipe-path recipe.json
 # Dependencies build in their own layer, reused until Cargo.lock or a manifest changes.
 FROM rust AS build
 COPY --from=plan /src/recipe.json ./
+# The recipe holds workspace members only; [patch] path crates need their real source.
+COPY vendor/ vendor/
 RUN cargo chef cook --release --locked -p infinidysk --recipe-path recipe.json
 COPY . .
 COPY --from=ui /ui/dist ui/dist
