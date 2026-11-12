@@ -103,8 +103,7 @@ Next steps in the docs:
 
 **Not in 2.x yet**
 
-- Search and indexers
-- Other 1.x features listed in the [feature comparison](https://www.infinidysk.com/v2/whats-new/#feature-comparison)
+Some 1.x features are still missing. The [feature comparison](https://www.infinidysk.com/v2/whats-new/#feature-comparison) lists them.
 
 Compressed archives cannot be streamed. infinidysk detects them and fails the import with a clear reason.
 
