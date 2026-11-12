@@ -88,6 +88,8 @@ Repairs for articles omitted from an NZB require a saved PAR2 recovery-set ident
 
 Health and import checks use saved repairs when their source identity is known. A repair counts as available only after its bytes pass verification.
 
+Repair progress shows completed provider reads and missing results, including repeated reads and cached misses. Missing replies do not consume the decoded source-byte allowance; uncertain transfer failures still reserve the maximum article size. Request, time and memory limits still apply. Back up config before upgrading for the additive request-progress migration.
+
 ## Reporting problems
 
 See [Reporting a bug](https://www.infinidysk.com/v2/help/reporting/): the image tag, a support pack from the System page, and for playback problems a read trace. Never post provider passwords or API keys. Release names are not needed; describe the file instead (for example "stored RAR5 episode").

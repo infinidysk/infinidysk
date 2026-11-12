@@ -24,6 +24,8 @@
       state: "running",
       reason: "",
       attempts: 1,
+      completed_requests: 42,
+      missing_requests: 40,
       transferred_bytes: 0,
       stored_bytes: 0,
       updated_at: 1,
@@ -51,6 +53,11 @@
       check(
         document.querySelector('[role="status"]').textContent.includes("running"),
         "Running state must be announced",
+      );
+      check(
+        document.querySelector('[role="status"]').textContent.includes("42 provider reads finished") &&
+          document.querySelector('[role="status"]').textContent.includes("40 missing"),
+        "Missing replies must show repair activity even when no body bytes arrive",
       );
       await act(async () =>
         client.setQueryData(["par2", "file"], {

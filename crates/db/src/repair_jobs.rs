@@ -32,15 +32,31 @@ pub struct Job {
     pub repair_on_failure: bool,
     pub checked_articles: i64,
     pub total_articles: i64,
+    pub completed_requests: i64,
+    pub missing_requests: i64,
     #[sqlx(default)]
     pub file_path: Option<String>,
 }
 
 macro_rules! columns {
-    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at, scan_at, repair_on_failure, checked_articles, total_articles" };
+    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at, scan_at, repair_on_failure, checked_articles, total_articles, completed_requests, missing_requests" };
 }
 
 impl Db {
+    pub async fn update_par2_requests(
+        &self,
+        id: Uuid,
+        completed: i64,
+        missing: i64,
+    ) -> Result<(), Error> {
+        if missing < 0 || completed < missing {
+            return Err(Error::RepairBounds("request progress"));
+        }
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET completed_requests = $2, missing_requests = $3 WHERE id = $1 AND state IN (1, 6)")
+            .bind(id).bind(completed).bind(missing).execute(pool).await?.rows_affected());
+        Ok(())
+    }
+
     /// Playback preemption does not consume a provider/storage retry.
     pub async fn yield_par2_attempt(&self, id: Uuid) -> Result<(), Error> {
         on!(self, pool => sqlx::query("UPDATE repair_jobs SET attempts = attempts - 1 WHERE id = $1 AND state = 1 AND attempts > 0")
@@ -60,7 +76,7 @@ impl Db {
             let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = FALSE")
                 .bind(nzb).bind(generation).fetch_optional(&mut *tx).await?;
             if let Some(existing) = existing {
-                sqlx::query("UPDATE repair_jobs SET state = 0, attempts = 0, reason = '', next_at = $2, updated_at = $2, started_at = NULL, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, verified_bytes = 0, scan_at = $3 WHERE id = $1 AND state IN (2, 3, 5, 6)")
+                sqlx::query("UPDATE repair_jobs SET state = 0, attempts = 0, reason = '', next_at = $2, updated_at = $2, started_at = NULL, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, verified_bytes = 0, completed_requests = 0, missing_requests = 0, scan_at = $3 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                     .bind(existing).bind(now).bind(scan_at).execute(&mut *tx).await?;
             } else {
                 sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, generation, verify_only, next_at, updated_at, scan_at) VALUES ($1, $2, $3, FALSE, $4, $4, $5)")
@@ -233,7 +249,7 @@ impl Db {
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
             if count >= 128 { return Err(Error::RepairBounds("pending job count")); }
-            sqlx::query("UPDATE repair_jobs SET state = 0, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
+            sqlx::query("UPDATE repair_jobs SET state = 0, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                 .bind(id).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;
             tx.commit().await?;
             Ok(())

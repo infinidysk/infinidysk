@@ -13,6 +13,7 @@ function JobProgress({ job }: { job: Schemas["Par2Job"] }) {
     <>
       {job.transferred_bytes > 0 && <span>{bytes(job.transferred_bytes)} {job.verify_only ? "read for checks" : "from providers"}</span>}
       {job.verify_only && job.total_articles > 0 && <span>{job.checked_articles.toLocaleString()} of {job.total_articles.toLocaleString()} articles checked</span>}
+      {!job.verify_only && job.completed_requests > 0 && <span>{job.completed_requests.toLocaleString()} provider reads finished · {job.missing_requests.toLocaleString()} missing</span>}
       {job.stored_bytes > 0 && <span>{bytes(job.stored_bytes)} saved</span>}
       {job.verified_bytes > 0 && <span>{bytes(job.verified_bytes)} verified</span>}
       {job.duration_ms > 0 && <span>{duration(Math.ceil(job.duration_ms / 1000))}</span>}

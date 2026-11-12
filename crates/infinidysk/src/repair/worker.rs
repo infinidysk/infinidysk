@@ -28,6 +28,7 @@ pub(super) struct Progress {
     stored: AtomicU64,
     verified: AtomicU64,
     availability: Arc<AvailabilityProgress>,
+    requests: Arc<repair::Progress>,
 }
 
 impl Progress {
@@ -65,6 +66,16 @@ impl Progress {
             hedge: false,
             size: 0,
         }
+    }
+
+    fn requests(&self, job: &Job) -> (i64, i64) {
+        let (completed, missing) = self.requests.requests();
+        (
+            job.completed_requests
+                .saturating_add(i64::try_from(completed).unwrap_or(i64::MAX)),
+            job.missing_requests
+                .saturating_add(i64::try_from(missing).unwrap_or(i64::MAX)),
+        )
     }
 }
 
@@ -139,6 +150,10 @@ impl Repairs {
                                     tracing::warn!(reason = %error, "article progress could not be saved");
                                 }
                                 let phase = *progress.phase.lock().unwrap_or_else(PoisonError::into_inner);
+                                let (completed, missing) = progress.requests(&job);
+                                if let Err(error) = self.db.update_par2_requests(job.id, completed, missing).await {
+                                    tracing::warn!(reason = %error, "repair request progress could not be saved");
+                                }
                                 let (transferred, stored) = progress.counters(&job);
                                 if let Err(error) = self.db.update_par2_progress(job.id, phase, transferred, stored, now_ms()).await {
                                     tracing::warn!(job = %job.id, reason = %error, "repair progress could not be saved");
@@ -180,6 +195,10 @@ impl Repairs {
                     };
                     loop {
                         let saved = async {
+                            let (completed, missing) = progress.requests(&job);
+                            self.db
+                                .update_par2_requests(job.id, completed, missing)
+                                .await?;
                             self.db.set_par2_verified(job.id, verified).await?;
                             self.db
                                 .update_availability_progress(
@@ -395,6 +414,7 @@ impl Repairs {
             source: Some((source.nzb(), source.generation())),
             candidates,
             probe: Some(progress.probe()),
+            progress: Some(Arc::clone(&progress.requests)),
         };
         let mut metadata = if let infinidysk_db::repair::Owner::Item(id) = owner {
             if let Some(item) = self.db.item(id).await? {

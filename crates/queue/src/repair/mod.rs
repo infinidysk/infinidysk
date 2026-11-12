@@ -34,6 +34,7 @@ pub async fn discover_with_context(
         source: context.source,
         candidates: context.candidates,
         probe: context.probe,
+        progress: context.progress,
         legacy_ids: std::collections::BTreeSet::new(),
     };
     let reader = read_parity(client, nzb, &mut budget, None).await?;
@@ -123,7 +124,7 @@ async fn read_parity(
 
 use std::collections::HashSet;
 use std::ops::Range;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use futures_util::{StreamExt as _, stream};
 use infinidysk_nntp::{Body, Client, MAX_DECODED_LEN, Workload};
@@ -144,14 +145,31 @@ pub struct Context {
     /// Importer-only unverified candidates. Never install this lookup on the delivery client.
     pub candidates: Option<Arc<infinidysk_nntp::RepairLookup>>,
     pub probe: Option<infinidysk_core::trace::Probe>,
+    pub progress: Option<Arc<Progress>>,
+}
+
+/// Completed provider read requests and definitive misses, including cached misses and repeated reads.
+#[derive(Default)]
+pub struct Progress(Mutex<(u64, u64)>);
+
+impl Progress {
+    pub fn requests(&self) -> (u64, u64) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn finish(&self, missing: bool) {
+        let mut counts = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        counts.0 += 1;
+        counts.1 += u64::from(missing);
+    }
 }
 
 /// Per-call work bounds. Caller-owned NZB/PAR2 buffers and NNTP transport buffers are separate.
 #[derive(Clone, Copy)]
 pub struct Limits {
     pub requests: usize,
-    /// Accepted decoded payload; failures reserve a full article allowance. NNTP retries
-    /// and encoded wire overhead are accounted by the shared client separately.
+    /// Accepted decoded payload; uncertain failures reserve a full article allowance.
+    /// Clean missing replies carry no payload. NNTP retries and wire overhead are separate.
     pub decoded_bytes: u64,
     /// Requested owned metadata, body, prefix and fallback slice storage; allocator
     /// overhead is separate from this allowance.
@@ -314,6 +332,7 @@ async fn resolve_budget(
     let (files, sources, mut budget) = snapshot(nzb, set, limits, cancel.clone())?;
     budget.candidates = context.candidates;
     budget.probe = context.probe;
+    budget.progress = context.progress;
     budget.source = context.source;
     let client = Arc::clone(client);
     let size = set.slice_size();
@@ -339,6 +358,7 @@ struct Budget {
     source: Option<(infinidysk_core::BlobId, i64)>,
     candidates: Option<Arc<infinidysk_nntp::RepairLookup>>,
     probe: Option<infinidysk_core::trace::Probe>,
+    progress: Option<Arc<Progress>>,
     legacy_ids: std::collections::BTreeSet<String>,
 }
 
@@ -385,6 +405,7 @@ impl Budget {
                     source: self.source,
                     candidates: self.candidates.clone(),
                     probe: self.probe.clone(),
+                    progress: self.progress.clone(),
                     legacy_ids: std::collections::BTreeSet::new(),
                 };
                 async move {
@@ -503,9 +524,14 @@ impl Budget {
             () = self.cancel.cancelled() => return Err(Error::Cancelled),
             result = client.provider_body_with(id, Workload::Health, self.probe.as_ref(), None, None) => result,
         };
-        let bytes = result
-            .as_ref()
-            .map_or(MAX_DECODED_LEN, |body| body.data.len());
+        if let Some(progress) = &self.progress {
+            progress.finish(matches!(result, Err(infinidysk_nntp::Error::NotFound)));
+        }
+        let bytes = match &result {
+            Ok(body) => body.data.len(),
+            Err(infinidysk_nntp::Error::NotFound) => 0,
+            Err(_) => MAX_DECODED_LEN,
+        };
         if bytes > MAX_DECODED_LEN {
             return Err(Error::Limit("article size"));
         }
@@ -531,6 +557,7 @@ fn snapshot(
         source: None,
         candidates: None,
         probe: None,
+        progress: None,
         legacy_ids: std::collections::BTreeSet::new(),
     };
     budget.metadata(MAX_DECODED_LEN + PREFIX)?;

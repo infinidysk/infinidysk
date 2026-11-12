@@ -32,6 +32,8 @@ pub struct Par2Job {
     next_at: i64,
     checked_articles: i64,
     total_articles: i64,
+    completed_requests: i64,
+    missing_requests: i64,
 }
 
 impl From<Job> for Par2Job {
@@ -69,6 +71,8 @@ impl From<Job> for Par2Job {
             next_at: job.next_at,
             checked_articles: job.checked_articles,
             total_articles: job.total_articles,
+            completed_requests: job.completed_requests,
+            missing_requests: job.missing_requests,
         }
     }
 }
@@ -343,6 +347,8 @@ mod tests {
                 repair_on_failure: false,
                 checked_articles: 0,
                 total_articles: 0,
+                completed_requests: 0,
+                missing_requests: 0,
                 file_path: None,
             });
             assert_eq!(view.state, expected);

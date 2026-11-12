@@ -178,6 +178,9 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
             .unwrap();
         assert_eq!(status["repair"]["state"], "repaired");
         assert_eq!(status["repair"]["stored_bytes"], 2 * ARTICLE);
+        let completed = status["repair"]["completed_requests"].as_u64().unwrap();
+        let missing = status["repair"]["missing_requests"].as_u64().unwrap();
+        assert!(completed > missing && missing > 0);
         assert_eq!(
             status["repair"]["verified_bytes"],
             PLAIN.len() + ENCRYPTED.len()

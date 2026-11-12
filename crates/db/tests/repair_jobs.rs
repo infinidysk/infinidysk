@@ -168,8 +168,15 @@ async fn durable_requests(db: &Db) {
     db.update_par2_progress(first, "Discovering PAR2 files", 40, 0, 13)
         .await
         .unwrap();
+    db.update_par2_requests(first, 12, 10).await.unwrap();
+    assert!(db.update_par2_requests(first, 9, 10).await.is_err());
+    assert!(db.update_par2_requests(first, 12, -1).await.is_err());
     let listed = db.par2_jobs().await.unwrap();
     assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].completed_requests, listed[0].missing_requests),
+        (12, 10)
+    );
     assert_eq!(
         (listed[0].transferred_bytes, listed[0].started_at),
         (40, Some(12))
@@ -177,7 +184,12 @@ async fn durable_requests(db: &Db) {
     assert_eq!(db.par2_counts().await.unwrap(), vec![(1, 1)]);
     assert!(db.claim_par2(12).await.unwrap().is_none());
     db.resume_par2(13).await.unwrap();
-    assert_eq!(db.claim_par2(13).await.unwrap().unwrap().id, first);
+    let resumed = db.claim_par2(13).await.unwrap().unwrap();
+    assert_eq!(resumed.id, first);
+    assert_eq!(
+        (resumed.completed_requests, resumed.missing_requests),
+        (12, 10)
+    );
     db.finish_par2(first, 2, "verified", 100, 0, 14, None)
         .await
         .unwrap();
@@ -191,7 +203,12 @@ async fn durable_requests(db: &Db) {
         2
     );
     db.restart_par2(first, 16).await.unwrap();
-    assert_eq!(db.claim_par2(16).await.unwrap().unwrap().id, first);
+    let restarted = db.claim_par2(16).await.unwrap().unwrap();
+    assert_eq!(restarted.id, first);
+    assert_eq!(
+        (restarted.completed_requests, restarted.missing_requests),
+        (0, 0)
+    );
     db.cancel_par2(first, 17).await.unwrap();
     db.update_par2_progress(first, "Late progress", 999, 0, 18)
         .await

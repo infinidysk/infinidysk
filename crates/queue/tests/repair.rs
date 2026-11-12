@@ -329,22 +329,37 @@ async fn bounded_execution_verifies_whole_sources_before_returning_replacement_a
     .unwrap();
     let reader = metadata();
     let set_id = infinidysk_par2::read(INDEX).set_id.unwrap();
+    let decoded_bytes = infinidysk_nntp::MAX_DECODED_LEN as u64 + 1_000_000;
+    let progress = Arc::new(infinidysk_queue::repair::Progress::default());
     let result = infinidysk_queue::repair::execute(
         &client(&server),
         Arc::new(nzb),
         Arc::new(reader),
         set_id,
-        limits(),
+        Limits {
+            decoded_bytes,
+            ..limits()
+        },
         false,
-        infinidysk_queue::repair::Context::default(),
+        infinidysk_queue::repair::Context {
+            progress: Some(Arc::clone(&progress)),
+            ..infinidysk_queue::repair::Context::default()
+        },
         &CancellationToken::new(),
     )
     .await
     .unwrap();
     assert_eq!(result.patches.len(), 1);
+    let (completed, missing) = progress.requests();
+    assert!(completed > missing && missing > 0);
     assert_eq!(result.patches[0].0.source.range.start, 21_000);
     assert_eq!(result.patches[0].1, data(100_000)[21_000..28_000]);
     assert!(result.transferred_bytes > 108_192);
+    assert_eq!(
+        result.remaining.decoded_bytes + result.transferred_bytes,
+        decoded_bytes,
+        "clean missing replies carry no decoded article bytes"
+    );
     assert_eq!(result.verified_bytes, 108_192);
     let source = &result.sources[0];
     let mut target = infinidysk_core::FileMeta::Nzb(infinidysk_core::NzbFile {
@@ -360,6 +375,108 @@ async fn bounded_execution_verifies_whole_sources_before_returning_replacement_a
     covered.clear();
     infinidysk_queue::repair::refresh_metadata(&mut target, &result.sources, &mut covered);
     assert_eq!(covered, [false]);
+}
+
+#[tokio::test]
+async fn missing_reads_still_obey_the_request_limit_without_spending_payload_bytes() {
+    let a = post("absent-a", "a.bin", &data(100_000), 7000);
+    let b = post("absent-b", "b.bin", &data(8192), 3000);
+    let nzb = document(&[("one", &a), ("two", &b)]);
+    let server = LoopbackServer::start([]).await.unwrap();
+    let reader = metadata();
+    let set = reader.repair_set(reader.sets()[0]).unwrap();
+    let result = resolve(
+        &client(&server),
+        &nzb,
+        &set,
+        Limits {
+            requests: 2,
+            decoded_bytes: infinidysk_nntp::MAX_DECODED_LEN as u64 + 1_000_000,
+            ..limits()
+        },
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(matches!(result, Err(Error::Limit("request"))), "{result:?}");
+    assert_eq!(server.body_commands(), 2);
+}
+
+#[tokio::test]
+async fn corrupt_reads_keep_the_conservative_payload_charge() {
+    let mut a = post("corrupt-budget-a", "a.bin", &data(100_000), 7000);
+    let b = post("corrupt-budget-b", "b.bin", &data(8192), 3000);
+    a[0].wire = b"invalid body\r\n.\r\n".to_vec();
+    let nzb = document(&[("one", &a), ("two", &b)]);
+    let server = LoopbackServer::start(a.into_iter().chain(b)).await.unwrap();
+    let reader = metadata();
+    let set = reader.repair_set(reader.sets()[0]).unwrap();
+    let result = resolve(
+        &client(&server),
+        &nzb,
+        &set,
+        Limits {
+            decoded_bytes: infinidysk_nntp::MAX_DECODED_LEN as u64 + 1_000_000,
+            ..limits()
+        },
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(Error::Limit("decoded byte"))),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn missing_reads_report_progress_while_another_reply_waits() {
+    let a = post("progress-a", "a.bin", &data(100_000), 7000);
+    let b = post("progress-b", "b.bin", &data(8192), 3000);
+    let nzb = Arc::new(document(&[("one", &a), ("two", &b)]));
+    let first = a[0].message_id.clone();
+    let server = LoopbackServer::start([a[0].clone()]).await.unwrap();
+    server.stall_article(&first, 1, Duration::from_secs(1));
+    let reader = Arc::new(metadata());
+    let set = reader.sets()[0];
+    let progress = Arc::new(infinidysk_queue::repair::Progress::default());
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn({
+        let client = client(&server);
+        let progress = Arc::clone(&progress);
+        let cancel = cancel.clone();
+        async move {
+            infinidysk_queue::repair::execute(
+                &client,
+                nzb,
+                reader,
+                set,
+                Limits {
+                    memory_bytes: 256_000_000,
+                    ..limits()
+                },
+                false,
+                infinidysk_queue::repair::Context {
+                    progress: Some(progress),
+                    ..infinidysk_queue::repair::Context::default()
+                },
+                &cancel,
+            )
+            .await
+        }
+    });
+    let observed = tokio::time::timeout(Duration::from_secs(5), async {
+        while progress.requests().1 == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    cancel.cancel();
+    assert!(matches!(task.await.unwrap(), Err(Error::Cancelled)));
+    assert!(
+        observed.is_ok(),
+        "missing results must be visible before the batch finishes"
+    );
+    let (completed, missing) = progress.requests();
+    assert!(missing > 0 && completed >= missing);
 }
 
 #[tokio::test]
@@ -404,6 +521,7 @@ async fn legacy_candidates_become_patches_only_after_complete_par2_verification(
             source: None,
             candidates: Some(candidates),
             probe: None,
+            progress: None,
         },
         &CancellationToken::new(),
     )

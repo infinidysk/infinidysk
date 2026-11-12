@@ -3231,12 +3231,16 @@ export interface components {
             /** Format: int64 */
             checked_articles: number;
             /** Format: int64 */
+            completed_requests: number;
+            /** Format: int64 */
             duration_ms: number;
             file_path?: string | null;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             item_id?: string | null;
+            /** Format: int64 */
+            missing_requests: number;
             /** Format: int64 */
             next_at: number;
             reason: string;
@@ -3508,7 +3512,7 @@ export interface components {
             /**
              * Format: uuid
              * @description Stable across edits, so masked secrets can be matched back.
-             * @default 01a1d04e-d00f-776e-8a4d-893638e501a1
+             * @default 01a1d0b3-aca8-7241-9f4b-21afeea2527c
              */
             id: string;
             /**
