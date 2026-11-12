@@ -665,18 +665,23 @@ impl SegmentReader {
             let probe = self.probe(index, wait.clone(), false);
             probe.step(Step::Queued);
             // Bodies stream in once armed below, so a segment is readable before it
-            // fully arrives.
-            let wanted = Arc::new(AtomicBool::new(false));
-            let (tx, rx) = mpsc::unbounded_channel();
-            let progress = Progress {
-                tx,
-                wanted: Arc::clone(&wanted),
+            // fully arrives; strict reads never stream.
+            let (progress, partial) = if strict {
+                (None, None)
+            } else {
+                let wanted = Arc::new(AtomicBool::new(false));
+                let (tx, rx) = mpsc::unbounded_channel();
+                let progress = Progress {
+                    tx,
+                    wanted: Arc::clone(&wanted),
+                };
+                let partial = Partial {
+                    rx,
+                    data: Vec::new(),
+                    wanted,
+                };
+                (Some(progress), Some(partial))
             };
-            let partial = (!strict).then(|| Partial {
-                rx,
-                data: Vec::new(),
-                wanted,
-            });
             self.pending.push_back(Fetch {
                 task: tokio::spawn(async move {
                     let leased = lease.is_some();
@@ -699,7 +704,7 @@ impl SegmentReader {
                         source,
                         &layout.segments[index],
                         Some(&probe),
-                        (!strict).then_some(progress),
+                        progress,
                         &hole,
                         strict,
                     )
