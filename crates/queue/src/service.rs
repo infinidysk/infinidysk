@@ -406,12 +406,16 @@ impl Queue {
         self.active.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Like [`enqueue_owned`](Self::enqueue_owned), copying `raw`.
+    pub async fn enqueue(&self, job: &Submission<'_>, raw: &[u8]) -> Result<JobId, Error> {
+        self.enqueue_owned(job, raw.to_vec()).await
+    }
+
     /// Validates and stores an NZB (plain or gzip) and queues it; an identical stored NZB
     /// is reused. The same content already
     /// queued returns that job instead. An invalid NZB is recorded as failed and returns its
     /// error; a release health rejected is recorded as failed and returns that job.
-    pub async fn enqueue(&self, job: &Submission<'_>, raw: &[u8]) -> Result<JobId, Error> {
-        let raw = raw.to_vec();
+    pub async fn enqueue_owned(&self, job: &Submission<'_>, raw: Vec<u8>) -> Result<JobId, Error> {
         let checked = blocking(move || -> Result<_, nzb::Error> {
             let decompressed = match nzb::decompress(&raw)? {
                 Cow::Owned(xml) => Some(xml),
@@ -546,7 +550,7 @@ impl Queue {
             priority: 0,
             post_processing: 0,
         };
-        self.enqueue(&resubmit, &xml).await
+        self.enqueue_owned(&resubmit, xml).await
     }
 
     /// Imports jobs as they become due, up to the concurrency limit at once, forever.

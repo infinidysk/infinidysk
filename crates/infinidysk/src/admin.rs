@@ -774,7 +774,7 @@ async fn post_queue(
         priority: 0,
         post_processing: 0,
     };
-    match admin.queue.enqueue(&job, &data).await {
+    match admin.queue.enqueue_owned(&job, Vec::from(data)).await {
         Ok(id) => Ok((StatusCode::CREATED, Json(Queued { id: id.0 }))),
         Err(error @ (service::Error::Nzb(_) | service::Error::Invalid { .. })) => {
             Err(Fail::Bad(error.to_string()))
