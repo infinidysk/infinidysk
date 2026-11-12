@@ -1003,6 +1003,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nzb/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports what an import of an NZB would publish, without queueing or publishing it.
+         * @description Reads first articles, the PAR2 index and archive headers through the providers, so
+         *     it shows in provider statistics. It does not check that every article exists. When the
+         *     NZB's download holds only an NZB file, it reports the release that NZB names, as an
+         *     import would. One inspection runs at a time. It stops after 1,000 NZB files, 200
+         *     archive sets, 5,000 reported files, 3,000 article requests, 2 GB of decoded articles
+         *     or two minutes; the report then has the `limit_exceeded` warning.
+         */
+        post: operations["post_nzb_inspect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/overview": {
         parameters: {
             query?: never;
@@ -2329,6 +2354,115 @@ export interface components {
              */
             strm_key: components["schemas"]["Secret"];
         };
+        /** @enum {string} */
+        InspectAccess: "plain" | "password_required" | "password_validated" | "unsupported" | "unknown";
+        /** @enum {string} */
+        InspectArchiveType: "rar4" | "rar5" | "7z" | "split";
+        InspectDiagnostics: {
+            /**
+             * Format: int64
+             * @description Article requests issued, for every NZB read. Failover inside the provider client
+             *     is not counted.
+             */
+            article_requests: number;
+            failure?: components["schemas"]["InspectFailure"] | null;
+            /**
+             * @description NZB files followed to reach the release, as an import follows a download that
+             *     holds only an NZB file; 0 when the uploaded NZB names the release.
+             */
+            inner_nzbs: number;
+            /**
+             * @description Names of the NZB files whose first article every provider reported missing; observed,
+             *     not inferred. A corrupt copy or an article for another part of the file is not listed.
+             */
+            missing_first_segments: string[];
+            /** @description Time each stage took, for the NZB the report describes. */
+            stages: components["schemas"]["InspectStages"];
+            warnings: components["schemas"]["InspectWarning"][];
+        };
+        /** @enum {string} */
+        InspectEncryption: "none" | "data" | "headers" | "unknown";
+        InspectFailure: {
+            kind: components["schemas"]["InspectFailureKind"];
+            message: string;
+            stage: components["schemas"]["InspectStage"];
+        };
+        /** @enum {string} */
+        InspectFailureKind: "rejected" | "providers_unavailable" | "missing_articles" | "password" | "unsupported" | "limit" | "other";
+        /** @enum {string} */
+        InspectNameSource: "par2" | "subject" | "archive_header";
+        /** @enum {string} */
+        InspectStage: "submission" | "first_segments" | "par2" | "layouts" | "archives";
+        /** @description Time each stage took; absent for a stage that did not finish. */
+        InspectStages: {
+            /** Format: int64 */
+            archives_ms?: number | null;
+            /** Format: int64 */
+            first_segments_ms?: number | null;
+            /** Format: int64 */
+            layouts_ms?: number | null;
+            /** Format: int64 */
+            par2_ms?: number | null;
+        };
+        /** @description One NZB to inspect. */
+        InspectUpload: {
+            /**
+             * @description The NZB file name an import would get, such as `Release{{password}}.nzb`: the
+             *     release name and a password come from it. The uploaded file's name when absent.
+             */
+            name?: string | null;
+            /**
+             * Format: binary
+             * @description Plain or gzip, with the size limit of a queue upload.
+             */
+            nzb: string;
+            /** @description Archive password. It wins over one in `name` and over the NZB's own. */
+            password?: string | null;
+        };
+        /** @enum {string} */
+        InspectWarning: "password_not_validated" | "limit_exceeded" | "nested_archive_opaque";
+        /** @description Volumes an import reads as one set. RAR volumes whose names name no set form one set. */
+        InspectedArchive: {
+            archive_set_id: number;
+            archive_type: components["schemas"]["InspectArchiveType"];
+            content_access: components["schemas"]["InspectAccess"];
+            encryption: components["schemas"]["InspectEncryption"];
+            /**
+             * @description 0 when the volumes are posted files; one more for each archive opened to reach
+             *     them.
+             */
+            nesting_depth: number;
+            /**
+             * @description Whether this kind of content can be streamed at all, given the right password.
+             *     Absent until every member was checked, such as for encrypted headers without the
+             *     password.
+             */
+            stream_supported?: boolean | null;
+        };
+        InspectedFile: {
+            /** @description The entry of `archives` the file is a member of; absent for a posted file. */
+            archive_set_id?: number | null;
+            /** @description Lowercase extension when the file is video, audio or a book. */
+            media_extension?: string | null;
+            name_source: components["schemas"]["InspectNameSource"];
+            /** @description `nesting_depth` of that archive; 0 for a posted file. */
+            nesting_depth: number;
+            /**
+             * @description The path an import publishes below the job folder: obfuscated videos take the
+             *     release name and duplicates get a number. Equals `raw_path` for an unreadable member.
+             */
+            planned_name: string;
+            /**
+             * @description The path as posted or as stored in the archive, made safe for a file system.
+             *     Match on this.
+             */
+            raw_path: string;
+            /**
+             * Format: int64
+             * @description Absent when the file cannot be read and its archive does not record a size.
+             */
+            size_bytes?: number | null;
+        };
         /**
          * @description Where a file is in the health state machine.
          * @enum {string}
@@ -3092,6 +3226,16 @@ export interface components {
             password: string;
             /** @description Keeps the current username when absent. */
             username?: string | null;
+        };
+        NzbInspection: {
+            archives: components["schemas"]["InspectedArchive"][];
+            diagnostics: components["schemas"]["InspectDiagnostics"];
+            files: components["schemas"]["InspectedFile"][];
+            /**
+             * @description Whether `files` lists every file inside the NZB that an import would publish. It
+             *     says nothing about passwords or about articles being available.
+             */
+            manifest_complete: boolean;
         };
         /** @description SSO through one OIDC provider; on while `issuer` is set. */
         Oidc: {
@@ -6308,6 +6452,47 @@ export interface operations {
                 };
             };
             /** @description a job is running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_nzb_inspect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["InspectUpload"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NzbInspection"];
+                };
+            };
+            /** @description No NZB, or one that does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description An inspection is already running */
             409: {
                 headers: {
                     [name: string]: unknown;
