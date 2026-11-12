@@ -481,8 +481,10 @@ impl Default for Network {
 pub struct Health {
     /// Run routine checks. Rechecks, playback reports and repairs run regardless.
     pub enabled: bool,
-    /// Share of segments each check probes, 5 to 100; at least 5 segments.
+    /// Share of segments each health check probes, 5 to 100; at least 5 segments.
     pub check_percent: u8,
+    /// Share of segments an import probes, 5 to 100; at least 5 segments.
+    pub import_check_percent: u8,
     /// Ask the Arr that imported a broken file for a replacement.
     pub auto_repair: bool,
     /// Keep serving files with a few small gaps instead of replacing them.
@@ -498,6 +500,7 @@ impl Default for Health {
         Self {
             enabled: true,
             check_percent: infinidysk_core::media::SAMPLE_PERCENT,
+            import_check_percent: infinidysk_core::media::SAMPLE_PERCENT,
             auto_repair: true,
             degraded_tolerance: true,
             unowned_action: UnownedAction::Delete,
@@ -1145,6 +1148,12 @@ impl Settings {
             d.health.check_percent,
         );
         reset(
+            "health.import_check_percent",
+            &mut self.health.import_check_percent,
+            &CHECK_PERCENT,
+            d.health.import_check_percent,
+        );
+        reset(
             "queue.concurrency",
             &mut self.queue.concurrency,
             &QUEUE_CONCURRENCY,
@@ -1264,6 +1273,12 @@ impl Settings {
             "health.check_percent",
             "Check percent",
             self.health.check_percent,
+            &CHECK_PERCENT,
+        )?;
+        check(
+            "health.import_check_percent",
+            "Import check percent",
+            self.health.import_check_percent,
             &CHECK_PERCENT,
         )?;
         check(

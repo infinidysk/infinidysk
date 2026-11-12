@@ -890,6 +890,31 @@ export function Settings() {
                     />
                   </Field>
                   <Field
+                    id="health-import-percent"
+                    layout="row"
+                    label={
+                      <span className="flex w-full flex-wrap items-center justify-between gap-2">
+                        {label("Import sample size", "health.import_check_percent")}
+                        <span className="font-mono tabular-nums">
+                          {draft.health.import_check_percent === 100 ? "Every segment" : `${draft.health.import_check_percent}%`}
+                        </span>
+                      </span>
+                    }
+                    hint="Checked before an import completes. At 100%, a passed import counts as its first health check; the whole file is not downloaded."
+                    error={invalid("health.import_check_percent")}
+                  >
+                    <Slider
+                      id="health-import-percent"
+                      aria-label="Import sample size"
+                      min={5}
+                      max={100}
+                      step={5}
+                      disabled={locked("health.import_check_percent")}
+                      value={[draft.health.import_check_percent]}
+                      onValueChange={([import_check_percent]) => patch("health", { import_check_percent })}
+                    />
+                  </Field>
+                  <Field
                     label={label("Blocked files", "queue.extra_blocklist")}
                     hint={
                       <>
@@ -963,19 +988,19 @@ export function Settings() {
                     id="health-percent"
                     layout="row"
                     label={
-                      <span className="flex w-full justify-between">
-                        {label("Sample size", "health.check_percent")}
+                      <span className="flex w-full flex-wrap items-center justify-between gap-2">
+                        {label("Health sample size", "health.check_percent")}
                         <span className="font-mono tabular-nums">
                           {draft.health.check_percent === 100 ? "Every segment" : `${draft.health.check_percent}%`}
                         </span>
                       </span>
                     }
-                    hint="Applies to imports and subsequent health checks. At 100%, every article is checked for availability; the entire file is not downloaded and verified."
+                    hint="Used for scheduled checks, re-checks and playback reports. At 100%, every article is checked for availability; the whole file is not downloaded."
                     error={invalid("health.check_percent")}
                   >
                     <Slider
                       id="health-percent"
-                      aria-label="Sample size"
+                      aria-label="Health sample size"
                       min={5}
                       max={100}
                       step={5}

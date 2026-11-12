@@ -2209,7 +2209,7 @@ export interface components {
             auto_repair: boolean;
             /**
              * Format: int32
-             * @description Share of segments each check probes, 5 to 100; at least 5 segments.
+             * @description Share of segments each health check probes, 5 to 100; at least 5 segments.
              * @default 5
              */
             check_percent: number;
@@ -2223,6 +2223,12 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /**
+             * Format: int32
+             * @description Share of segments an import probes, 5 to 100; at least 5 segments.
+             * @default 5
+             */
+            import_check_percent: number;
             /**
              * @description Analyze each good media file once with ffprobe, when it is installed.
              * @default true
@@ -4044,6 +4050,7 @@ export interface components {
              *       "check_percent": 5,
              *       "degraded_tolerance": true,
              *       "enabled": true,
+             *       "import_check_percent": 5,
              *       "media_probe": true,
              *       "unowned_action": "delete"
              *     }
