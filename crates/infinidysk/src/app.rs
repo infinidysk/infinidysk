@@ -759,7 +759,7 @@ async fn probe_path(mut req: Request) -> Request {
 
 fn set_rules(queue: &Queue, settings: &Settings) {
     queue.update_rules(|r| {
-        r.check_percent = settings.health.check_percent;
+        r.check_percent = settings.health.import_check_percent;
         r.blocklist.clone_from(&settings.queue.extra_blocklist);
     });
 }
@@ -1132,6 +1132,41 @@ mod tests {
     use super::*;
 
     const PG: &str = "postgres://u:p@127.0.0.1:1/x";
+
+    #[tokio::test]
+    async fn import_and_health_samples_are_routed_independently() {
+        let path =
+            std::env::temp_dir().join(format!("infinidysk-samples-{}.sqlite", ItemId::new()));
+        let db = Db::connect(&format!("sqlite:{}", path.display()))
+            .await
+            .expect("connect");
+        let queue = Queue::new(db.clone(), Arc::new(Client::new([])));
+
+        for (health_percent, import_percent) in [(5, 100), (100, 5)] {
+            let settings = Settings {
+                health: config::Health {
+                    check_percent: health_percent,
+                    import_check_percent: import_percent,
+                    ..config::Health::default()
+                },
+                ..Settings::default()
+            };
+            set_rules(&queue, &settings);
+            queue.update_rules(|rules| {
+                assert_eq!(rules.check_percent, import_percent);
+            });
+            assert_eq!(
+                health_settings(&settings.health).sample_percent,
+                health_percent
+            );
+        }
+
+        drop(queue);
+        db.close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
 
     #[test]
     fn the_base_folder_follows_the_setting_then_the_sqlite_file() {
