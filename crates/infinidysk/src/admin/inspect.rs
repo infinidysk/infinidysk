@@ -24,10 +24,12 @@ pub(super) struct InspectUpload {
     /// Plain or gzip, with the size limit of a queue upload.
     #[schema(value_type = String, format = Binary)]
     nzb: Vec<u8>,
-    /// Archive password. It wins over one in `name` and over the NZB's own.
+    /// Archive password for the files this NZB posts. It wins over one in `name` and over
+    /// the NZB's own. An NZB file inside them opens its files with its own password.
     password: Option<String>,
     /// The NZB file name an import would get, such as `Release{{password}}.nzb`: the
-    /// release name and a password come from it. The uploaded file's name when absent.
+    /// release name and a password come from it. Like `password`, that password opens
+    /// only what this NZB posts. The uploaded file's name when absent.
     name: Option<String>,
 }
 

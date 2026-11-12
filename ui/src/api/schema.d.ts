@@ -2408,7 +2408,8 @@ export interface components {
         InspectUpload: {
             /**
              * @description The NZB file name an import would get, such as `Release{{password}}.nzb`: the
-             *     release name and a password come from it. The uploaded file's name when absent.
+             *     release name and a password come from it. Like `password`, that password opens
+             *     only what this NZB posts. The uploaded file's name when absent.
              */
             name?: string | null;
             /**
@@ -2416,7 +2417,10 @@ export interface components {
              * @description Plain or gzip, with the size limit of a queue upload.
              */
             nzb: string;
-            /** @description Archive password. It wins over one in `name` and over the NZB's own. */
+            /**
+             * @description Archive password for the files this NZB posts. It wins over one in `name` and over
+             *     the NZB's own. An NZB file inside them opens its files with its own password.
+             */
             password?: string | null;
         };
         /** @enum {string} */
