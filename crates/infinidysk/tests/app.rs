@@ -1251,3 +1251,203 @@ async fn webhooks(addr: SocketAddr, found: &Value, database_url: &str) {
     }
     db.close().await;
 }
+
+/// A multipart `POST /api/v1/nzb/inspect` of `fields` (name, file name, value).
+fn inspect_request(key: &str, fields: &[(&str, Option<&str>, &str)]) -> String {
+    use std::fmt::Write as _;
+
+    let mut form = String::new();
+    for (name, file, value) in fields {
+        let file = file.map_or_else(String::new, |f| format!("; filename=\"{f}\""));
+        write!(
+            form,
+            "--b\r\nContent-Disposition: form-data; name=\"{name}\"{file}\r\n\r\n{value}\r\n"
+        )
+        .unwrap();
+    }
+    form.push_str("--b--\r\n");
+    format!(
+        "POST /api/v1/nzb/inspect HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{key}\
+         Content-Type: multipart/form-data; boundary=b\r\nContent-Length: {}\r\n\r\n{form}",
+        form.len()
+    )
+}
+
+const ADMIN_KEY: &str = "X-Api-Key: adminkey\r\n";
+
+#[tokio::test]
+async fn nzb_inspection_needs_the_admin_key_and_a_valid_nzb() {
+    let (addr, cancel, server, _) = start().await;
+    let nzb = [("nzb", Some("job.nzb"), NZB)];
+    assert_eq!(
+        status(addr, &inspect_request("", &nzb)).await,
+        "HTTP/1.1 401 Unauthorized"
+    );
+    for request in [
+        admin_request("POST", "/api/v1/nzb/inspect", "{}"),
+        inspect_request(ADMIN_KEY, &[("name", None, "job.nzb")]),
+        inspect_request(ADMIN_KEY, &[("nzb", Some("job.nzb"), "<nzb/>")]),
+    ] {
+        assert_eq!(status(addr, &request).await, "HTTP/1.1 400 Bad Request");
+    }
+
+    let spec = "GET /api/v1/openapi.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    let (_, body) = send(addr, spec).await;
+    let spec: Value = serde_json::from_str(&body).unwrap();
+    let operation = &spec["paths"]["/api/v1/nzb/inspect"]["post"];
+    assert_eq!(
+        operation["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"],
+        "#/components/schemas/InspectUpload"
+    );
+    assert_eq!(
+        spec["components"]["schemas"]["InspectUpload"]["required"],
+        json!(["nzb"])
+    );
+    assert_eq!(
+        operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/NzbInspection"
+    );
+    assert!(operation["responses"]["409"].is_object());
+    for name in [
+        "InspectedFile",
+        "InspectedArchive",
+        "InspectDiagnostics",
+        "InspectStages",
+    ] {
+        let schema = &spec["components"]["schemas"][name];
+        let required = schema["required"].as_array().unwrap();
+        for field in schema["properties"].as_object().unwrap().keys() {
+            assert!(
+                required.iter().any(|value| value == field),
+                "{name}.{field} must be required even when nullable"
+            );
+        }
+    }
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn an_nzb_inspection_reports_files_stores_nothing_and_runs_one_at_a_time() {
+    use std::fmt::Write as _;
+
+    use infinidysk_testkit::{LoopbackServer, post};
+
+    let mut clip = vec![7u8; 4000];
+    clip[..4].copy_from_slice(&[0x1A, 0x45, 0xDF, 0xA3]);
+    let articles = post("c", "Clip.mkv", &clip, 1000);
+    let first_id = articles[0].message_id.clone();
+    let mut segments = String::new();
+    for (number, article) in articles.iter().enumerate() {
+        let (number, id) = (number + 1, &article.message_id);
+        write!(
+            segments,
+            "<segment bytes=\"1021\" number=\"{number}\">{id}</segment>"
+        )
+        .unwrap();
+    }
+    let nzb = format!(
+        "<?xml version=\"1.0\"?><nzb><file poster=\"p\" date=\"0\" subject=\"Clip.mkv\">\
+         <groups><group>a.b</group></groups><segments>{segments}</segments></file></nzb>"
+    );
+    let provider = LoopbackServer::start(articles).await.unwrap();
+    let (addr, cancel, server, _) = start().await;
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+    let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
+    settings["providers"] = json!([{
+        "hostname": "127.0.0.1", "port": provider.addr().port(), "tls": false,
+    }]);
+    let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
+    assert_eq!(status(addr, &put).await, "HTTP/1.1 200 OK");
+
+    let request = inspect_request(ADMIN_KEY, &[("nzb", Some("job.nzb"), &nzb)]);
+    let (code, body) = send(addr, &request).await;
+    assert_eq!(code, "HTTP/1.1 200 OK", "{body}");
+    let report: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(report["manifest_complete"], true);
+    assert_eq!(
+        report["files"],
+        json!([{
+            "raw_path": "Clip.mkv", "planned_name": "job.mkv", "size_bytes": 4000,
+            "media_extension": "mkv", "name_source": "subject",
+            "archive_set_id": null, "nesting_depth": 0,
+        }])
+    );
+    assert_eq!(report["archives"], json!([]));
+    let diagnostics = &report["diagnostics"];
+    assert_eq!(diagnostics["failure"], Value::Null);
+    assert_eq!(diagnostics["warnings"], json!([]));
+    assert_eq!(diagnostics["missing_first_segments"], json!([]));
+    assert_eq!(diagnostics["article_requests"], 2);
+    assert_eq!(diagnostics["inner_nzbs"], 0);
+    assert!(diagnostics["stages"]["archives_ms"].is_u64());
+
+    // The slot is free again, and `name` gives the release name.
+    let named = inspect_request(
+        ADMIN_KEY,
+        &[
+            ("name", None, "Readable Release.nzb"),
+            ("nzb", Some("job.nzb"), &nzb),
+        ],
+    );
+    let (code, body) = send(addr, &named).await;
+    assert_eq!(code, "HTTP/1.1 200 OK", "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["files"][0]["planned_name"],
+        "Readable Release.mkv"
+    );
+
+    let (arrived, release) = provider.hold_article(&first_id);
+    let first = tokio::spawn({
+        let request = request.clone();
+        async move { send(addr, &request).await }
+    });
+    tokio::time::timeout(Duration::from_secs(10), arrived)
+        .await
+        .expect("the first inspection reached the provider")
+        .unwrap();
+    let (code, body) = tokio::time::timeout(Duration::from_secs(10), send(addr, &request))
+        .await
+        .expect("the second request is refused while the provider is held");
+    assert_eq!(code, "HTTP/1.1 409 Conflict");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["error"],
+        "an inspection is already running"
+    );
+
+    release.send(()).unwrap();
+    let (code, body) = tokio::time::timeout(Duration::from_secs(10), first)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(code, "HTTP/1.1 200 OK", "{body}");
+    assert_eq!(status(addr, &named).await, "HTTP/1.1 200 OK");
+
+    let (arrived, release) = provider.hold_article(&first_id);
+    let first = tokio::spawn(async move { send(addr, &request).await });
+    tokio::time::timeout(Duration::from_secs(10), arrived)
+        .await
+        .expect("the next inspection reached the provider")
+        .unwrap();
+
+    // The provider stays held while the disconnected request must free its slot.
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    let invalid = inspect_request(ADMIN_KEY, &[("nzb", Some("job.nzb"), "<nzb/>")]);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while status(addr, &invalid).await == "HTTP/1.1 409 Conflict" {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the slot came free");
+    assert_eq!(status(addr, &invalid).await, "HTTP/1.1 400 Bad Request");
+    release.send(()).unwrap();
+
+    for path in ["/api/v1/queue", "/api/v1/history"] {
+        let (_, body) = send(addr, &admin_request("GET", path, "")).await;
+        assert_eq!(body, "[]", "{path}");
+    }
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+}

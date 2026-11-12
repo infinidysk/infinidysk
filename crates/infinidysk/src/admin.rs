@@ -50,6 +50,7 @@ use crate::release_notes;
 use crate::sab;
 use crate::upgrade;
 
+mod inspect;
 mod support;
 
 const DEFAULT_PAGE: usize = 500;
@@ -102,6 +103,7 @@ pub struct Admin {
         put_queue_job_paused,
         delete_queue_job,
         get_queue_nzb,
+        inspect::post_nzb_inspect,
         get_history,
         delete_history_job,
         get_history_nzb,
@@ -250,6 +252,10 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         .route("/api/v1/queue/{id}", delete(delete_queue_job))
         .route("/api/v1/queue/{id}/paused", put(put_queue_job_paused))
         .route("/api/v1/queue/{id}/nzb", get(get_queue_nzb))
+        .route(
+            "/api/v1/nzb/inspect",
+            post(inspect::post_nzb_inspect).layer(DefaultBodyLimit::max(sab::MAX_NZB)),
+        )
         .route("/api/v1/history", get(get_history))
         .route("/api/v1/history/{id}", delete(delete_history_job))
         .route("/api/v1/history/{id}/nzb", get(get_history_nzb))

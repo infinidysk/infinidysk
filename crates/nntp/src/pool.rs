@@ -179,6 +179,8 @@ pub(crate) struct Tag {
     /// Waits for a connection with nothing in flight rather than pipeline behind
     /// another request: a hedge queued behind a slow article is as slow as it.
     pub(crate) fresh: bool,
+    /// A provider's miss is remembered, so later requests skip that provider.
+    pub(crate) remember: bool,
 }
 
 impl Tag {
@@ -191,6 +193,7 @@ impl Tag {
         begin: None,
         sink: None,
         fresh: false,
+        remember: true,
     };
 
     fn step(&self, step: Step) {
