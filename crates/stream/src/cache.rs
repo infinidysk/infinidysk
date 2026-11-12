@@ -437,7 +437,7 @@ struct Pause {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use std::sync::{TryLockError, mpsc};
 
     use super::*;
 
@@ -455,25 +455,14 @@ mod tests {
             move || cache.remember("<old@test>", Bytes::from_static(b"old"))
         });
         entered.recv_timeout(Duration::from_secs(10)).unwrap();
-        let (disabling_tx, disabling) = mpsc::channel();
-        let disabler = std::thread::spawn({
-            let cache = Arc::clone(&cache);
-            move || {
-                disabling_tx.send(()).unwrap();
-                cache.set_memory(false, 1 << 20);
-            }
-        });
-        disabling.recv_timeout(Duration::from_secs(10)).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-        let disabled_early = disabler.is_finished();
-        release.send(()).unwrap();
-        inserting.join().unwrap();
-        disabler.join().unwrap();
-
         assert!(
-            !disabled_early,
+            matches!(cache.toggle.try_write(), Err(TryLockError::WouldBlock)),
             "disable must wait for the paused insertion"
         );
+        release.send(()).unwrap();
+        inserting.join().unwrap();
+        cache.set_memory(false, 1 << 20);
+
         assert_eq!(cache.memory.weight(), 0);
         assert_eq!(cache.memory.len(), 0);
 
