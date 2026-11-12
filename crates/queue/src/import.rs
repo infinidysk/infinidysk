@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::ops::Range;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -1355,9 +1355,13 @@ async fn key(job: &Job, name: &str, kdf: &Kdf) -> Result<Derived, Error> {
                     .acquire()
                     .await
                     .expect("DERIVATIONS is a static semaphore that is never closed");
+                // A blocking task outlives a dropped caller (an inspection deadline, a
+                // client that went away); this stops its rounds so it frees the slot.
+                let stop = StopOnDrop::default();
+                let flag = Arc::clone(&stop.0);
                 match tokio::task::spawn_blocking(move || {
                     let _permit = permit;
-                    kdf.derive(&password)
+                    kdf.derive_until(&password, &flag)
                 })
                 .await
                 {
@@ -1368,6 +1372,16 @@ async fn key(job: &Job, name: &str, kdf: &Kdf) -> Result<Derived, Error> {
         })
         .await?;
     Ok(derived.clone())
+}
+
+/// Sets its flag when dropped, which tells a key derivation to stop.
+#[derive(Default)]
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 /// How to decrypt a member of plaintext `size` encrypted with `enc`.
@@ -1639,6 +1653,9 @@ async fn sevenzip_set(
 
     let mut out = Vec::new();
     for e in entries {
+        // Mapping an entry rescans every volume's segments and may not await, so a large
+        // archive would otherwise run past the inspection deadline without a cancel point.
+        tokio::task::consume_budget().await;
         if job.blocks(&e.name) {
             continue;
         }
@@ -2229,6 +2246,40 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(derived.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_dropped_key_derivation_frees_its_slot() {
+        let job = Arc::new(Job {
+            client: Arc::new(Client::new([])),
+            requests: Semaphore::new(CONCURRENCY),
+            progress: Arc::new(Progress::default()),
+            blocklist: Vec::new(),
+            bodies: Mutex::default(),
+            password: Some("p".repeat(4096)),
+            keys: Mutex::default(),
+            waits: Mutex::default(),
+            inspection: None,
+        });
+        // 2^24 rounds over a long password take minutes when nothing stops them.
+        let kdf = Kdf::SevenZip {
+            salt: Vec::new(),
+            cycles: 24,
+        };
+        let task = tokio::spawn({
+            let job = Arc::clone(&job);
+            async move { key(&job, "archive.7z", &kdf).await }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        task.abort();
+
+        let slots =
+            u32::try_from(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
+                .unwrap();
+        let all = tokio::time::timeout(Duration::from_secs(10), DERIVATIONS.acquire_many(slots))
+            .await
+            .expect("the abandoned derivation kept its slot");
+        drop(all);
     }
 
     #[test]
