@@ -601,6 +601,7 @@ async fn plan(
     }
     // Releases first bodies no later step reads (PAR2, skipped files) before the
     // archive reads; wanted files keep theirs in `job.bodies`.
+    let sources: Vec<NameSource> = inputs.iter().map(|input| input.source).collect();
     drop(inputs);
     job.progress.plan(Step::Archives, sets.len() + downstream);
     for ((kind, _), mut members) in sets {
@@ -621,7 +622,7 @@ async fn plan(
             1 => sevenzip_set(job, vols, &numbers, set).await?,
             _ => {
                 let origin = Origin {
-                    source: inputs[members[0].1].source,
+                    source: sources[members[0].1],
                     set,
                 };
                 split_set(vols, origin).into_iter().collect()
