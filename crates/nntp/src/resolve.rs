@@ -9,7 +9,8 @@ use std::time::Instant;
 
 use tokio::sync::watch;
 
-type Outcome = Result<Arc<[IpAddr]>, (io::ErrorKind, String)>;
+// Whole addresses, not IPs: IPv6 link-local answers carry a scope id.
+type Outcome = Result<Arc<[SocketAddr]>, (io::ErrorKind, String)>;
 type Slot = watch::Receiver<Option<Outcome>>;
 type Map = Arc<Mutex<HashMap<String, Slot>>>;
 
@@ -17,11 +18,8 @@ type Map = Arc<Mutex<HashMap<String, Slot>>>;
 pub(crate) static PROVIDERS: LazyLock<Lookups> = LazyLock::new(Lookups::default);
 
 /// The system resolver, as [`Lookups::resolve`] calls it.
-pub(crate) async fn system(host: String) -> io::Result<Vec<IpAddr>> {
-    Ok(tokio::net::lookup_host((host.as_str(), 0))
-        .await?
-        .map(|addr| addr.ip())
-        .collect())
+pub(crate) async fn system(host: String) -> io::Result<Vec<SocketAddr>> {
+    Ok(tokio::net::lookup_host((host.as_str(), 0)).await?.collect())
 }
 
 /// Lookups in flight, by host name.
@@ -61,7 +59,7 @@ impl Lookups {
     ) -> io::Result<Vec<SocketAddr>>
     where
         L: Fn(String) -> F,
-        F: Future<Output = io::Result<Vec<IpAddr>>> + Send + 'static,
+        F: Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'static,
     {
         if let Ok(ip) = host.parse::<IpAddr>() {
             return Ok(vec![SocketAddr::new(ip, port)]);
@@ -74,7 +72,7 @@ impl Lookups {
     fn join<L, F>(&self, host: &str, lookup: &L) -> Slot
     where
         L: Fn(String) -> F,
-        F: Future<Output = io::Result<Vec<IpAddr>>> + Send + 'static,
+        F: Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'static,
     {
         let mut map = lock(&self.map);
         if let Some(slot) = map.get(host) {
@@ -111,7 +109,7 @@ impl Lookups {
 async fn wait<L, F>(mut slot: Slot, host: &str, port: u16, lookup: L) -> io::Result<Vec<SocketAddr>>
 where
     L: Fn(String) -> F,
-    F: Future<Output = io::Result<Vec<IpAddr>>>,
+    F: Future<Output = io::Result<Vec<SocketAddr>>>,
 {
     // `wait_for` checks the stored value before it reports a closed channel.
     let answer = slot
@@ -119,12 +117,18 @@ where
         .await
         .ok()
         .and_then(|v| v.clone());
-    let ips = match answer {
-        Some(Ok(ips)) => ips,
+    let addrs = match answer {
+        Some(Ok(addrs)) => addrs,
         Some(Err((kind, message))) => return Err(io::Error::new(kind, message)),
         None => lookup(host.to_owned()).await?.into(),
     };
-    Ok(ips.iter().map(|&ip| SocketAddr::new(ip, port)).collect())
+    Ok(addrs
+        .iter()
+        .map(|&(mut addr)| {
+            addr.set_port(port);
+            addr
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -142,7 +146,7 @@ mod tests {
     fn counting(
         runs: &Arc<AtomicUsize>,
         gate: Option<&Arc<Notify>>,
-    ) -> impl Fn(String) -> std::pin::Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send>>
+    ) -> impl Fn(String) -> std::pin::Pin<Box<dyn Future<Output = io::Result<Vec<SocketAddr>>> + Send>>
     {
         let runs = Arc::clone(runs);
         let gate = gate.cloned();
@@ -154,7 +158,7 @@ mod tests {
                 if let Some(gate) = gate {
                     gate.notified().await;
                 }
-                Ok(vec![IP])
+                Ok(vec![SocketAddr::new(IP, 0)])
             })
         }
     }
@@ -213,7 +217,7 @@ mod tests {
             async move {
                 runs.fetch_add(1, Ordering::SeqCst);
                 gate.notified().await;
-                Err::<Vec<IpAddr>, _>(io::Error::new(io::ErrorKind::NotFound, "no such host"))
+                Err::<Vec<SocketAddr>, _>(io::Error::new(io::ErrorKind::NotFound, "no such host"))
             }
         };
         let (a, b, ()) = tokio::join!(
@@ -325,6 +329,22 @@ mod tests {
             gate.notify_one();
         });
         a.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ipv6_scope_id_is_kept() {
+        let lookups = Lookups::default();
+        let scoped = std::net::SocketAddrV6::new(
+            std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+            0,
+            0,
+            3,
+        );
+        let lookup = move |_host: String| async move { Ok(vec![SocketAddr::V6(scoped)]) };
+        let addrs = lookups.resolve("fe80::1%lo0", 119, lookup).await.unwrap();
+        let mut expected = scoped;
+        expected.set_port(119);
+        assert_eq!(addrs, vec![SocketAddr::V6(expected)]);
     }
 
     #[tokio::test]
