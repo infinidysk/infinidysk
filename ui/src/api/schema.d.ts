@@ -3200,6 +3200,8 @@ export interface components {
             catalogue: components["schemas"]["CatalogueView"];
             /** @description Since the metrics store was created. */
             lifetime: components["schemas"]["Totals"];
+            /** @description Latest terminal PAR2 repair results updated in this window, excluding availability checks. */
+            par2: components["schemas"]["Par2History"];
             points: components["schemas"]["Point"][];
             /**
              * Format: int64
@@ -3234,6 +3236,16 @@ export interface components {
             damaged_checks: number;
             /** Format: int32 */
             state: number;
+        };
+        Par2History: {
+            /** Format: int64 */
+            cancelled: number;
+            /** Format: int64 */
+            repaired: number;
+            /** Format: int64 */
+            unavailable: number;
+            /** Format: int64 */
+            verified: number;
         };
         Par2Job: {
             /** Format: int32 */

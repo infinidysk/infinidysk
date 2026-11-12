@@ -144,6 +144,19 @@ impl Db {
         )
     }
 
+    /// Latest terminal repair results updated within the inclusive window; excludes checks.
+    /// Retrying a job replaces its previous result rather than adding an event.
+    pub async fn par2_history(
+        &self,
+        since: i64,
+        until: i64,
+    ) -> Result<(i64, i64, i64, i64), Error> {
+        Ok(
+            on!(self, pool => sqlx::query_as("SELECT COALESCE(SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN state = 3 THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN state = 5 THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN state = 6 THEN 1 ELSE 0 END), 0) FROM repair_jobs WHERE verify_only = FALSE AND state IN (2, 3, 5, 6) AND updated_at >= $1 AND updated_at <= $2")
+            .bind(since).bind(until).fetch_one(pool).await?),
+        )
+    }
+
     /// Persist live progress without overwriting a cancellation or completed result.
     pub async fn update_par2_progress(
         &self,

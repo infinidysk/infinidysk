@@ -105,7 +105,7 @@ export function Overview() {
       <div className="space-y-6">
         {live.isPending ? (
           <Card title="Right now">
-            <TilesSkeleton n={5} flush />
+            <TilesSkeleton n={6} flush />
           </Card>
         ) : live.isError ? (
           <Failure error={live.error} />
@@ -131,7 +131,7 @@ export function Overview() {
               <Card sub title="Activity">
                 <Skeleton style={{ height: HEIGHT }} />
               </Card>
-              <TilesSkeleton n={6} tall />
+              <TilesSkeleton n={7} tall />
             </>
           ) : history.isError ? (
             <Failure error={history.error} />
@@ -305,11 +305,12 @@ export function Card({ title, description, action, children, sub }: { title: Rea
   );
 }
 
-// The 5-tile grid stretches its last tile so no row ends in an empty cell.
+// Stretch the last tile when needed so no row ends in an empty cell.
 const grids: Record<number, string> = {
   4: "grid-cols-2 sm:grid-cols-4",
   5: "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 [&>:last-child]:col-span-2 lg:[&>:last-child]:col-span-1",
   6: "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6",
+  7: "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 [&>:last-child]:col-span-2 sm:[&>:last-child]:col-span-3 lg:[&>:last-child]:col-span-2",
 };
 
 /** Placeholder for `Tiles` with the same footprint; `tall` leaves room for sparklines. */
@@ -343,6 +344,21 @@ export function Tiles({ tiles, flush }: { tiles: [ReactNode, ReactNode, ReactNod
 }
 
 function Now({ live }: { live: Live }) {
+  const par2 = useQuery({
+    queryKey: ["par2-scan"],
+    queryFn: () => body(api.GET("/api/v1/health/par2-scan")),
+    refetchInterval: 5000,
+  });
+  const work = (state: number) => par2.data?.counts.find((group) => group.state === state)?.count ?? 0;
+  let repairStatus = "Loading…";
+  if (par2.isError) repairStatus = "Unavailable";
+  else if (par2.data) {
+    if (!par2.data.enabled) repairStatus = "Disabled";
+    else if (work(1) > 0) repairStatus = `${count(work(1))} running`;
+    else if (work(0) > 0) repairStatus = "Queued";
+    else if (work(4) > 0) repairStatus = "Deferred";
+    else repairStatus = "Idle";
+  }
   const nearCap = live.article_cap > 0 && live.article_bytes >= live.article_cap * 0.9;
   const open = live.providers.reduce((n, p) => n + p.live, 0);
   // `live` and `active` are sampled separately and can briefly disagree.
@@ -385,6 +401,32 @@ function Now({ live }: { live: Live }) {
             "Fetch errors",
             <span className={cn(live.failures_minute > 0 && "text-destructive")}>{count(live.failures_minute)}</span>,
             "failed requests / min",
+          ],
+          [
+            <Link className="underline underline-offset-2" to="/health">
+              PAR2
+            </Link>,
+            repairStatus,
+            par2.isError ? (
+              <span role="alert">
+                Could not load repair status. <Link className="underline" to="/health">View details</Link>
+              </span>
+            ) : par2.data && (
+              <>
+                <span className="block">{count(work(0))} queued · {count(work(4))} deferred</span>
+                {par2.data.jobs.filter((job) => job.state === "running").map((job) => (
+                  <span className="mt-1 block wrap-anywhere" key={job.id}>
+                    {job.verify_only ? "Availability" : "Repair"}: {job.reason}
+                    {job.verify_only && job.total_articles > 0 && (
+                      <span className="block">{count(job.checked_articles)} of {count(job.total_articles)} articles checked</span>
+                    )}
+                    {!job.verify_only && job.completed_requests > 0 && (
+                      <span className="block">{count(job.completed_requests)} provider reads · {count(job.missing_requests)} missing</span>
+                    )}
+                  </span>
+                ))}
+              </>
+            ),
           ],
         ]}
       />
@@ -524,6 +566,18 @@ const Windowed = memo(function Windowed({ history: h, span }: { history: History
             pct(t.cache_hits, t.cache_hits + t.cache_misses),
             "segments served from cache",
             trend(p.map((x) => ratio(x.cache_hits, x.cache_hits + x.cache_misses)), "var(--color-primary)", { max: 1 }),
+          ],
+          [
+            <span className="inline-flex items-center gap-1">
+              <Link className="underline underline-offset-2" to="/health">
+                PAR2 repairs
+              </Link>
+              <InfoTip label="About PAR2 repair history">
+                Latest job outcomes updated in this window. Retries replace earlier results. Availability checks are excluded.
+              </InfoTip>
+            </span>,
+            `${count(h.par2.repaired)} repaired`,
+            `${count(h.par2.verified)} verified · ${count(h.par2.unavailable)} could not repair · ${count(h.par2.cancelled)} cancelled`,
           ],
         ]}
       />

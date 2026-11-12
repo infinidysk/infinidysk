@@ -16,6 +16,71 @@ async fn damage_handoff_releases_a_slot_before_queuing_repair_at_capacity() {
     handoff_at_capacity(&db).await;
 }
 
+#[tokio::test]
+async fn repair_history_counts_only_final_repairs_inside_the_window() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    history_contract(&db).await;
+}
+
+async fn history_contract(db: &Db) {
+    for job in db.par2_jobs().await.unwrap() {
+        db.cancel_par2(job.id, 0).await.unwrap();
+    }
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    for (n, (state, check)) in [
+        (3, false),
+        (2, false),
+        (5, false),
+        (6, false),
+        (2, true),
+        (5, true),
+        (1, false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut item = Item::child(&root, &format!("history-{n}.bin"), ItemKind::NzbFile).unwrap();
+        let meta = BlobId::new();
+        let nzb = BlobId::new();
+        item.meta_blob = Some(meta);
+        item.nzb_blob = Some(nzb);
+        db.insert(&[item.clone()], &[(meta, b"meta"), (nzb, b"nzb")])
+            .await
+            .unwrap();
+        let id = db
+            .request_par2(Owner::Item(item.id), check, 100)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db.claim_par2_lane(100, check, false)
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            id
+        );
+        if state != 1 {
+            db.finish_par2(
+                id,
+                state,
+                "result",
+                0,
+                0,
+                100 + i64::try_from(n).unwrap(),
+                None,
+            )
+            .await
+            .unwrap();
+        }
+    }
+    assert_eq!(db.par2_history(100, 106).await.unwrap(), (1, 1, 1, 1));
+    assert_eq!(db.par2_history(101, 103).await.unwrap(), (1, 0, 1, 1));
+    assert_eq!(db.par2_history(100, 100).await.unwrap(), (0, 1, 0, 0));
+    assert_eq!(db.par2_history(107, 108).await.unwrap(), (0, 0, 0, 0));
+    assert_eq!(db.par2_history(103, 101).await.unwrap(), (0, 0, 0, 0));
+}
+
 async fn handoff_at_capacity(db: &Db) {
     for job in db.par2_jobs().await.unwrap() {
         db.cancel_par2(job.id, 0).await.unwrap();
@@ -355,6 +420,7 @@ async fn postgres_requests_obey_the_same_claim_resume_and_cancellation_contract(
     let db = Db::connect(&format!("{base}/{name}")).await.unwrap();
     durable_requests(&db).await;
     lane_contract(&db).await;
+    history_contract(&db).await;
     handoff_at_capacity(&db).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
