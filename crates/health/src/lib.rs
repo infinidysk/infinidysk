@@ -2,11 +2,11 @@
 //! stored files on an age-based schedule, confirm misses twice, and get broken files replaced
 //! through the Arr that imported them.
 
+mod availability;
 mod check;
 mod structure;
-mod verify;
 
-pub use verify::Verification;
+pub use availability::{Availability, AvailabilityOptions, AvailabilityProgress, Evidence};
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
@@ -23,7 +23,7 @@ use infinidysk_db::{
     ProbeAttempt, ProbeOutcome, Recheck, Repair, now_ms,
 };
 use infinidysk_nntp::{Articles, Client};
-use tokio::sync::{Notify, OwnedRwLockReadGuard, Semaphore, watch};
+use tokio::sync::{Notify, OwnedRwLockReadGuard, watch};
 
 use check::Outcome;
 pub use infinidysk_arr::{Arr, Profile};
@@ -136,7 +136,7 @@ pub struct Health {
     arr: watch::Receiver<Vec<Arr>>,
     settings: watch::Receiver<Settings>,
     importing: Gate,
-    streaming: Gate,
+    streaming: Arc<dyn Fn() -> bool + Send + Sync>,
     in_use: Box<dyn Fn(ItemId) -> bool + Send + Sync>,
     analyzer: Option<Analyzer>,
     http: reqwest::Client,
@@ -147,7 +147,6 @@ pub struct Health {
     /// newest grab id read before the blocklist.
     searching: Mutex<HashMap<ItemId, (uuid::Uuid, i64)>>,
     wake: Notify,
-    verification: Arc<Semaphore>,
     par2: bool,
 }
 
@@ -203,7 +202,7 @@ impl Health {
             arr,
             settings,
             importing: Box::new(|| false),
-            streaming: Box::new(|| false),
+            streaming: Arc::new(|| false),
             in_use: Box::new(|_| false),
             analyzer: None,
             http,
@@ -212,7 +211,6 @@ impl Health {
             inconclusive: Mutex::default(),
             searching: Mutex::default(),
             wake: Notify::new(),
-            verification: Arc::new(Semaphore::new(1)),
             par2: false,
         })
     }
@@ -226,8 +224,12 @@ impl Health {
         streaming: impl Fn() -> bool + Send + Sync + 'static,
     ) -> Self {
         self.importing = Box::new(importing);
-        self.streaming = Box::new(streaming);
+        self.streaming = Arc::new(streaming);
         self
+    }
+
+    pub fn playback_active(&self) -> bool {
+        (self.streaming)()
     }
 
     /// Holds back the repair of a file while `in_use` says it is open.

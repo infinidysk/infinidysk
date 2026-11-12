@@ -16,6 +16,7 @@ http-body-util.workspace = true
 infinidysk.workspace = true
 infinidysk-core.workspace = true
 infinidysk-db.workspace = true
+infinidysk-health.workspace = true
 infinidysk-nntp.workspace = true
 infinidysk-queue.workspace = true
 infinidysk-stream.workspace = true

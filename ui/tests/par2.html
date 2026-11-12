@@ -45,6 +45,8 @@
         ),
       );
       const button = (text) => [...document.querySelectorAll("button")].find((b) => b.textContent.includes(text));
+      check(button("Check availability"), "Offer availability checks instead of full-provider verification");
+      check(!button("Verify with PAR2"), "Remove the old full-provider verification action");
       check(button("Repair with PAR2")?.disabled, "Running repairs must not admit duplicate work");
       check(
         document.querySelector('[role="status"]').textContent.includes("running"),
@@ -69,7 +71,7 @@
           verification: null,
         }),
       );
-      check(button("Verify with PAR2")?.disabled, "Disabled execution must disable verification");
+      check(button("Check availability")?.disabled, "Disabled execution must disable verification");
       check(document.querySelector('a[href="/settings/experiments"]'), "Explain how to enable PAR2 work");
       client.setQueryData(["par2-scan"], {
         enabled: true,
@@ -89,6 +91,14 @@
             duration_ms: 3000,
             file_path: "/content/source.bin",
           },
+          {
+            ...job,
+            id: "availability-job",
+            verify_only: true,
+            checked_articles: 40,
+            total_articles: 100,
+            reason: "Checking article availability",
+          },
         ],
         counts: [{ state: 1, count: 1 }],
         storage_used_bytes: 1000000000,
@@ -98,6 +108,7 @@
           transfer_gb: 100,
           timeout_minutes: 60,
           attempts: 3,
+          check_concurrency: 64,
         },
       });
       await act(async () =>
@@ -128,6 +139,8 @@
         "Show enumeration progress separately from completed checks",
       );
       check(document.body.textContent.includes("Discovering PAR2 files"), "Show live worker phase");
+      check(document.body.textContent.includes("40 of 100 articles checked"), "Show measured article progress");
+      check(document.querySelector('progress[aria-label="Current job"][value]')?.value === 40, "Availability progress uses checked articles");
       check(document.body.textContent.includes("source.bin"), "Identify queued files");
       check(document.body.textContent.includes("1.0 GB of 10.0 GB"), "Show storage use and capacity");
       check(button("Cancel job"), "Allow cancellation from the backlog");

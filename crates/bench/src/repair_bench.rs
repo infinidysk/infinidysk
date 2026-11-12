@@ -6,9 +6,12 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use infinidysk_core::ItemId;
+use infinidysk_core::{BlobId, FileMeta, ItemId, ItemKind, NzbFile, Segment, Segments, blob};
+use infinidysk_db::{Db, Item};
+use infinidysk_health::{Availability, AvailabilityOptions, Evidence, Health, Settings};
 use infinidysk_nntp::{Client, Workload, patch::Store};
 use infinidysk_queue::{nzb, repair};
 use infinidysk_testkit::{Article, Corpus, Impairment, LoopbackServer, post};
@@ -23,12 +26,15 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const ARTICLE: usize = 512 * KIB;
 const LOST: usize = 16;
-const MODES: [&str; 5] = [
+const MODES: [&str; 8] = [
     "par2-idle",
     "par2-active",
     "par2-cancelled",
     "par2-failing",
     "par2-verify",
+    "par2-availability",
+    "par2-availability-active",
+    "par2-availability-idle",
 ];
 const LIMITS: repair::Limits = repair::Limits {
     requests: 10_000,
@@ -107,7 +113,11 @@ impl Fixture {
                     i + 1,
                     article.message_id
                 )?;
-                if mode == "par2-verify" || name != "source.bin" || i != LOST {
+                if mode == "par2-verify"
+                    || mode.starts_with("par2-availability")
+                    || name != "source.bin"
+                    || i != LOST
+                {
                     posted.push(article);
                 }
             }
@@ -130,7 +140,13 @@ pub(super) fn run(
     let fixture = Fixture::generate(&root.0)?;
     let scenario = super::Scenario {
         impairment: Impairment {
-            response_delay: Duration::from_millis(if filter == "par2-verify" { 20 } else { 3 }),
+            response_delay: Duration::from_millis(
+                if filter == "par2-verify" || filter.starts_with("par2-availability") {
+                    20
+                } else {
+                    3
+                },
+            ),
             ..super::PLAIN
         },
         ..plain("par2", 128, ARTICLE, 8, 4, 32, None)
@@ -154,6 +170,75 @@ pub(super) fn run(
                 let permits = client.free_permits();
                 let cpu = usage::cpu();
                 let stop = CancellationToken::new();
+                if mode.starts_with("par2-availability") {
+                    let db = Db::connect("sqlite::memory:").await?;
+                    let parent = db.item(ItemId::CONTENT).await?.ok_or("content root missing")?;
+                    let mut item = Item::child(&parent, "source.bin", ItemKind::NzbFile)?;
+                    let meta = BlobId::new();
+                    item.meta_blob = Some(meta);
+                    item.size = Some(fixture.bytes.len() as u64);
+                    let segments = post("source.bin", "source.bin", &fixture.bytes, ARTICLE).into_iter().enumerate().map(|(i, article)| Segment {
+                        id: article.message_id,
+                        size: u32::try_from((fixture.bytes.len() - i * ARTICLE).min(ARTICLE)).expect("benchmark articles fit u32"),
+                        fallbacks: Vec::new(),
+                    }).collect();
+                    let raw = blob::encode_meta(&FileMeta::Nzb(NzbFile { segments: Segments {
+                        items: segments, sizes_trusted: true, missing: Vec::new(), corrupt: Vec::new(),
+                    }, proof: None }))?;
+                    db.insert(&[item.clone()], &[(meta, &raw)]).await?;
+                    let sessions = Arc::new(AtomicBool::new(false));
+                    let gate = Arc::clone(&sessions);
+                    let health = Health::new(db.clone(), Arc::clone(&client), tokio::sync::watch::channel(Vec::new()).1,
+                        tokio::sync::watch::channel(Settings::default()).1)?
+                        .with_gates(|| false, move || gate.load(Ordering::Relaxed));
+                    let idle = mode.ends_with("-idle");
+                    let playing = idle || mode.ends_with("-active");
+                    let foreground = Arc::clone(&sessions);
+                    let checking = (!idle).then(|| tokio::spawn(async move {
+                        let started = Instant::now();
+                        let evidence = Arc::new(Evidence::default());
+                        let mut preemptions = 0;
+                        loop {
+                            let result = health.check_availability(item.id, &stop, AvailabilityOptions {
+                                evidence: Some(Arc::clone(&evidence)), ..AvailabilityOptions::default()
+                            }).await;
+                            if matches!(result, Ok(Availability::Yielded)) {
+                                preemptions += 1;
+                                while foreground.load(Ordering::Relaxed) { time::sleep(Duration::from_millis(5)).await; }
+                            } else { break (result, started.elapsed(), preemptions); }
+                        }
+                    }));
+                    if playing && checking.is_some() {
+                        time::timeout(Duration::from_secs(5), async {
+                            while server.stat_commands() == 0 { time::sleep(Duration::from_millis(1)).await; }
+                        }).await?;
+                    }
+                    let playback_metrics = if playing {
+                        sessions.store(true, Ordering::Relaxed);
+                        let (bytes, timing) = read(&scenario, Arc::clone(&client), Arc::clone(&layout), true, true, None).await?;
+                        sessions.store(false, Ordering::Relaxed);
+                        assert!(bytes == playback.data, "playback bytes differ from fixture");
+                        json!({ "throughputMbps": timing.throughput_mbps, "longestReadGapMs": timing.longest_read_gap_ms,
+                            "timeTo8MbMs": timing.time_to_8mb_ms, "timeTo64MbMs": timing.time_to_64mb_ms })
+                    } else { Value::Null };
+                    let (elapsed, preemptions) = if let Some(checking) = checking {
+                        let (result, elapsed, preemptions) = checking.await?;
+                        assert!(matches!(result?, Availability::Available { articles: 64 }));
+                        (elapsed, preemptions)
+                    } else { (Duration::ZERO, 0) };
+                    let bytes = client.stats()[0].workloads[Workload::Health as usize].bytes;
+                    db.close().await;
+                    let playback_bodies = if playing { scenario.articles } else { 0 };
+                    assert!(server.body_commands() <= usize::from(!idle) * 6 + playback_bodies);
+                    assert!(server.stat_commands() <= if idle { 0 } else { 122 });
+                    time::timeout(Duration::from_secs(5), async {
+                        while client.free_permits() != permits { time::sleep(Duration::from_millis(1)).await; }
+                    }).await?;
+                    return Ok(json!({ "availabilityMs": elapsed.as_secs_f64() * 1000.0,
+                        "providerBytes": bytes, "bodyCommands": server.body_commands(), "statCommands": server.stat_commands(),
+                        "playback": playback_metrics, "preemptions": preemptions,
+                        "cpuMs": usage::cpu_ms_since(cpu), "maxRssBytes": usage::max_rss_bytes(), "permitsRestored": true }));
+                }
                 if mode == "par2-verify" {
                     let started = Instant::now();
                     let result = execute(Arc::clone(&client), Arc::clone(&nzb), &stop, true).await?;

@@ -13,6 +13,7 @@ async fn par2_limits_persist_validate_and_respect_environment_locks() {
     settings.repair.storage_gb = 50;
     settings.repair.timeout_minutes = 120;
     settings.repair.attempts = 5;
+    settings.repair.check_concurrency = 128;
     store.save(settings.clone()).await.unwrap();
     let reloaded = ConfigStore::load(db.clone(), []).await.unwrap();
     assert_eq!(reloaded.settings().repair, settings.repair);
@@ -24,6 +25,8 @@ async fn par2_limits_persist_validate_and_respect_environment_locks() {
         ("timeout_minutes", 0),
         ("attempts", 0),
         ("attempts", 11),
+        ("check_concurrency", 0),
+        ("check_concurrency", 257),
     ] {
         let mut invalid = serde_json::to_value(&settings).unwrap();
         invalid["repair"][key] = value.into();

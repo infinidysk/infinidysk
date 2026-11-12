@@ -11,11 +11,12 @@ const pending = (job?: Schemas["Par2Job"] | null) => !!job && ["queued", "runnin
 function JobProgress({ job }: { job: Schemas["Par2Job"] }) {
   return (
     <>
-      {job.transferred_bytes > 0 && <span>{bytes(job.transferred_bytes)} from providers</span>}
+      {job.transferred_bytes > 0 && <span>{bytes(job.transferred_bytes)} {job.verify_only ? "read for checks" : "from providers"}</span>}
+      {job.verify_only && job.total_articles > 0 && <span>{job.checked_articles.toLocaleString()} of {job.total_articles.toLocaleString()} articles checked</span>}
       {job.stored_bytes > 0 && <span>{bytes(job.stored_bytes)} saved</span>}
       {job.verified_bytes > 0 && <span>{bytes(job.verified_bytes)} verified</span>}
       {job.duration_ms > 0 && <span>{duration(Math.ceil(job.duration_ms / 1000))}</span>}
-      <span>Attempts started: {job.attempts}</span>
+      <span>Attempts used: {job.attempts}</span>
       {job.state === "deferred" && <span>Retry after {new Date(job.next_at).toLocaleString()}</span>}
     </>
   );
@@ -35,8 +36,8 @@ export function Par2Actions({ id, hasNzb }: { id: string; hasNzb: boolean }) {
         ? body(api.DELETE(path, { params: { path: { id } } }))
         : body(api.POST(path, { params: { path: { id } } }));
     },
-    onSuccess: (_, { cancel }) => {
-      toast.success(cancel ? "Cancellation requested" : "PAR2 work queued");
+    onSuccess: (_, { cancel, verify }) => {
+      toast.success(cancel ? "Cancellation requested" : verify ? "Availability check queued" : "PAR2 repair queued");
       void client.invalidateQueries({ queryKey: ["par2", id] });
       void client.invalidateQueries({ queryKey: ["file", id] });
     },
@@ -45,14 +46,14 @@ export function Par2Actions({ id, hasNzb }: { id: string; hasNzb: boolean }) {
   if (status.isError) return <Failure error={status.error} />;
   const enabled = status.data?.enabled ?? false;
   return (
-    <section className="space-y-2" aria-label="PAR2 verification and repair">
+    <section className="space-y-2" aria-label="Article availability and PAR2 repair">
       <div className="flex flex-wrap gap-2">
         <ConfirmButton
           variant="outline"
-          label="Verify with PAR2"
-          title="Verify complete source files?"
-          message="This can read complete source files and archive volumes from your providers. It records a full content check separately from sampled health checks."
-          confirm="Verify with PAR2"
+          label="Check availability"
+          title="Check article availability?"
+          message="Checks every article with small availability requests and a few body spot checks. It does not download the whole file or verify every byte."
+          confirm="Check availability"
           disabled={!enabled || act.isPending || pending(status.data?.verification)}
           onConfirm={() => act.mutate({ verify: true })}
         />
@@ -77,7 +78,7 @@ export function Par2Actions({ id, hasNzb }: { id: string; hasNzb: boolean }) {
       )}
       {!hasNzb && (
         <p className="text-muted-foreground text-xs">
-          Reconstruction needs the original NZB. Full verification can use a complete stored proof.
+          Reconstruction needs the original NZB. Availability checks need no PAR2 proof.
         </p>
       )}
       <div role="status" className="text-muted-foreground space-y-1 text-xs">
@@ -87,7 +88,7 @@ export function Par2Actions({ id, hasNzb }: { id: string; hasNzb: boolean }) {
             job && (
               <div key={String(verify)} className="flex flex-wrap items-center gap-2">
                 <span>
-                  {verify ? "Full verification" : "PAR2 repair"}: {job.state}
+                  {verify ? "Availability" : "PAR2 repair"}: {job.state}
                   {job.reason && ` — ${job.reason}`}
                 </span>
                 <JobProgress job={job} />
@@ -153,10 +154,10 @@ export function Par2Scan() {
   const count = (state: number) => query.data.counts.find((c) => c.state === state)?.count ?? 0;
   return (
     <section className="mb-6 space-y-3" aria-label="PAR2 backlog and worker">
-      <h2 className="font-medium">PAR2 checks and repairs</h2>
+      <h2 className="font-medium">Article checks and repairs</h2>
       <p className="text-muted-foreground text-sm">
-        Reads complete source files, including whole archive volumes. This can use substantial provider traffic. Work
-        survives restart. One job runs at a time; playback keeps priority.
+        Checks article availability with a few body spot checks. Damaged sets can queue PAR2 repair separately. Work
+        survives restart. Availability and repair each have a worker; availability pauses for playback.
       </p>
       <Link className="text-sm underline" to="/settings/repair">
         Configure worker limits and repair storage
@@ -173,10 +174,10 @@ export function Par2Scan() {
       <div className="flex flex-wrap items-center gap-2">
         <ConfirmButton
           variant="outline"
-          label="Verify existing library"
-          title="Verify the existing library?"
-          message="Files are queued in small batches. This may read the whole library from your providers. Playback keeps priority."
-          confirm="Start verification"
+          label="Check existing library"
+          title="Check availability across the library?"
+          message="Checks every stored article for availability, with a few body spot checks per file. This is not full byte integrity verification."
+          confirm="Start availability checks"
           disabled={disabled}
           onConfirm={() => start.mutate({})}
         />
@@ -184,7 +185,7 @@ export function Par2Scan() {
           variant="outline"
           label="Check and repair existing library"
           title="Check and repair the existing library?"
-          message="Queues source sets from the existing dataset in small batches. Checks complete source files and uses PAR2 to reconstruct missing articles when possible. Saves repaired articles in your config folder. Files without an original NZB are skipped."
+          message="Checks availability first and queues PAR2 repair only when damage is found. Repairs can read complete source sets. Files without an original NZB are skipped."
           confirm="Queue checks and repairs"
           disabled={disabled}
           onConfirm={() => start.mutate({ repair: true })}
@@ -202,7 +203,7 @@ export function Par2Scan() {
         )}
         <span role="status" className="text-muted-foreground text-sm">
           {scan
-            ? `${scan.scanned_files.toLocaleString()}${scan.total_files != null ? ` of ${scan.total_files.toLocaleString()}` : ""} files considered for ${scan.repair ? "check and repair" : "verification"}; `
+            ? `${scan.scanned_files.toLocaleString()}${scan.total_files != null ? ` of ${scan.total_files.toLocaleString()}` : ""} files considered for ${scan.repair ? "check and repair" : "availability"}; `
             : ""}
           {scan?.skipped_files ? `${scan.skipped_files.toLocaleString()} files skipped; ` : ""}
           {query.data.pending_jobs.toLocaleString()} pending jobs.{" "}
@@ -223,7 +224,7 @@ export function Par2Scan() {
         />
       )}
       <p className="text-muted-foreground text-xs">
-        Stopping enumeration leaves already queued jobs running. Files from the same source set share a repair job.
+        Stopping enumeration leaves already queued jobs running. Scan jobs share article observations. Manual requests receive priority, with regular turns for scan work. Files from the same source set share a repair job.
         Enumeration counts files considered, including files that cannot be queued.
       </p>
       <div className="text-muted-foreground space-y-2 rounded-lg border p-3 text-sm">
@@ -232,12 +233,12 @@ export function Par2Scan() {
           used.
         </p>
         <p>
-          {count(0)} queued · {count(1)} running · {count(4)} waiting to retry · {count(2)} verified · {count(3)}{" "}
+          {count(0)} queued · {count(1)} running · {count(4)} waiting to retry · {count(2)} passed · {count(3)}{" "}
           repaired · {count(5)} unavailable or failed · {count(6)} cancelled
         </p>
         <p className="text-xs">
           Totals include previous scans and manual jobs. Current limits: {query.data.limits.memory_mb} MB memory,{" "}
-          {query.data.limits.transfer_gb} GB source reads and {query.data.limits.timeout_minutes} minutes per attempt;{" "}
+          {query.data.limits.transfer_gb} GB source reads, {query.data.limits.check_concurrency} availability requests and {query.data.limits.timeout_minutes} minutes per attempt;{" "}
           {query.data.limits.attempts} attempts. Saved limits apply at the next attempt.
         </p>
         {query.data.storage_used_bytes >= query.data.limits.storage_gb * 1_000_000_000 && (
@@ -260,7 +261,7 @@ export function Par2Scan() {
                   <span className="min-w-0 break-all">{job.file_path ?? `Source set / import ${job.id}`}</span>
                 )}
                 <span>
-                  {job.verify_only ? "Full verification" : "PAR2 repair"}: {job.state}
+                  {job.verify_only ? "Availability" : "PAR2 repair"}: {job.state}
                 </span>
                 {pending(job) && (
                   <Button
@@ -275,7 +276,9 @@ export function Par2Scan() {
                 )}
               </div>
               {job.state === "running" && (
-                <progress className="h-1 w-full accent-primary" aria-label="Current PAR2 job" />
+                <progress className="h-1 w-full accent-primary" aria-label="Current job"
+                  max={job.verify_only && job.total_articles > 0 ? job.total_articles : undefined}
+                  value={job.verify_only && job.total_articles > 0 ? job.checked_articles : undefined} />
               )}
               {job.reason && (
                 <p role="status" className="break-words text-muted-foreground">

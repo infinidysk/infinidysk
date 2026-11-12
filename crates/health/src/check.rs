@@ -73,7 +73,7 @@ impl Articles for Direct<'_> {
 }
 
 #[derive(Debug)]
-enum Probe {
+pub(super) enum Probe {
     Present,
     Missing,
     Corrupt,
@@ -181,10 +181,10 @@ pub fn mark(meta: &mut FileMeta, missing: &[usize], corrupt: &[usize]) -> bool {
 }
 
 /// A segment with its expected `=ypart` offset when sizes are trusted.
-type Placed<'a> = (&'a Segment, Option<u64>, Option<&'a Par2Proof>);
+pub(super) type Placed<'a> = (&'a Segment, Option<u64>, Option<&'a Par2Proof>);
 
 /// Every segment in file order, with the recorded missing and corrupt flat indices.
-fn flatten(meta: &FileMeta) -> (Vec<Placed<'_>>, BTreeSet<usize>, BTreeSet<usize>) {
+pub(super) fn flatten(meta: &FileMeta) -> (Vec<Placed<'_>>, BTreeSet<usize>, BTreeSet<usize>) {
     let starts: Vec<_> = match meta {
         FileMeta::Nzb(f) => vec![(0, f.proof.as_ref())],
         FileMeta::Multipart(f) => f
@@ -248,7 +248,7 @@ async fn probe(
             let (segment, begin, proof) = segments[i];
             if body || segment.id.is_empty() {
                 let (probe, data) = fetch(articles, segment, begin, proof).await;
-                (i, probe, data.filter(|_| i == 0))
+                (i, probe, data.filter(|_| i == 0).map(|data| data.to_vec()))
             } else {
                 (i, stat(articles, segment).await, None)
             }
@@ -262,7 +262,7 @@ async fn probe(
     (results, head)
 }
 
-async fn stat(articles: &dyn Articles, segment: &Segment) -> Probe {
+pub(super) async fn stat(articles: &dyn Articles, segment: &Segment) -> Probe {
     match articles.stat(&segment.id).await {
         Ok(()) => Probe::Present,
         Err(NntpError::NotFound) => Probe::Missing,
@@ -272,15 +272,15 @@ async fn stat(articles: &dyn Articles, segment: &Segment) -> Probe {
 
 /// BODY-reads `segment`; with `begin` (trusted sizes) it must be the part posted there,
 /// as playback requires.
-async fn fetch(
+pub(super) async fn fetch(
     articles: &dyn Articles,
     segment: &Segment,
     begin: Option<u64>,
     proof: Option<&Par2Proof>,
-) -> (Probe, Option<Vec<u8>>) {
+) -> (Probe, Option<Bytes>) {
     let probe = match articles.read(segment, begin, proof).await {
         Ok(data) if begin.is_some() && data.len() != segment.size as usize => Probe::Corrupt,
-        Ok(data) => return (Probe::Present, Some(data.into())),
+        Ok(data) => return (Probe::Present, Some(data)),
         Err(NntpError::NotFound) => Probe::Missing,
         Err(NntpError::CrcMismatch { .. } | NntpError::Yenc(_) | NntpError::TooLarge) => {
             Probe::Corrupt

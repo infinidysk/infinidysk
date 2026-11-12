@@ -64,22 +64,26 @@ pub async fn step(db: &Db) -> Result<()> {
         scan.complete = true;
     }
     for id in files {
-        let verify = !scan.repair;
-        let request = db
-            .request_par2(Owner::Item(id), verify, scan.requested_at)
-            .await?;
+        let now = infinidysk_db::now_ms();
+        let request = if scan.repair && db.repair_source(Owner::Item(id)).await?.is_none() {
+            None
+        } else {
+            db.request_par2_scan(id, now, scan.requested_at, scan.repair)
+                .await?
+        };
         if request.is_none() {
             scan.skipped_files += 1;
         }
         if let Some(request) = request
             && db
-                .par2_result(Owner::Item(id), verify)
+                .par2_result(Owner::Item(id), true)
                 .await?
                 .is_some_and(|job| {
                     job.updated_at < scan.requested_at && matches!(job.state, 2 | 3 | 5 | 6)
                 })
         {
-            db.restart_par2(request, scan.requested_at).await?;
+            db.restart_par2_scan(request, now, Some(scan.requested_at), scan.repair)
+                .await?;
         }
         scan.cursor = Some(id);
         scan.scanned_files += 1;
@@ -213,8 +217,11 @@ mod tests {
         assert_eq!(load(&db).await.unwrap().unwrap().scanned_files, 3);
         assert_eq!(load(&db).await.unwrap().unwrap().skipped_files, 1);
         let jobs = db.par2_jobs().await.unwrap();
-        assert_eq!(jobs.len(), 1);
-        assert!(!jobs[0].verify_only);
+        assert_eq!(jobs.len(), 2);
+        assert!(
+            jobs.iter()
+                .all(|job| job.verify_only && job.repair_on_failure)
+        );
         assert_eq!(jobs[0].nzb_blob, Some(nzb.0));
         let old: Scan = serde_json::from_str(r#"{"boundary":null,"cursor":null,"requested_at":0,"scanned_files":0,"complete":false}"#).unwrap();
         assert!(!old.repair);

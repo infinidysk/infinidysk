@@ -1,4 +1,4 @@
-//! One durable worker. Source reads and CPU/storage admission are independent of playback.
+//! Separate durable availability and repair workers. Playback keeps priority.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use infinidysk_core::{BlobId, blob};
 use infinidysk_db::{now_ms, repair_jobs::Job};
-use infinidysk_health::Verification;
+use infinidysk_health::{Availability, AvailabilityOptions, AvailabilityProgress, Evidence};
 use infinidysk_nntp::Client;
 use infinidysk_queue::{
     nzb,
@@ -20,14 +20,6 @@ use super::{Publisher, Repairs};
 const HASH_ONLY: &str =
     "Whole-file hashes matched. Some files have no slice checksums for locating damage.";
 
-pub(super) struct Checked {
-    nzb: BlobId,
-    generation: i64,
-    completed_at: i64,
-    bytes: usize,
-    sources: Box<[repair::VerifiedSource]>,
-}
-
 #[derive(Default)]
 pub(super) struct Progress {
     limits: crate::config::Repair,
@@ -35,6 +27,7 @@ pub(super) struct Progress {
     watch: Arc<infinidysk_core::wait::Watch>,
     stored: AtomicU64,
     verified: AtomicU64,
+    availability: Arc<AvailabilityProgress>,
 }
 
 impl Progress {
@@ -49,7 +42,8 @@ impl Progress {
     }
 
     fn transferred(&self) -> u64 {
-        self.watch.supplied().iter().map(|s| s.bytes).sum()
+        self.watch.supplied().iter().map(|s| s.bytes).sum::<u64>()
+            + self.availability.body_bytes.load(Ordering::Relaxed)
     }
 
     fn counters(&self, job: &Job) -> (i64, i64) {
@@ -87,23 +81,47 @@ impl Repairs {
             tracing::warn!(reason = %error, "repair requests could not be resumed");
             tokio::select! { () = cancel.cancelled() => return, () = tokio::time::sleep(Duration::from_secs(5)) => {} }
         }
+        tokio::join!(
+            self.run_lane(&client, &publisher, &health, &config, &cancel, true),
+            self.run_lane(&client, &publisher, &health, &config, &cancel, false),
+        );
+    }
+
+    async fn run_lane(
+        self: &Arc<Self>,
+        client: &Arc<Client>,
+        publisher: &Publisher,
+        health: &Arc<infinidysk_health::Health>,
+        config: &Arc<tokio::sync::RwLock<crate::config::ConfigStore>>,
+        cancel: &CancellationToken,
+        verify: bool,
+    ) {
+        let mut turn = 0usize;
         let mut cleaned = None;
         loop {
             if cancel.is_cancelled() {
                 return;
             }
-            if let Err(error) = super::scan::step(&self.db).await {
+            if verify && health.playback_active() {
+                tokio::select! { () = cancel.cancelled() => return, () = tokio::time::sleep(Duration::from_millis(250)) => {} }
+                continue;
+            }
+            if verify && let Err(error) = super::scan::step(&self.db).await {
                 tracing::warn!(reason = %error, "library verification scan will retry later");
             }
-            let result = self.db.claim_par2(now_ms()).await;
+            let result = self
+                .db
+                .claim_par2_lane(now_ms(), verify, turn % 4 == 3)
+                .await;
             match result {
                 Ok(Some(job)) => {
+                    turn = turn.wrapping_add(1);
                     let stopped = cancel.child_token();
                     let progress = Progress::new(config.read().await.settings().repair.clone());
                     let _stop = stopped.clone().drop_guard();
                     let work = tokio::time::timeout(
                         Duration::from_secs(u64::from(progress.limits.timeout_minutes) * 60),
-                        self.perform(&client, &publisher, &health, &job, &stopped, &progress),
+                        self.perform(client, publisher, health, &job, &stopped, &progress),
                     );
                     tokio::pin!(work);
                     let result = tokio::select! {
@@ -112,8 +130,13 @@ impl Repairs {
                             loop {
                                 tokio::select! { () = cancel.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(2)) => {} }
                                 if self.db.par2_cancelled(job.id).await.unwrap_or(false) { break; }
-                                if let Err(error) = super::scan::step(&self.db).await {
+                                if verify && let Err(error) = super::scan::step(&self.db).await {
                                     tracing::warn!(reason = %error, "library verification scan will retry later");
+                                }
+                                if let Err(error) = self.db.update_availability_progress(job.id,
+                                    i64::try_from(progress.availability.checked.load(Ordering::Acquire)).unwrap_or(i64::MAX),
+                                    i64::try_from(progress.availability.total.load(Ordering::Relaxed)).unwrap_or(i64::MAX)).await {
+                                    tracing::warn!(reason = %error, "article progress could not be saved");
                                 }
                                 let phase = *progress.phase.lock().unwrap_or_else(PoisonError::into_inner);
                                 let (transferred, stored) = progress.counters(&job);
@@ -124,7 +147,11 @@ impl Repairs {
                         } => { stopped.cancel(); work.await },
                     };
                     let (state, reason, retry) = match result {
-                        Ok(Ok((state, reason))) => (state, reason.to_owned(), None),
+                        Ok(Ok((state, reason))) => (
+                            state,
+                            reason.to_owned(),
+                            (state == 4).then(|| now_ms() + 1000),
+                        ),
                         other => {
                             let mut reason = match other {
                                 Ok(Err(error)) => error.to_string(),
@@ -155,6 +182,19 @@ impl Repairs {
                         let saved = async {
                             self.db.set_par2_verified(job.id, verified).await?;
                             self.db
+                                .update_availability_progress(
+                                    job.id,
+                                    i64::try_from(
+                                        progress.availability.checked.load(Ordering::Acquire),
+                                    )
+                                    .unwrap_or(i64::MAX),
+                                    i64::try_from(
+                                        progress.availability.total.load(Ordering::Relaxed),
+                                    )
+                                    .unwrap_or(i64::MAX),
+                                )
+                                .await?;
+                            self.db
                                 .finish_par2(
                                     job.id,
                                     state,
@@ -177,7 +217,7 @@ impl Repairs {
                     }
                     continue;
                 }
-                Ok(None) => {
+                Ok(None) if !verify => {
                     let full_pass = super::scan::load(&self.db)
                         .await
                         .ok()
@@ -192,12 +232,13 @@ impl Repairs {
                     if cleaned
                         .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(3600))
                     {
-                        if let Err(error) = publisher.cleanup(&cancel).await {
+                        if let Err(error) = publisher.cleanup(cancel).await {
                             tracing::warn!(reason = %error, "unused repair files could not be cleaned up");
                         }
                         cleaned = Some(Instant::now());
                     }
                 }
+                Ok(None) => {}
                 Err(error) => tracing::warn!(reason = %error, "repair requests could not be read"),
             }
             tokio::select! { () = cancel.cancelled() => return, () = tokio::time::sleep(Duration::from_secs(5)) => {} }
@@ -215,141 +256,95 @@ impl Repairs {
     ) -> Result<(i16, &'static str)> {
         let capacity = u64::from(progress.limits.storage_gb) * 1_000_000_000;
         let transfer = u64::from(progress.limits.transfer_gb) * 1_000_000_000;
-        let (checked, held_bytes) = {
-            let mut recent = self.checked.lock().unwrap_or_else(PoisonError::into_inner);
-            let held = recent.iter().map(|entry| entry.bytes).sum::<usize>();
-            let matched = recent.iter().position(|entry| {
-                job.nzb_blob == Some(entry.nzb.0)
-                    && job.generation == entry.generation
-                    && job.next_at < entry.completed_at
-            });
-            let checked = matched.and_then(|index| recent.remove(index));
-            if let Some(checked) = &checked {
-                recent.push_front(Arc::clone(checked));
-            }
-            drop(recent);
-            (checked, held)
-        };
         let memory = usize::try_from(progress.limits.memory_mb)
             .unwrap_or(usize::MAX)
-            .saturating_mul(1_000_000)
-            .saturating_sub(held_bytes);
-        progress.phase("Checking stored proof");
+            .saturating_mul(1_000_000);
+        if job.verify_only {
+            let id = infinidysk_core::ItemId(
+                job.item_id.context("repair unavailable: file is missing")?,
+            );
+            let owner = infinidysk_db::repair::Owner::Item(id);
+            anyhow::ensure!(
+                self.db
+                    .par2_result(owner, true)
+                    .await?
+                    .is_some_and(|current| current.id == job.id),
+                "repair unavailable: availability source changed"
+            );
+            let evidence = job.scan_at.map(|stamp| {
+                let mut saved = self.evidence.lock().unwrap_or_else(PoisonError::into_inner);
+                if saved.as_ref().is_none_or(|(old, _)| *old != stamp) {
+                    *saved = Some((stamp, Arc::new(Evidence::default())));
+                }
+                Arc::clone(&saved.as_ref().expect("scan evidence installed above").1)
+            });
+            progress.phase("Checking article availability");
+            let result = health
+                .check_availability(
+                    id,
+                    cancel,
+                    AvailabilityOptions {
+                        concurrency: usize::from(progress.limits.check_concurrency),
+                        memory_bytes: memory,
+                        decoded_bytes: transfer,
+                        evidence,
+                        progress: Arc::clone(&progress.availability),
+                    },
+                )
+                .await?;
+            return match result {
+                Availability::Available { .. } => Ok((
+                    2,
+                    "Articles are available. Body spot checks passed; full byte integrity was not checked.",
+                )),
+                Availability::Damaged { .. } if job.repair_on_failure && job.nzb_blob.is_some() => {
+                    self.db
+                        .update_availability_progress(
+                            job.id,
+                            i64::try_from(progress.availability.checked.load(Ordering::Acquire))
+                                .unwrap_or(i64::MAX),
+                            i64::try_from(progress.availability.total.load(Ordering::Relaxed))
+                                .unwrap_or(i64::MAX),
+                        )
+                        .await?;
+                    let (transferred, stored) = progress.counters(job);
+                    self.db
+                        .update_par2_progress(
+                            job.id,
+                            "Queuing repair",
+                            transferred,
+                            stored,
+                            now_ms(),
+                        )
+                        .await?;
+                    anyhow::ensure!(
+                        self.db.escalate_par2(job.id, now_ms()).await?,
+                        "repair unavailable: source changed before repair handoff"
+                    );
+                    Ok((
+                        5,
+                        "Missing or corrupt articles found; PAR2 repair queued separately.",
+                    ))
+                }
+                Availability::Damaged { .. } => Ok((5, "Missing or corrupt articles found.")),
+                Availability::Source(error) => Err(anyhow::Error::new(error)),
+                Availability::Unavailable(reason) => anyhow::bail!("repair unavailable: {reason}"),
+                Availability::Changed => {
+                    anyhow::bail!("repair unavailable: availability source changed")
+                }
+                Availability::Cancelled => anyhow::bail!("repair cancelled"),
+                Availability::Yielded => {
+                    self.db.yield_par2_attempt(job.id).await?;
+                    Ok((4, "Waiting for playback; availability check will resume."))
+                }
+            };
+        }
         let legacy = self
             .db
             .config()
             .await?
             .iter()
             .any(|(key, value)| key == "legacy.repair.enabled" && value == "1");
-        if let Some(id) = job.item_id {
-            let owner = infinidysk_db::repair::Owner::Item(infinidysk_core::ItemId(id));
-            anyhow::ensure!(
-                self.db
-                    .par2_result(owner, true)
-                    .await?
-                    .is_some_and(|current| current.id == job.id),
-                "repair unavailable: verification source changed"
-            );
-            if let Some(checked) = &checked
-                && job.nzb_blob == Some(checked.nzb.0)
-                && job.generation == checked.generation
-                && job.next_at < checked.completed_at
-            {
-                let source = self
-                    .db
-                    .repair_source(owner)
-                    .await?
-                    .context("repair unavailable: source disappeared")?;
-                let item = self
-                    .db
-                    .item(infinidysk_core::ItemId(id))
-                    .await?
-                    .context("repair unavailable: file disappeared")?;
-                let raw = self
-                    .db
-                    .repair_blob(
-                        item.meta_blob
-                            .context("repair unavailable: metadata missing")?,
-                        16_000_000,
-                    )
-                    .await?
-                    .context("repair unavailable: metadata missing")?;
-                let mut metadata = blob::decode_meta_limited(&raw, 16_000_000)?;
-                let mut covered = Vec::new();
-                let changed =
-                    repair::refresh_metadata(&mut metadata, &checked.sources, &mut covered);
-                if !covered.is_empty()
-                    && covered.iter().all(|covered| *covered)
-                    && source.nzb() == checked.nzb
-                    && source.generation() == checked.generation
-                {
-                    anyhow::ensure!(
-                        !cancel.is_cancelled(),
-                        "repair cancelled before result reuse"
-                    );
-                    anyhow::ensure!(
-                        self.db.repair_source(owner).await?.as_ref() == Some(&source),
-                        "repair unavailable: source changed during result reuse"
-                    );
-                    if changed {
-                        anyhow::ensure!(
-                            publisher
-                                .metadata(source, blob::encode_meta(&metadata)?)
-                                .await?,
-                            "repair unavailable: source changed during result reuse"
-                        );
-                    }
-                    progress.verified.store(
-                        checked
-                            .sources
-                            .iter()
-                            .map(|source| source.proof.file_length)
-                            .sum(),
-                        Ordering::Relaxed,
-                    );
-                    return Ok((
-                        2,
-                        if checked.sources.iter().any(|source| {
-                            source.proof.file_length > 0 && source.proof.slice_md5.is_empty()
-                        }) {
-                            "Verified with the source set already checked for this request. Only whole-file hashes were available."
-                        } else {
-                            "Verified with the source set already checked for this request."
-                        },
-                    ));
-                }
-            }
-            match health
-                .verify_existing_bounded(
-                    infinidysk_core::ItemId(id),
-                    cancel,
-                    Some(progress.probe()),
-                    memory,
-                    transfer,
-                )
-                .await?
-            {
-                Verification::Verified { bytes, slices } => {
-                    progress.verified.store(bytes, Ordering::Relaxed);
-                    return Ok((
-                        2,
-                        if bytes != 0 && slices == 0 {
-                            HASH_ONLY
-                        } else {
-                            ""
-                        },
-                    ));
-                }
-                Verification::Unavailable(_) if job.nzb_blob.is_some() => {}
-                Verification::Source(
-                    infinidysk_nntp::Error::NotFound
-                    | infinidysk_nntp::Error::Yenc(_)
-                    | infinidysk_nntp::Error::CrcMismatch { .. },
-                ) if legacy && job.nzb_blob.is_some() => {}
-                Verification::Source(error) => return Err(anyhow::Error::new(error)),
-                result => anyhow::bail!("repair unavailable: {result:?}"),
-            }
-        }
         let nzb = job
             .nzb_blob
             .context("repair unavailable: original NZB is missing")?;
@@ -463,22 +458,15 @@ impl Repairs {
         .await??;
         let mut repaired = false;
         let mut hash_only = false;
-        let mut checked_sources = Vec::new();
-        let mut checked_bytes = 0;
-        let mut reusable = true;
         for set in reader.sets() {
-            progress.phase(if job.verify_only {
-                "Verifying source files"
-            } else {
-                "Verifying source files and reconstructing damage"
-            });
+            progress.phase("Verifying source files and reconstructing damage");
             let result = repair::execute(
                 client,
                 Arc::clone(&nzb),
                 Arc::clone(&reader),
                 set,
                 limits,
-                job.verify_only,
+                false,
                 context.clone(),
                 cancel,
             )
@@ -495,19 +483,6 @@ impl Repairs {
             if let Some(metadata) = &mut metadata {
                 metadata_changed |=
                     repair::refresh_metadata(metadata, &result.sources, &mut covered);
-            }
-            let bytes = result
-                .sources
-                .iter()
-                .map(repair::VerifiedSource::memory_bytes)
-                .sum::<usize>();
-            // Keep proof reuse inside the metadata allowance; it never retains article bytes.
-            if reusable && checked_bytes + bytes <= 16_000_000 {
-                checked_bytes += bytes;
-                checked_sources.extend(result.sources);
-            } else {
-                reusable = false;
-                checked_sources.clear();
             }
             if !result.patches.is_empty() {
                 progress.phase("Saving and publishing repaired articles");
@@ -549,7 +524,7 @@ impl Repairs {
             self.db.repair_source(owner).await?.as_ref() == Some(&source),
             "repair unavailable: source changed during verification"
         );
-        if job.verify_only || metadata.is_some() {
+        if metadata.is_some() {
             anyhow::ensure!(
                 !covered.is_empty() && covered.iter().all(|covered| *covered),
                 "repair unavailable: PAR2 data does not cover every part of this file"
@@ -566,26 +541,6 @@ impl Repairs {
         self.db.wake_par2(source.nzb(), now_ms()).await?;
         if legacy {
             self.db.retire_legacy_repairs().await?;
-        }
-        if reusable && !checked_sources.is_empty() {
-            let mut recent = self.checked.lock().unwrap_or_else(PoisonError::into_inner);
-            recent.retain(|entry| entry.nzb != source.nzb());
-            let mut used = recent.iter().map(|entry| entry.bytes).sum::<usize>();
-            // shortcut: at most 32 sets / 16 MB; use persisted receipts if larger scans need longer reuse.
-            while used + checked_bytes > 16_000_000 || recent.len() >= 32 {
-                if let Some(old) = recent.pop_back() {
-                    used -= old.bytes;
-                } else {
-                    break;
-                }
-            }
-            recent.push_front(Arc::new(Checked {
-                nzb: source.nzb(),
-                generation: source.generation(),
-                completed_at: now_ms(),
-                bytes: checked_bytes,
-                sources: checked_sources.into_boxed_slice(),
-            }));
         }
         Ok((
             if repaired { 3 } else { 2 },

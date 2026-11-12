@@ -415,11 +415,10 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         .await
         .unwrap();
     assert_eq!(state, 2);
-    assert!(reason.contains("already checked"), "{reason}");
-    assert_eq!(
-        server.body_commands(),
-        before,
-        "a queued sibling must share the complete source check"
+    assert!(reason.contains("Articles are available"), "{reason}");
+    assert!(
+        server.body_commands() <= before + 3,
+        "a manual availability check reads only spot checks"
     );
     f.db.finish_par2(
         alias_job.id,
@@ -432,7 +431,7 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     )
     .await
     .unwrap();
-    server.stall_article(&file.segments.items[1].id, 1, Duration::from_secs(10));
+    server.stall_article(&file.segments.items[0].id, 1, Duration::from_secs(10));
     let verification =
         f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())
             .await
@@ -459,8 +458,8 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
                     .unwrap()
                     .unwrap();
             if current.state == 1
-                && current.reason == "Checking stored proof"
-                && current.transferred_bytes > 0
+                && current.reason == "Checking article availability"
+                && current.checked_articles > 0
             {
                 break;
             }
@@ -468,7 +467,7 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         }
     })
     .await
-    .expect("live phase and provider bytes are saved before completion");
+    .expect("live phase and article progress are saved before completion");
     f.db.cancel_par2(verification, infinidysk_db::now_ms())
         .await
         .unwrap();
@@ -492,7 +491,7 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     .await
     .expect("cancellation stops the active attempt");
     let mut settings = config.read().await.settings().clone();
-    settings.repair.memory_mb = 128;
+    settings.repair.check_concurrency = 1;
     config.write().await.save(settings).await.unwrap();
     f.db.restart_par2(verification, infinidysk_db::now_ms())
         .await
@@ -504,15 +503,15 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
                     .await
                     .unwrap()
                     .unwrap();
-            if current.state == 5 {
-                assert!(current.reason.contains("memory"), "{}", current.reason);
+            if current.state == 2 {
+                assert!(current.checked_articles > 0);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("saved worker limits apply to the next attempt without restarting");
+    .expect("saved availability limits apply to the next attempt without restarting");
     stop.cancel();
     running.await.unwrap();
     drop(repairs);

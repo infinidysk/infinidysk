@@ -58,6 +58,7 @@ const REPAIR_TRANSFER_GB: RangeInclusive<u32> = 1..=100_000;
 const REPAIR_STORAGE_GB: RangeInclusive<u32> = 1..=100_000;
 const REPAIR_TIMEOUT_MINUTES: RangeInclusive<u32> = 1..=10_080;
 const REPAIR_ATTEMPTS: RangeInclusive<u8> = 1..=10;
+const CHECK_CONCURRENCY: RangeInclusive<u16> = 1..=256;
 const QUEUE_CONCURRENCY: RangeInclusive<u8> = 1..=10;
 const NZB_RETENTION_DAYS: RangeInclusive<u32> = 0..=3650;
 const READ_AHEAD_MB: RangeInclusive<u32> = 1..=1250;
@@ -489,6 +490,7 @@ impl Default for Network {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct Repair {
+    pub check_concurrency: u16,
     pub memory_mb: u32,
     pub transfer_gb: u32,
     pub storage_gb: u32,
@@ -499,6 +501,7 @@ pub struct Repair {
 impl Default for Repair {
     fn default() -> Self {
         Self {
+            check_concurrency: 64,
             memory_mb: 256,
             transfer_gb: 100,
             storage_gb: 10,
@@ -510,6 +513,12 @@ impl Default for Repair {
 
 impl Repair {
     fn validate(&self) -> Result<(), Error> {
+        check(
+            "repair.check_concurrency",
+            "Availability requests",
+            self.check_concurrency,
+            &CHECK_CONCURRENCY,
+        )?;
         check(
             "repair.memory_mb",
             "Working memory (MB)",
@@ -544,6 +553,12 @@ impl Repair {
 
     fn reset_invalid(&mut self) {
         let defaults = Self::default();
+        reset(
+            "repair.check_concurrency",
+            &mut self.check_concurrency,
+            &CHECK_CONCURRENCY,
+            defaults.check_concurrency,
+        );
         reset(
             "repair.memory_mb",
             &mut self.memory_mb,

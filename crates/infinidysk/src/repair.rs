@@ -7,7 +7,6 @@ mod storage;
 mod worker;
 pub use publish::Publisher;
 
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +23,7 @@ pub struct Repairs {
     store: Mutex<Option<Store>>,
     readers: Arc<Semaphore>,
     lifecycle: Arc<tokio::sync::Mutex<()>>,
-    checked: Mutex<VecDeque<Arc<worker::Checked>>>,
+    evidence: Mutex<Option<(i64, Arc<infinidysk_health::Evidence>)>>,
 }
 
 /// Install once per client; publishers must retain this same service/store owner.
@@ -35,7 +34,7 @@ pub fn install(client: &Client, db: Db, path: PathBuf) -> Arc<Repairs> {
         store: Mutex::new(None),
         readers: Arc::new(Semaphore::new(READERS)),
         lifecycle: Arc::new(tokio::sync::Mutex::new(())),
-        checked: Mutex::new(VecDeque::new()),
+        evidence: Mutex::new(None),
     });
     client.set_repairs(Box::new({
         let repairs = Arc::clone(&repairs);

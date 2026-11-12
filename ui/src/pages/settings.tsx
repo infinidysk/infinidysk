@@ -1051,12 +1051,19 @@ export function Settings() {
               <Section category={category}>
                 <SettingsPanel title="Worker limits">
                   <p className="text-muted-foreground text-sm">
-                    Save changes to apply limits at the next attempt. One repair job runs at a time. The 16 MB
+                    Save changes to apply limits at the next attempt. Availability and repair run separately. The 16 MB
                     NZB/metadata allowance is included in working memory. Provider retries and transport overhead can
                     add traffic.
                   </p>
                   {(
                     [
+                      [
+                        "check_concurrency",
+                        "Availability requests",
+                        1,
+                        256,
+                        "Maximum availability requests while idle, also capped to leave provider connections free. Playback pauses checks. Body spot checks stay bounded by working memory.",
+                      ],
                       [
                         "memory_mb",
                         "Working memory (MB)",

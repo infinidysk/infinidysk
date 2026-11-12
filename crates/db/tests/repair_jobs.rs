@@ -5,6 +5,138 @@ use infinidysk_db::{Db, Item, repair::Owner};
 use sha2::{Digest as _, Sha256};
 
 #[tokio::test]
+async fn manual_checks_overtake_a_scan_without_starving_it_or_waiting_for_repairs() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    lane_contract(&db).await;
+}
+
+#[tokio::test]
+async fn damage_handoff_releases_a_slot_before_queuing_repair_at_capacity() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    handoff_at_capacity(&db).await;
+}
+
+async fn handoff_at_capacity(db: &Db) {
+    for job in db.par2_jobs().await.unwrap() {
+        db.cancel_par2(job.id, 0).await.unwrap();
+    }
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let nzb = BlobId::new();
+    let mut items = Vec::new();
+    let mut blobs = vec![(nzb, b"nzb".as_slice())];
+    for n in 0..128 {
+        let mut item = Item::child(&root, &format!("handoff-{n}.bin"), ItemKind::NzbFile).unwrap();
+        let meta = BlobId::new();
+        item.meta_blob = Some(meta);
+        item.nzb_blob = Some(nzb);
+        blobs.push((meta, b"meta"));
+        items.push(item);
+    }
+    db.insert(&items, &blobs).await.unwrap();
+    for item in &items {
+        db.request_par2_scan(item.id, 10, 1, true).await.unwrap();
+    }
+    assert_eq!(db.par2_pending().await.unwrap(), 128);
+    let check = db.claim_par2_lane(11, true, true).await.unwrap().unwrap();
+    assert!(db.escalate_par2(check.id, 12).await.unwrap());
+    assert_eq!(db.par2_pending().await.unwrap(), 128);
+    let repair = db.claim_par2_lane(13, false, false).await.unwrap().unwrap();
+    assert_eq!(repair.nzb_blob, Some(nzb.0));
+    assert_eq!(repair.scan_at, Some(1));
+    assert!(!db.escalate_par2(check.id, 14).await.unwrap());
+    let next = db.claim_par2_lane(14, true, true).await.unwrap().unwrap();
+    db.cancel_par2(next.id, 15).await.unwrap();
+    assert!(!db.escalate_par2(next.id, 16).await.unwrap());
+}
+
+async fn lane_contract(db: &Db) {
+    for job in db.par2_jobs().await.unwrap() {
+        db.cancel_par2(job.id, 0).await.unwrap();
+    }
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut ids = Vec::new();
+    for n in 0..6 {
+        let mut item = Item::child(&root, &format!("lane-{n}.bin"), ItemKind::NzbFile).unwrap();
+        let meta = BlobId::new();
+        let nzb = BlobId::new();
+        item.meta_blob = Some(meta);
+        item.nzb_blob = Some(nzb);
+        db.insert(&[item.clone()], &[(meta, b"meta"), (nzb, b"nzb")])
+            .await
+            .unwrap();
+        let id = if n < 2 {
+            db.request_par2_scan(item.id, 10 + n, 1, true)
+                .await
+                .unwrap()
+                .unwrap()
+        } else {
+            db.request_par2(Owner::Item(item.id), n != 5, 100 + n)
+                .await
+                .unwrap()
+                .unwrap()
+        };
+        ids.push(id);
+    }
+    let repair = db
+        .claim_par2_lane(1000, false, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repair.id, ids[5]);
+    for expected in &ids[2..5] {
+        let claimed = db
+            .claim_par2_lane(1000, true, false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            claimed.id, *expected,
+            "manual work must overtake older scan requests"
+        );
+    }
+    let scan = db.claim_par2_lane(1000, true, true).await.unwrap().unwrap();
+    assert_eq!(scan.id, ids[0]);
+    assert_eq!(scan.scan_at, Some(1));
+    assert_eq!(
+        scan.next_at, 10,
+        "enqueue time stays separate from the scan receipt scope"
+    );
+    assert!(scan.repair_on_failure);
+    db.update_availability_progress(scan.id, 2, 10)
+        .await
+        .unwrap();
+    assert!(
+        db.update_availability_progress(scan.id, 11, 10)
+            .await
+            .is_err()
+    );
+    db.finish_par2(scan.id, 2, "available", 0, 0, 1001, None)
+        .await
+        .unwrap();
+    db.restart_par2(scan.id, 1002).await.unwrap();
+    let manual = db
+        .claim_par2_lane(1003, true, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(manual.id, scan.id);
+    assert_eq!(manual.scan_at, None);
+    assert_eq!(manual.checked_articles, 0);
+    db.yield_par2_attempt(manual.id).await.unwrap();
+    let yielded = db
+        .par2_jobs()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|job| job.id == manual.id)
+        .unwrap();
+    assert_eq!(
+        yielded.attempts, 0,
+        "playback must not consume a repair retry"
+    );
+}
+
+#[tokio::test]
 async fn repair_requests_are_durable_deduplicated_and_claimed_once() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     durable_requests(&db).await;
@@ -148,6 +280,8 @@ async fn postgres_requests_obey_the_same_claim_resume_and_cancellation_contract(
     let (base, _) = url.rsplit_once('/').unwrap();
     let db = Db::connect(&format!("{base}/{name}")).await.unwrap();
     durable_requests(&db).await;
+    lane_contract(&db).await;
+    handoff_at_capacity(&db).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP DATABASE {name} WITH (FORCE)"

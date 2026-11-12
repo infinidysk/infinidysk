@@ -631,6 +631,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Check every article's availability with bounded body spot checks. Never downloads a full file for hashing. */
         post: operations["post_par2_verify"];
         delete: operations["delete_par2_verify"];
         options?: never;
@@ -3228,6 +3229,8 @@ export interface components {
             /** Format: int32 */
             attempts: number;
             /** Format: int64 */
+            checked_articles: number;
+            /** Format: int64 */
             duration_ms: number;
             file_path?: string | null;
             /** Format: uuid */
@@ -3240,6 +3243,8 @@ export interface components {
             state: string;
             /** Format: int64 */
             stored_bytes: number;
+            /** Format: int64 */
+            total_articles: number;
             /** Format: int64 */
             transferred_bytes: number;
             /** Format: int64 */
@@ -3503,7 +3508,7 @@ export interface components {
             /**
              * Format: uuid
              * @description Stable across edits, so masked secrets can be matched back.
-             * @default 01a1cbcf-e2ad-741d-818a-199036d98538
+             * @default 01a1d04e-d00f-776e-8a4d-893638e501a1
              */
             id: string;
             /**
@@ -3876,6 +3881,11 @@ export interface components {
             attempts: number;
             /**
              * Format: int32
+             * @default 64
+             */
+            check_concurrency: number;
+            /**
+             * Format: int32
              * @default 256
              */
             memory_mb: number;
@@ -4202,6 +4212,7 @@ export interface components {
             /**
              * @default {
              *       "attempts": 3,
+             *       "check_concurrency": 64,
              *       "memory_mb": 256,
              *       "storage_gb": 10,
              *       "timeout_minutes": 60,

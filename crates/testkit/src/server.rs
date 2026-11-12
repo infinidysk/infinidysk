@@ -65,6 +65,7 @@ pub struct LoopbackServer {
     open: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
     bodies: Arc<AtomicUsize>,
+    stats: Arc<AtomicUsize>,
 }
 
 /// Per message-id: BODY replies still to stall, for how long, and how many were.
@@ -78,6 +79,7 @@ struct Acceptor {
     open: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
     bodies: Arc<AtomicUsize>,
+    stats: Arc<AtomicUsize>,
     stalls: Stalls,
 }
 
@@ -94,6 +96,7 @@ impl Acceptor {
                     behavior: self.behavior,
                     rejected: now > self.behavior.max_connections,
                     bodies: Arc::clone(&self.bodies),
+                    stats: Arc::clone(&self.stats),
                     stalls: Arc::clone(&self.stalls),
                 };
                 // A failed connection only affects the test that owns it.
@@ -241,6 +244,7 @@ impl LoopbackServer {
             open: Arc::default(),
             peak: Arc::default(),
             bodies: Arc::default(),
+            stats: Arc::default(),
             stalls: Arc::default(),
         };
         Ok(Self {
@@ -249,6 +253,7 @@ impl LoopbackServer {
             open: Arc::clone(&acceptor.open),
             peak: Arc::clone(&acceptor.peak),
             bodies: Arc::clone(&acceptor.bodies),
+            stats: Arc::clone(&acceptor.stats),
             acceptor,
         })
     }
@@ -285,6 +290,10 @@ impl LoopbackServer {
     #[must_use]
     pub fn body_commands(&self) -> usize {
         self.bodies.load(Ordering::SeqCst)
+    }
+
+    pub fn stat_commands(&self) -> usize {
+        self.stats.load(Ordering::SeqCst)
     }
 
     /// Holds the next `times` BODY replies for `message_id` for `delay` each.
@@ -342,6 +351,7 @@ struct Limit {
     behavior: Behavior,
     rejected: bool,
     bodies: Arc<AtomicUsize>,
+    stats: Arc<AtomicUsize>,
     stalls: Stalls,
 }
 
@@ -437,6 +447,7 @@ async fn serve<S: AsyncRead + AsyncWrite>(
                 }
             }
             "STAT" => {
+                limit.stats.fetch_add(1, Ordering::SeqCst);
                 delay(impairment.response_delay).await;
                 let id = arg.trim().trim_start_matches('<').trim_end_matches('>');
                 let reply = if articles.contains_key(id) {

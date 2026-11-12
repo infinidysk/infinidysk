@@ -5,7 +5,9 @@ use infinidysk_core::{
     BlobId, FileMeta, ItemId, ItemKind, NzbFile, Par2Proof, Segment, Segments, blob,
 };
 use infinidysk_db::{Db, Item};
-use infinidysk_health::{Health, Settings, Verification};
+use infinidysk_health::{
+    Availability, AvailabilityOptions, AvailabilityProgress, Evidence, Health, Settings,
+};
 use infinidysk_nntp::{Client, Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
 use infinidysk_testkit::{LoopbackServer, post};
 use tokio::sync::watch;
@@ -14,41 +16,230 @@ use tokio_util::sync::CancellationToken;
 const ARTICLE: usize = 7000;
 
 #[tokio::test]
-async fn idle_verification_parallelism_follows_its_admitted_memory() {
-    for (memory, expected_more_than_four) in [(256_000_000, false), (512_000_000, true)] {
-        let (data, proof) = content();
-        let server = LoopbackServer::start_stalling(
-            post("verify", "a.bin", &data, ARTICLE),
-            0,
-            Duration::from_secs(3),
+async fn active_playback_keeps_new_availability_checks_off_the_provider() {
+    let (data, _) = content();
+    let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
+        .await
+        .unwrap();
+    let (_, item, health) = stored(&server, &data, None).await;
+    let health = Arc::try_unwrap(health)
+        .ok()
+        .unwrap()
+        .with_gates(|| false, || true);
+    assert!(matches!(
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
+            .await
+            .unwrap(),
+        Availability::Yielded
+    ));
+    assert_eq!(server.body_commands(), 0);
+    assert_eq!(server.stat_commands(), 0);
+}
+
+#[tokio::test]
+async fn playback_preempts_an_availability_check_and_releases_publication() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (data, _) = content();
+    let server = LoopbackServer::start_stalling(
+        post("verify", "a.bin", &data, ARTICLE),
+        0,
+        Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    let (db, item, health) = stored(&server, &data, None).await;
+    let playing = Arc::new(AtomicBool::new(false));
+    let gate = Arc::clone(&playing);
+    let health = Arc::new(
+        Arc::try_unwrap(health)
+            .ok()
+            .unwrap()
+            .with_gates(|| false, move || gate.load(Ordering::Relaxed)),
+    );
+    let checking = tokio::spawn({
+        let health = Arc::clone(&health);
+        async move {
+            health
+                .check_availability(
+                    item.id,
+                    &CancellationToken::new(),
+                    AvailabilityOptions::default(),
+                )
+                .await
+                .unwrap()
+        }
+    });
+    wait_for_body(&server).await;
+    playing.store(true, Ordering::Relaxed);
+    let result = tokio::time::timeout(Duration::from_secs(1), checking)
+        .await
+        .expect("availability must yield when playback begins")
+        .unwrap();
+    assert!(matches!(result, Availability::Yielded));
+    let _publication = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+        .await
+        .expect("yielding releases the publication barrier");
+}
+
+#[tokio::test]
+async fn archive_members_check_their_stored_ranges_without_a_par2_proof() {
+    use infinidysk_core::{ByteRange, FilePart, MultipartFile};
+    let (data, _) = content();
+    let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
+        .await
+        .unwrap();
+    let (db, item, health) = stored(&server, &data, None).await;
+    let meta = item.meta_blob.unwrap();
+    let FileMeta::Nzb(plain) = blob::decode_meta(&db.blob(meta).await.unwrap().unwrap()).unwrap()
+    else {
+        unreachable!()
+    };
+    let archive = FileMeta::Multipart(MultipartFile {
+        parts: vec![FilePart {
+            segments: plain.segments,
+            offset: 0,
+            data: ByteRange {
+                start: 150,
+                end: data.len() as u64 - 150,
+            },
+            split_after: false,
+            proof: None,
+        }],
+        crypt: None,
+    });
+    db.update_blob(meta, &blob::encode_meta(&archive).unwrap())
+        .await
+        .unwrap();
+    assert!(matches!(
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
+            .await
+            .unwrap(),
+        Availability::Available { articles: 15 }
+    ));
+    assert_eq!(server.body_commands(), 3);
+    assert_eq!(server.stat_commands(), 12);
+}
+
+#[tokio::test]
+async fn availability_checks_all_articles_without_a_proof_or_a_full_download() {
+    let (data, _) = content();
+    let posted = post("verify", "a.bin", &data, ARTICLE);
+    let total = posted.len();
+    let server = LoopbackServer::start(posted).await.unwrap();
+    let (_, item, health) = stored(&server, &data, None).await;
+    let result = health
+        .check_availability(
+            item.id,
+            &CancellationToken::new(),
+            AvailabilityOptions::default(),
         )
         .await
         .unwrap();
-        let (_db, item, health) = stored(&server, &data, Some(proof)).await;
-        let cancel = CancellationToken::new();
-        let running = tokio::spawn({
-            let stop = cancel.clone();
-            async move {
-                health
-                    .verify_existing_bounded(item.id, &stop, None, memory, 1_000_000)
-                    .await
-            }
-        });
-        wait_for_body(&server).await;
-        let more = tokio::time::timeout(Duration::from_millis(300), async {
-            while server.body_commands() <= 4 {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
+    assert!(
+        matches!(result, Availability::Available { .. }),
+        "{result:?}"
+    );
+    assert!(server.body_commands() <= 3);
+    assert!(server.body_commands() < total);
+}
+
+#[tokio::test]
+async fn availability_probes_continue_while_a_body_spot_check_waits() {
+    let (data, _) = content();
+    let server = LoopbackServer::start_stalling(
+        post("verify", "a.bin", &data, ARTICLE),
+        0,
+        Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    let (_, item, health) = stored(&server, &data, None).await;
+    let cancel = CancellationToken::new();
+    let progress = Arc::new(AvailabilityProgress::default());
+    let running = tokio::spawn({
+        let stop = cancel.clone();
+        let progress = Arc::clone(&progress);
+        async move {
+            health
+                .check_availability(
+                    item.id,
+                    &stop,
+                    AvailabilityOptions {
+                        progress,
+                        concurrency: 16,
+                        ..AvailabilityOptions::default()
+                    },
+                )
+                .await
+        }
+    });
+    wait_for_body(&server).await;
+    let advanced = tokio::time::timeout(Duration::from_secs(1), async {
+        while progress.checked.load(std::sync::atomic::Ordering::Relaxed) < 5 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    cancel.cancel();
+    assert!(matches!(
+        running.await.unwrap().unwrap(),
+        Availability::Cancelled
+    ));
+    assert!(
+        advanced.is_ok(),
+        "STAT probes must progress without a stalled BODY"
+    );
+}
+
+#[tokio::test]
+async fn scan_evidence_deduplicates_articles_but_a_manual_check_is_fresh() {
+    let (data, _) = content();
+    let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
         .await
-        .is_ok();
-        cancel.cancel();
+        .unwrap();
+    let (_, item, health) = stored(&server, &data, None).await;
+    let evidence = Arc::new(Evidence::default());
+    for _ in 0..2 {
         assert!(matches!(
-            running.await.unwrap().unwrap(),
-            Verification::Cancelled
+            health
+                .check_availability(
+                    item.id,
+                    &CancellationToken::new(),
+                    AvailabilityOptions {
+                        evidence: Some(Arc::clone(&evidence)),
+                        ..AvailabilityOptions::default()
+                    }
+                )
+                .await
+                .unwrap(),
+            Availability::Available { articles: 15 }
         ));
-        assert_eq!(more, expected_more_than_four);
     }
+    assert_eq!(server.body_commands(), 3);
+    assert_eq!(server.stat_commands(), 12);
+    assert!(matches!(
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
+            .await
+            .unwrap(),
+        Availability::Available { .. }
+    ));
+    assert_eq!(server.body_commands(), 6);
+    assert_eq!(server.stat_commands(), 24);
 }
 
 fn content() -> (Vec<u8>, Par2Proof) {
@@ -256,13 +447,14 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
             .await
             .unwrap(),
-        Verification::Verified {
-            bytes: 100_000,
-            slices: 25
-        }
+        Availability::Available { .. }
     ));
     assert_eq!(db.health(item.id).await.unwrap(), before);
     assert!(health.step().await.unwrap());
@@ -279,10 +471,14 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
     corrupt.store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(matches!(
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
             .await
             .unwrap(),
-        Verification::Source(infinidysk_nntp::Error::Repair(_))
+        Availability::Source(infinidysk_nntp::Error::Repair(_))
     ));
     health.request_check(item.id).await.unwrap();
     assert!(health.step().await.unwrap());
@@ -295,7 +491,15 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
     let running = {
         let health = Arc::clone(&health);
         let id = item.id;
-        tokio::spawn(async move { health.verify_existing(id, &CancellationToken::new()).await })
+        tokio::spawn(async move {
+            health
+                .check_availability(
+                    id,
+                    &CancellationToken::new(),
+                    AvailabilityOptions::default(),
+                )
+                .await
+        })
     };
     tokio::time::timeout(Duration::from_secs(3), async {
         while server.body_commands() == bodies {
@@ -307,47 +511,49 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
     db.update_blob(key.nzb, b"changed original").await.unwrap();
     assert!(matches!(
         running.await.unwrap().unwrap(),
-        Verification::Changed
+        Availability::Changed
     ));
     assert!(matches!(
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
             .await
             .unwrap(),
-        Verification::Source(infinidysk_nntp::Error::NotFound)
+        Availability::Damaged { .. }
     ));
 }
 
 #[tokio::test]
-async fn verifies_a_stored_file_without_an_original_nzb() {
-    let (data, proof) = content();
+async fn availability_obeys_the_source_read_allowance_without_changing_health() {
+    let (data, _) = content();
     let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
         .await
         .unwrap();
-    let (db, item, health) = stored(&server, &data, Some(proof)).await;
-    assert!(item.nzb_blob.is_none());
+    let (db, item, health) = stored(&server, &data, None).await;
     let before = db.health(item.id).await.unwrap();
-    let cancel = CancellationToken::new();
     assert!(matches!(
         health
-            .verify_existing_bounded(item.id, &cancel, None, 256_000_000, 99_999)
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions {
+                    decoded_bytes: 0,
+                    ..AvailabilityOptions::default()
+                }
+            )
             .await
             .unwrap(),
-        Verification::Unavailable("source read allowance exceeded")
+        Availability::Unavailable("source read allowance exceeded")
     ));
-    assert!(matches!(
-        health.verify_existing(item.id, &cancel).await.unwrap(),
-        Verification::Verified {
-            bytes: 100_000,
-            slices: 25
-        }
-    ));
+    assert_eq!(server.body_commands(), 0);
     assert_eq!(db.health(item.id).await.unwrap(), before);
-    assert!(!cancel.is_cancelled());
 }
 
 #[tokio::test]
-async fn full_file_hash_still_works_without_slice_checksums() {
+async fn availability_does_not_require_slice_checksums() {
     let (data, mut proof) = content();
     proof.slice_md5.clear();
     proof.slice_crc32.clear();
@@ -358,35 +564,40 @@ async fn full_file_hash_still_works_without_slice_checksums() {
     let (_, item, health) = stored(&server, &data, Some(proof)).await;
     assert!(matches!(
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
             .await
             .unwrap(),
-        Verification::Verified {
-            bytes: 100_000,
-            slices: 0
-        }
+        Availability::Available { .. }
     ));
 }
 
 #[tokio::test]
-async fn missing_proofs_do_not_fetch_or_change_health() {
+async fn missing_articles_are_detected_without_a_proof_or_health_changes() {
     let (data, _) = content();
     let server = LoopbackServer::start([]).await.unwrap();
     let (db, item, health) = stored(&server, &data, None).await;
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
             .await
             .unwrap(),
-        Verification::Unavailable(_)
+        Availability::Damaged { .. }
     ));
-    assert_eq!(server.body_commands(), 0);
+    assert!(server.body_commands() <= 3);
     assert_eq!(db.health(item.id).await.unwrap(), before);
 }
 
 #[tokio::test]
-async fn valid_yenc_crc_does_not_hide_a_par2_content_mismatch() {
+async fn availability_does_not_claim_a_whole_file_checksum_check() {
     let (data, proof) = content();
     let mut wrong = data.clone();
     wrong[9000] ^= 1;
@@ -397,10 +608,14 @@ async fn valid_yenc_crc_does_not_hide_a_par2_content_mismatch() {
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
             .await
             .unwrap(),
-        Verification::Mismatch(_)
+        Availability::Available { .. }
     ));
     assert_eq!(db.health(item.id).await.unwrap(), before);
 }
@@ -427,8 +642,15 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
     .unwrap();
     let (db, item, health) = stored(&server, &data, Some(proof)).await;
     let id = item.id;
-    let running =
-        tokio::spawn(async move { health.verify_existing(id, &CancellationToken::new()).await });
+    let running = tokio::spawn(async move {
+        health
+            .check_availability(
+                id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default(),
+            )
+            .await
+    });
     wait_for_body(&server).await;
     let blob_id = item.meta_blob.unwrap();
     let mut meta = blob::decode_meta(&db.blob(blob_id).await.unwrap().unwrap()).unwrap();
@@ -441,7 +663,7 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
         .unwrap();
     assert!(matches!(
         running.await.unwrap().unwrap(),
-        Verification::Changed
+        Availability::Changed
     ));
 }
 
@@ -460,7 +682,11 @@ async fn publication_drains_existing_verification_and_holds_new_verification() {
         let health = Arc::clone(&health);
         async move {
             health
-                .verify_existing(item.id, &CancellationToken::new())
+                .check_availability(
+                    item.id,
+                    &CancellationToken::new(),
+                    AvailabilityOptions::default(),
+                )
                 .await
                 .unwrap()
         }
@@ -473,11 +699,11 @@ async fn publication_drains_existing_verification_and_holds_new_verification() {
     );
     assert!(matches!(
         checking.await.unwrap(),
-        Verification::Verified { .. }
+        Availability::Available { .. }
     ));
     let publication = db.pause_writes().await;
     let cancel = CancellationToken::new();
-    let checking = health.verify_existing(item.id, &cancel);
+    let checking = health.check_availability(item.id, &cancel, AvailabilityOptions::default());
     tokio::pin!(checking);
     assert!(
         tokio::time::timeout(Duration::from_millis(15), &mut checking)
@@ -487,7 +713,7 @@ async fn publication_drains_existing_verification_and_holds_new_verification() {
     drop(publication);
     assert!(matches!(
         checking.await.unwrap(),
-        Verification::Verified { .. }
+        Availability::Available { .. }
     ));
     db.close().await;
 }
@@ -505,7 +731,11 @@ async fn cancelling_a_pending_body_returns_without_waiting_for_the_server() {
     let (_, item, health) = stored(&server, &data, Some(proof)).await;
     let cancel = CancellationToken::new();
     let stop = cancel.clone();
-    let running = tokio::spawn(async move { health.verify_existing(item.id, &stop).await });
+    let running = tokio::spawn(async move {
+        health
+            .check_availability(item.id, &stop, AvailabilityOptions::default())
+            .await
+    });
     wait_for_body(&server).await;
     cancel.cancel();
     assert!(matches!(
@@ -514,7 +744,7 @@ async fn cancelling_a_pending_body_returns_without_waiting_for_the_server() {
             .unwrap()
             .unwrap()
             .unwrap(),
-        Verification::Cancelled
+        Availability::Cancelled
     ));
 }
 
@@ -532,10 +762,14 @@ async fn missing_articles_cannot_verify_even_when_expected_content_is_zero() {
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
             .await
             .unwrap(),
-        Verification::Source(infinidysk_nntp::Error::NotFound)
+        Availability::Damaged { .. }
     ));
     assert!(server.body_commands() > 0);
     assert_eq!(db.health(item.id).await.unwrap(), before);
@@ -556,7 +790,11 @@ async fn aborting_the_caller_releases_verification_admission() {
     let running = {
         let health = Arc::clone(&health);
         let cancel = cancel.clone();
-        tokio::spawn(async move { health.verify_existing(item.id, &cancel).await })
+        tokio::spawn(async move {
+            health
+                .check_availability(item.id, &cancel, AvailabilityOptions::default())
+                .await
+        })
     };
     wait_for_body(&server).await;
     running.abort();
@@ -566,12 +804,12 @@ async fn aborting_the_caller_releases_verification_admission() {
         tokio::time::timeout(
             Duration::from_secs(3),
             // Admission must reopen even while the old NNTP connection drains.
-            health.verify_existing(ItemId::new(), &cancel)
+            health.check_availability(ItemId::new(), &cancel, AvailabilityOptions::default())
         )
         .await
         .unwrap()
         .unwrap(),
-        Verification::Unavailable(_)
+        Availability::Unavailable(_)
     ));
     assert!(!cancel.is_cancelled());
 }
@@ -589,7 +827,11 @@ async fn unchanged_metadata_remains_valid_after_a_blob_epoch_change() {
     let (db, item, health) = stored(&server, &data, Some(proof)).await;
     let running = tokio::spawn(async move {
         health
-            .verify_existing(item.id, &CancellationToken::new())
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default(),
+            )
             .await
     });
     wait_for_body(&server).await;
@@ -598,6 +840,6 @@ async fn unchanged_metadata_remains_valid_after_a_blob_epoch_change() {
     db.update_blob(blob_id, &bytes).await.unwrap();
     assert!(matches!(
         running.await.unwrap().unwrap(),
-        Verification::Verified { .. }
+        Availability::Available { .. }
     ));
 }

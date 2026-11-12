@@ -1489,6 +1489,7 @@ dependencies = [
  "infinidysk",
  "infinidysk-core",
  "infinidysk-db",
+ "infinidysk-health",
  "infinidysk-nntp",
  "infinidysk-queue",
  "infinidysk-stream",

@@ -30,6 +30,8 @@ pub struct Par2Job {
     item_id: Option<Uuid>,
     file_path: Option<String>,
     next_at: i64,
+    checked_articles: i64,
+    total_articles: i64,
 }
 
 impl From<Job> for Par2Job {
@@ -39,6 +41,7 @@ impl From<Job> for Par2Job {
             state: match job.state {
                 0 => "queued",
                 1 => "running",
+                2 if job.verify_only => "available",
                 2 => "verified",
                 3 => "repaired",
                 4 => "deferred",
@@ -64,6 +67,8 @@ impl From<Job> for Par2Job {
             item_id: job.item_id,
             file_path: job.file_path,
             next_at: job.next_at,
+            checked_articles: job.checked_articles,
+            total_articles: job.total_articles,
         }
     }
 }
@@ -131,6 +136,7 @@ pub async fn post_par2_repair(
 
 #[utoipa::path(post, path = "/api/v1/files/{id}/verify", tag = "files",
     params(("id" = Uuid, Path)), responses((status = 202), (status = 404, body = ApiError), (status = 409, body = ApiError)))]
+/// Check every article's availability with bounded body spot checks. Never downloads a full file for hashing.
 pub async fn post_par2_verify(
     State(admin): State<Arc<Admin>>,
     Path(id): Path<Uuid>,
@@ -333,6 +339,10 @@ mod tests {
                 verified_bytes: 0,
                 started_at: Some(0),
                 next_at: 1,
+                scan_at: None,
+                repair_on_failure: false,
+                checked_articles: 0,
+                total_articles: 0,
                 file_path: None,
             });
             assert_eq!(view.state, expected);
