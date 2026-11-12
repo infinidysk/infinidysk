@@ -62,6 +62,11 @@ export function QueueSettings({ config, setNewConfig }: QueueSettingsProps) {
                 <option value="8">8</option>
                 <option value="9">9</option>
                 <option value="10">10</option>
+                <option value="12">12</option>
+                <option value="16">16</option>
+                <option value="20">20</option>
+                <option value="24">24</option>
+                <option value="32">32</option>
               </Select>
               <p
                 className="text-[11px] leading-relaxed text-base-content/45"
@@ -228,7 +233,7 @@ export function isQueueSettingsValid(config: Record<string, string>): boolean {
 function isValidQueueWorkerCount(value: string | undefined): boolean {
   if (value == null || value.trim() === "") return true;
   const number = Number(value);
-  return Number.isInteger(number) && number >= 1 && number <= 10;
+  return Number.isInteger(number) && number >= 1 && number <= 32;
 }
 
 function isValidMaxQueueConnections(value: string | undefined): boolean {
