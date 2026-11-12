@@ -47,6 +47,12 @@ type Memory = quick_cache::sync::Cache<
 pub struct Cache {
     memory: Memory,
     enabled: AtomicBool,
+    /// Held for reading across an insert's enabled check and the insert, and for writing
+    /// while the memory tier is switched, so no insert lands after a disable's clear.
+    toggle: RwLock<()>,
+    /// Stops the next `remember` between its enabled check and its insert.
+    #[cfg(test)]
+    pause: Mutex<Option<Pause>>,
     disk: RwLock<Option<Arc<Disk>>>,
     /// The directory and reason the configured disk tier did not start.
     disk_failure: Mutex<Option<(PathBuf, String)>>,
@@ -127,6 +133,9 @@ impl Cache {
                 DefaultLifecycle::default(),
             ),
             enabled: AtomicBool::new(memory_enabled),
+            toggle: RwLock::new(()),
+            #[cfg(test)]
+            pause: Mutex::default(),
             disk: RwLock::default(),
             disk_failure: Mutex::default(),
             inflight: Mutex::default(),
@@ -142,11 +151,7 @@ impl Cache {
     /// in memory. A new disk directory starts empty; one that cannot be written leaves
     /// the disk tier off with a warning.
     pub async fn configure(&self, config: &CacheConfig) {
-        self.enabled.store(config.memory_enabled, Ordering::Relaxed);
-        self.memory.set_capacity(config.memory_bytes);
-        if !config.memory_enabled {
-            self.memory.clear();
-        }
+        self.set_memory(config.memory_enabled, config.memory_bytes);
         let current = self.disk();
         let mut failure = None;
         let next = match (&config.disk, current) {
@@ -187,6 +192,15 @@ impl Cache {
             .unwrap_or_else(PoisonError::into_inner) = failure;
     }
 
+    fn set_memory(&self, enabled: bool, bytes: u64) {
+        let _toggle = self.toggle.write().unwrap_or_else(PoisonError::into_inner);
+        self.enabled.store(enabled, Ordering::Relaxed);
+        self.memory.set_capacity(bytes);
+        if !enabled {
+            self.memory.clear();
+        }
+    }
+
     fn disk(&self) -> Option<Arc<Disk>> {
         self.disk
             .read()
@@ -203,8 +217,24 @@ impl Cache {
     }
 
     fn remember(&self, message_id: &str, data: Bytes) {
+        let _toggle = self.toggle.read().unwrap_or_else(PoisonError::into_inner);
         if self.enabled.load(Ordering::Relaxed) {
+            #[cfg(test)]
+            self.paused();
             self.memory.insert(message_id.into(), data);
+        }
+    }
+
+    #[cfg(test)]
+    fn paused(&self) {
+        let pause = self
+            .pause
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(Pause { entered, release }) = pause {
+            entered.send(()).ok();
+            release.recv().ok();
         }
     }
 
@@ -400,8 +430,47 @@ impl Drop for Landing {
 }
 
 #[cfg(test)]
+struct Pause {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
 mod tests {
+    use std::sync::{TryLockError, mpsc};
+
     use super::*;
+
+    #[test]
+    fn disable_clears_an_insertion_paused_after_its_enabled_check() {
+        let cache = Arc::new(Cache::new(true, 1 << 20));
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        *cache.pause.lock().unwrap() = Some(Pause {
+            entered: entered_tx,
+            release: release_rx,
+        });
+        let inserting = std::thread::spawn({
+            let cache = Arc::clone(&cache);
+            move || cache.remember("<old@test>", Bytes::from_static(b"old"))
+        });
+        entered.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(
+            matches!(cache.toggle.try_write(), Err(TryLockError::WouldBlock)),
+            "disable must wait for the paused insertion"
+        );
+        release.send(()).unwrap();
+        inserting.join().unwrap();
+        cache.set_memory(false, 1 << 20);
+
+        assert_eq!(cache.memory.weight(), 0);
+        assert_eq!(cache.memory.len(), 0);
+
+        cache.set_memory(true, 1 << 20);
+        assert!(cache.memory.get("<old@test>").is_none());
+        cache.remember("<new@test>", Bytes::from_static(b"new"));
+        assert!(cache.memory.get("<new@test>").is_some());
+    }
 
     #[tokio::test]
     async fn switching_the_disk_cache_keeps_live_writes() {
