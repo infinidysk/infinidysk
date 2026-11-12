@@ -49,12 +49,15 @@ struct InspectedFile {
     /// The path an import publishes below the job folder: obfuscated videos take the
     /// release name and duplicates get a number. Equals `raw_path` for an unreadable member.
     planned_name: String,
-    /// Absent when the file cannot be read and its archive does not record a size.
+    /// Null when the file cannot be read and its archive does not record a size.
+    #[schema(required = true)]
     size_bytes: Option<u64>,
-    /// Lowercase extension when the file is video, audio or a book.
+    /// Lowercase extension when the file is video, audio or a book; null otherwise.
+    #[schema(required = true)]
     media_extension: Option<String>,
     name_source: InspectNameSource,
-    /// The entry of `archives` the file is a member of; absent for a posted file.
+    /// The entry of `archives` the file is a member of; null for a posted file.
+    #[schema(required = true)]
     archive_set_id: Option<usize>,
     /// `nesting_depth` of that archive; 0 for a posted file.
     nesting_depth: usize,
@@ -80,8 +83,9 @@ struct InspectedArchive {
     encryption: InspectEncryption,
     content_access: InspectAccess,
     /// Whether this kind of content can be streamed at all, given the right password.
-    /// Absent until every member was checked, such as for encrypted headers without the
+    /// Null until every member was checked, such as for encrypted headers without the
     /// password.
+    #[schema(required = true)]
     stream_supported: Option<bool>,
 }
 
@@ -129,7 +133,9 @@ struct InspectDiagnostics {
     /// not inferred. A corrupt copy or an article for another part of the file is not listed.
     missing_first_segments: Vec<String>,
     warnings: Vec<InspectWarning>,
-    /// Why an import of this NZB would not complete, as far as the inspection read.
+    /// Why an import of this NZB would not complete, as far as the inspection read;
+    /// null when no failure was found.
+    #[schema(required = true)]
     failure: Option<InspectFailure>,
     /// Time each stage took, for the NZB the report describes.
     stages: InspectStages,
@@ -189,13 +195,17 @@ enum InspectStage {
     Archives,
 }
 
-/// Time each stage took; absent for a stage that did not finish.
+/// Time each stage took; null for a stage that did not finish.
 #[derive(Serialize, ToSchema)]
 #[allow(clippy::struct_field_names)] // API fields that carry a unit say so.
 struct InspectStages {
+    #[schema(required = true)]
     first_segments_ms: Option<u64>,
+    #[schema(required = true)]
     par2_ms: Option<u64>,
+    #[schema(required = true)]
     layouts_ms: Option<u64>,
+    #[schema(required = true)]
     archives_ms: Option<u64>,
 }
 

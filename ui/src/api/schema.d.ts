@@ -2365,7 +2365,7 @@ export interface components {
              *     is not counted.
              */
             article_requests: number;
-            failure?: components["schemas"]["InspectFailure"] | null;
+            failure: components["schemas"]["InspectFailure"] | null;
             /**
              * @description NZB files followed to reach the release, as an import follows a download that
              *     holds only an NZB file; 0 when the uploaded NZB names the release.
@@ -2393,16 +2393,16 @@ export interface components {
         InspectNameSource: "par2" | "subject" | "archive_header";
         /** @enum {string} */
         InspectStage: "submission" | "first_segments" | "par2" | "layouts" | "archives";
-        /** @description Time each stage took; absent for a stage that did not finish. */
+        /** @description Time each stage took; null for a stage that did not finish. */
         InspectStages: {
             /** Format: int64 */
-            archives_ms?: number | null;
+            archives_ms: number | null;
             /** Format: int64 */
-            first_segments_ms?: number | null;
+            first_segments_ms: number | null;
             /** Format: int64 */
-            layouts_ms?: number | null;
+            layouts_ms: number | null;
             /** Format: int64 */
-            par2_ms?: number | null;
+            par2_ms: number | null;
         };
         /** @description One NZB to inspect. */
         InspectUpload: {
@@ -2434,16 +2434,16 @@ export interface components {
             nesting_depth: number;
             /**
              * @description Whether this kind of content can be streamed at all, given the right password.
-             *     Absent until every member was checked, such as for encrypted headers without the
+             *     Null until every member was checked, such as for encrypted headers without the
              *     password.
              */
-            stream_supported?: boolean | null;
+            stream_supported: boolean | null;
         };
         InspectedFile: {
-            /** @description The entry of `archives` the file is a member of; absent for a posted file. */
-            archive_set_id?: number | null;
-            /** @description Lowercase extension when the file is video, audio or a book. */
-            media_extension?: string | null;
+            /** @description The entry of `archives` the file is a member of; null for a posted file. */
+            archive_set_id: number | null;
+            /** @description Lowercase extension when the file is video, audio or a book; null otherwise. */
+            media_extension: string | null;
             name_source: components["schemas"]["InspectNameSource"];
             /** @description `nesting_depth` of that archive; 0 for a posted file. */
             nesting_depth: number;
@@ -2459,9 +2459,9 @@ export interface components {
             raw_path: string;
             /**
              * Format: int64
-             * @description Absent when the file cannot be read and its archive does not record a size.
+             * @description Null when the file cannot be read and its archive does not record a size.
              */
-            size_bytes?: number | null;
+            size_bytes: number | null;
         };
         /**
          * @description Where a file is in the health state machine.

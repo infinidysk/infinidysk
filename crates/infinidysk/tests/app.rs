@@ -1308,6 +1308,21 @@ async fn nzb_inspection_needs_the_admin_key_and_a_valid_nzb() {
         "#/components/schemas/NzbInspection"
     );
     assert!(operation["responses"]["409"].is_object());
+    for name in [
+        "InspectedFile",
+        "InspectedArchive",
+        "InspectDiagnostics",
+        "InspectStages",
+    ] {
+        let schema = &spec["components"]["schemas"][name];
+        let required = schema["required"].as_array().unwrap();
+        for field in schema["properties"].as_object().unwrap().keys() {
+            assert!(
+                required.iter().any(|value| value == field),
+                "{name}.{field} must be required even when nullable"
+            );
+        }
+    }
     cancel.cancel();
     server.await.unwrap().unwrap();
 }
