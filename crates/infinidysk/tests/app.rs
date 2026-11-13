@@ -741,9 +741,28 @@ async fn support_pack_holds_diagnostics_without_secrets() {
         "status/queue.json",
         "logs/recent.jsonl",
         "traces/index.json",
+        "traces/fuse-ops.json",
+        "status/resources.json",
     ] {
         assert!(zip.by_name(name).is_ok(), "{name}");
     }
+    let json = |zip: &mut zip::ZipArchive<_>, name: &str| -> Value {
+        let mut text = String::new();
+        zip.by_name(name)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        serde_json::from_str(&text).unwrap()
+    };
+    let manifest = json(&mut zip, "manifest.json");
+    assert_eq!(manifest["pack_version"], 2);
+    assert!(manifest["generated_unix_ms"].as_u64().unwrap() > 0);
+    let resources = json(&mut zip, "status/resources.json");
+    assert_eq!(resources["sample_every_ms"], 2000);
+    assert!(resources["samples"].is_array());
+    let ops = json(&mut zip, "traces/fuse-ops.json");
+    assert_eq!(ops["min_took_us"], 1000);
+    assert!(ops["ops"].is_array());
 
     let long = format!(r#"{{"note":"{}"}}"#, "a".repeat(10_001));
     let request = admin_request("POST", "/api/v1/support-pack", &long);

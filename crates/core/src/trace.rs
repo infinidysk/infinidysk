@@ -3,9 +3,9 @@
 //! A stream without a [`Trace`] records nothing. With one, each event is a short lock
 //! and a copy of a fixed-size value; analysis ([`Trace::summary`]) runs only on demand.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -112,11 +112,71 @@ pub enum Step {
     },
 }
 
+/// Where a read request is inside the daemon; each stage ends the one before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadStage {
+    /// Waiting for earlier reads of the same handle, so reads reach the stream in order.
+    Order,
+    /// Waiting for the handle's reader, held by another request.
+    #[serde(rename = "handle_lock")]
+    Lock,
+    /// In the stream reader: seeking and reading, including any wait for segments.
+    Read,
+}
+
+impl ReadStage {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Order => "order",
+            Self::Lock => "handle_lock",
+            Self::Read => "read",
+        }
+    }
+}
+
+/// How the daemon answered a read request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reply {
+    Data,
+    Error,
+    /// The kernel interrupted the request, or the daemon dropped it, before a reply.
+    Cancelled,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     Open {
         size: u64,
+    },
+    /// The FUSE open that created this stream replied with `handle`, now. It spent
+    /// `before_ns` before the trace started (path, caller and metadata lookups); the time
+    /// from the trace start to now is the rest of the open.
+    Opened {
+        request: u64,
+        handle: u64,
+        inode: u64,
+        before_ns: u64,
+    },
+    /// FUSE read `request` reached the daemon. It first waits in [`ReadStage::Order`].
+    Request {
+        request: u64,
+        offset: u64,
+        size: u32,
+    },
+    /// `request` entered `stage`.
+    RequestStage {
+        request: u64,
+        stage: ReadStage,
+    },
+    /// The daemon finished `request` with `bytes`.
+    Replied {
+        request: u64,
+        bytes: u32,
+        result: Reply,
     },
     Seek {
         from: u64,
@@ -156,7 +216,9 @@ pub enum Event {
         segment: u32,
         ns: u64,
     },
-    /// The reader paused `ns` between reads, ending now: time the client, not we, spent.
+    /// `ns` passed between two stream reads, ending now (kept from 50 ms). Not proof
+    /// the client paused: for FUSE it includes request ordering and handle-lock waits,
+    /// kernel and player time. Request events split the daemon's part out.
     Idle {
         ns: u64,
     },
@@ -178,6 +240,11 @@ pub enum Event {
     },
     End {
         bytes: u64,
+    },
+    /// Not recorded: [`Trace::records`] marks where `events` were dropped, so a summary
+    /// does not take the missing time for a gap.
+    Dropped {
+        events: u64,
     },
 }
 
@@ -207,6 +274,8 @@ pub struct Record {
 /// so both a slow start and a late stall survive a long playback.
 pub struct Trace {
     started: Instant,
+    /// Wall clock when `started` was taken, in ns since the Unix epoch.
+    started_unix_ns: u64,
     head_cap: usize,
     tail_cap: usize,
     buf: Mutex<Buf>,
@@ -225,6 +294,7 @@ impl Trace {
         let capacity = capacity.max(2);
         Self {
             started: Instant::now(),
+            started_unix_ns: unix_ns(SystemTime::now()),
             head_cap: capacity / 2,
             tail_cap: capacity - capacity / 2,
             buf: Mutex::default(),
@@ -235,11 +305,38 @@ impl Trace {
         self.record_at(Instant::now(), event);
     }
 
+    /// The monotonic instant every `at_ns` counts from.
+    #[must_use]
+    pub const fn started(&self) -> Instant {
+        self.started
+    }
+
+    /// The wall clock at [`started`](Self::started), in ns since the Unix epoch. A record's
+    /// wall time is this plus its `at_ns`; durations come from the monotonic clock, so a
+    /// wall-clock step after the start does not bend them.
+    #[must_use]
+    pub const fn started_unix_ns(&self) -> u64 {
+        self.started_unix_ns
+    }
+
+    /// Events kept at most: the first half, then the newest.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.head_cap + self.tail_cap
+    }
+
+    /// `at` in this trace's `at_ns`.
+    #[must_use]
+    pub fn at_ns(&self, at: Instant) -> u64 {
+        u64::try_from(at.saturating_duration_since(self.started).as_nanos()).unwrap_or(u64::MAX)
+    }
+
     /// Records `event` as having happened at `at`.
     pub fn record_at(&self, at: Instant, event: Event) {
-        let at_ns = u64::try_from(at.saturating_duration_since(self.started).as_nanos())
-            .unwrap_or(u64::MAX);
-        let record = Record { at_ns, event };
+        let record = Record {
+            at_ns: self.at_ns(at),
+            event,
+        };
         let mut buf = self.lock();
         if buf.head.len() < self.head_cap {
             buf.head.push(record);
@@ -256,23 +353,46 @@ impl Trace {
     #[must_use]
     pub fn records(&self) -> (Vec<Record>, u64) {
         let buf = self.lock();
-        let mut records: Vec<Record> = buf.head.iter().chain(&buf.tail).copied().collect();
+        let mut records: Vec<Record> = buf.head.clone();
         let dropped = buf.dropped;
+        // The tail is in insertion order; the cut goes before its earliest stamp.
+        if let Some(first) = buf
+            .tail
+            .iter()
+            .map(|r| r.at_ns)
+            .min()
+            .filter(|_| dropped > 0)
+        {
+            records.push(Record {
+                at_ns: first,
+                event: Event::Dropped { events: dropped },
+            });
+        }
+        records.extend(buf.tail.iter().copied());
         drop(buf);
         // Threads stamp before taking the lock, so neighbours can land out of order.
         records.sort_by_key(|r| r.at_ns);
         (records, dropped)
     }
 
+    /// The summary up to now: a read still open counts its unfinished waits to now.
     #[must_use]
     pub fn summary(&self) -> Summary {
+        let now = self.at_ns(Instant::now());
         let (records, dropped) = self.records();
-        Summary::of(&records, dropped)
+        Summary::until(&records, dropped, Some(now))
     }
 
     fn lock(&self) -> MutexGuard<'_, Buf> {
         self.buf.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// `at` in ns since the Unix epoch; `0` before it.
+#[must_use]
+pub fn unix_ns(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
 }
 
 /// A playback segment fetch's size, trace and live wait, passed down to the provider client.
@@ -411,6 +531,162 @@ impl Causes {
     }
 }
 
+/// Read requests in the daemon while a [`Summary`] walks the records.
+#[derive(Default)]
+struct Requests {
+    /// Request id to its arrival, current stage (none when its stage events were
+    /// dropped) and when that stage began.
+    open: HashMap<u64, (u64, Option<ReadStage>, u64)>,
+    /// When the last request left the daemon with none left in it; none when that is
+    /// unknown (dropped events).
+    emptied: Option<u64>,
+    /// When requests were last counted into `in_request_ns`.
+    busy_since: u64,
+    first: Option<u64>,
+    /// Requests seen without their arrival, counted once.
+    unmatched: HashSet<u64>,
+    /// Unmatched requests seen in a stage and not replied yet: still in the daemon.
+    unmatched_open: HashSet<u64>,
+    /// Requests open at a cut, to their arrival: their reply may be among the dropped
+    /// events, so whether they are still in the daemon is unknown.
+    uncertain: HashMap<u64, u64>,
+}
+
+impl Requests {
+    fn arrive(&mut self, summary: &mut Summary, request: u64, at: u64) {
+        summary.requests += 1;
+        summary.first_request_ns.get_or_insert(at);
+        self.first.get_or_insert(request);
+        if self.open.is_empty() {
+            if let Some(emptied) = self.emptied {
+                Self::gap(summary, at.saturating_sub(emptied));
+            }
+            self.busy_since = at;
+        }
+        self.open.insert(request, (at, Some(ReadStage::Order), at));
+    }
+
+    fn stage(&mut self, summary: &mut Summary, request: u64, stage: ReadStage, at: u64) {
+        if let Some(arrived) = self.uncertain.remove(&request) {
+            // Seen again: it is in the daemon from here.
+            if self.open.is_empty() {
+                self.busy_since = at;
+            }
+            self.open.insert(request, (arrived, Some(stage), at));
+            return;
+        }
+        let Some((_, current, since)) = self.open.get_mut(&request) else {
+            self.unmatched(summary, request);
+            // The daemon holds a request: no gap until it replies.
+            self.unmatched_open.insert(request);
+            self.emptied = None;
+            return;
+        };
+        Self::spent(summary, *current, at.saturating_sub(*since));
+        (*current, *since) = (Some(stage), at);
+    }
+
+    fn unmatched(&mut self, summary: &mut Summary, request: u64) {
+        if self.unmatched.insert(request) {
+            summary.requests_unmatched += 1;
+        }
+    }
+
+    /// Events were dropped here: stages, gaps and request time across this point are
+    /// unknown.
+    fn cut(&mut self) {
+        self.uncertain.extend(
+            self.open
+                .drain()
+                .map(|(request, (arrived, _, _))| (request, arrived)),
+        );
+        self.emptied = None;
+    }
+
+    /// No request the daemon may still hold outside `open`.
+    fn settled(&self) -> bool {
+        self.unmatched_open.is_empty() && self.uncertain.is_empty()
+    }
+
+    fn took(&self, summary: &mut Summary, request: u64, ns: u64) {
+        summary.longest_request_ns = summary.longest_request_ns.max(ns);
+        if self.first == Some(request) {
+            summary.first_reply_ns = Some(ns);
+        }
+    }
+
+    fn reply(&mut self, summary: &mut Summary, request: u64, result: Reply, at: u64) {
+        match result {
+            Reply::Data => {}
+            Reply::Error => summary.requests_failed += 1,
+            Reply::Cancelled => summary.requests_cancelled += 1,
+        }
+        let Some((arrived, stage, since)) = self.open.remove(&request) else {
+            if let Some(arrived) = self.uncertain.remove(&request) {
+                self.took(summary, request, at.saturating_sub(arrived));
+            } else {
+                self.unmatched(summary, request);
+                self.unmatched_open.remove(&request);
+            }
+            if self.open.is_empty() && self.settled() {
+                self.emptied = Some(at);
+            }
+            return;
+        };
+        Self::spent(summary, stage, at.saturating_sub(since));
+        self.took(summary, request, at.saturating_sub(arrived));
+        if self.open.is_empty() {
+            summary.in_request_ns = summary
+                .in_request_ns
+                .saturating_add(at.saturating_sub(self.busy_since));
+            self.emptied = self.settled().then_some(at);
+        }
+    }
+
+    /// The stream ended: a gap since the last reply runs to here.
+    fn end(&mut self, summary: &mut Summary, at: u64) {
+        if self.open.is_empty()
+            && let Some(emptied) = self.emptied.take()
+        {
+            Self::gap(summary, at.saturating_sub(emptied));
+        }
+    }
+
+    /// A snapshot at `at` of a stream still open: unfinished waits run to it.
+    fn snapshot(&self, summary: &mut Summary, at: u64) {
+        if self.open.is_empty() {
+            if let Some(emptied) = self.emptied {
+                Self::gap(summary, at.saturating_sub(emptied));
+            }
+            return;
+        }
+        for &(_, stage, since) in self.open.values() {
+            Self::spent(summary, stage, at.saturating_sub(since));
+        }
+        summary.in_request_ns = summary
+            .in_request_ns
+            .saturating_add(at.saturating_sub(self.busy_since));
+    }
+
+    fn gap(summary: &mut Summary, ns: u64) {
+        summary.no_request_ns = summary.no_request_ns.saturating_add(ns);
+        summary.longest_no_request_ns = summary.longest_no_request_ns.max(ns);
+    }
+
+    fn spent(summary: &mut Summary, stage: Option<ReadStage>, ns: u64) {
+        let (total, longest) = match stage {
+            Some(ReadStage::Order) => {
+                (&mut summary.request_order_ns, &mut summary.longest_order_ns)
+            }
+            Some(ReadStage::Lock) => (&mut summary.request_lock_ns, &mut summary.longest_lock_ns),
+            Some(ReadStage::Read) => (&mut summary.request_read_ns, &mut summary.longest_read_ns),
+            None => return,
+        };
+        *total = total.saturating_add(ns);
+        *longest = (*longest).max(ns);
+    }
+}
+
 /// The wait that starts with `step`.
 const fn waiting_after(step: Step) -> Cause {
     match step {
@@ -429,9 +705,12 @@ const fn waiting_after(step: Step) -> Cause {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Summary {
     pub events: usize,
+    /// Events lost between the kept head and tail. When not zero, request counts and
+    /// gap totals cover only the kept events.
     pub dropped: u64,
-    /// From the first read (its window) to its first byte; the client's pause after
-    /// open is not ours.
+    /// Stream fetch latency: from the reader's first prefetch window to the first bytes
+    /// it got from it. Not the daemon's request latency ([`first_reply_ns`](Self::first_reply_ns))
+    /// and not click-to-play time.
     pub first_byte_ns: Option<u64>,
     pub stalls: u32,
     pub stall_ns: u64,
@@ -454,16 +733,60 @@ pub struct Summary {
     /// Segments from the cache or another reader's fetch.
     pub cached: u32,
     pub seeks: u32,
-    /// Time the client paused between reads.
+    /// Time between stream reads, summed from [`Event::Idle`]. Includes the daemon's
+    /// ordering and handle-lock waits; not proof the client paused.
     pub client_ns: u64,
+    /// Open work before the trace started (path, caller and metadata lookups).
+    pub open_before_ns: Option<u64>,
+    /// From the trace start to the open's reply.
+    pub open_reply_ns: Option<u64>,
+    /// FUSE read requests that reached the daemon. Reads over HTTP are not timed per request.
+    pub requests: u32,
+    pub requests_failed: u32,
+    pub requests_cancelled: u32,
+    /// Requests with no reply in the kept events: still in the daemon, or (with dropped
+    /// events) a reply that was not kept.
+    pub requests_pending: u32,
+    /// Replies or stages whose request arrival was not kept.
+    pub requests_unmatched: u32,
+    /// From the trace start to the first read request reaching the daemon.
+    pub first_request_ns: Option<u64>,
+    /// From the first read request reaching the daemon to the daemon's reply to it.
+    pub first_reply_ns: Option<u64>,
+    /// Request time per stage, summed over requests (concurrent requests overlap).
+    pub request_order_ns: u64,
+    pub request_lock_ns: u64,
+    pub request_read_ns: u64,
+    pub longest_order_ns: u64,
+    pub longest_lock_ns: u64,
+    pub longest_read_ns: u64,
+    /// Longest arrival-to-reply of one request.
+    pub longest_request_ns: u64,
+    /// From the first request on, time with at least one read request in the daemon.
+    pub in_request_ns: u64,
+    /// From the first request to the last reply (or the end), time with no read request
+    /// in the daemon. The kernel, its page cache or the player had the time; the trace
+    /// cannot tell which.
+    pub no_request_ns: u64,
+    pub longest_no_request_ns: u64,
 }
 
 impl Summary {
-    /// `records` in time order.
+    /// `records` in time order, up to the last of them.
     #[must_use]
     pub fn of(records: &[Record], dropped: u64) -> Self {
+        Self::until(records, dropped, None)
+    }
+
+    /// `records` in time order; a stream without an end counts its unfinished request
+    /// waits and its gap without requests to `now_ns`.
+    #[must_use]
+    pub fn until(records: &[Record], dropped: u64, now_ns: Option<u64>) -> Self {
         let mut summary = Self {
-            events: records.len(),
+            events: records
+                .iter()
+                .filter(|r| !matches!(r.event, Event::Dropped { .. }))
+                .count(),
             dropped,
             ..Self::default()
         };
@@ -473,8 +796,28 @@ impl Summary {
         // When each sample was taken, and whether it saw idle connections.
         let mut samples: Vec<(u64, bool)> = Vec::new();
         let mut asked = None;
+        let mut requests = Requests::default();
+        let mut ended = false;
         for record in records {
             match record.event {
+                Event::Opened { before_ns, .. } => {
+                    summary.open_before_ns = Some(before_ns);
+                    summary.open_reply_ns = Some(record.at_ns);
+                }
+                Event::Request { request, .. } => {
+                    requests.arrive(&mut summary, request, record.at_ns);
+                }
+                Event::RequestStage { request, stage } => {
+                    requests.stage(&mut summary, request, stage, record.at_ns);
+                }
+                Event::Replied {
+                    request, result, ..
+                } => requests.reply(&mut summary, request, result, record.at_ns),
+                Event::End { .. } => {
+                    ended = true;
+                    requests.end(&mut summary, record.at_ns);
+                }
+                Event::Dropped { .. } => requests.cut(),
                 Event::Segment {
                     segment,
                     hedge,
@@ -543,9 +886,16 @@ impl Summary {
                 Event::Window { .. } => {
                     asked.get_or_insert(record.at_ns);
                 }
-                Event::Open { .. } | Event::End { .. } => {}
+                Event::Open { .. } => {}
             }
         }
+        if let Some(now) = now_ns.filter(|_| !ended) {
+            requests.snapshot(&mut summary, now);
+        }
+        summary.requests_pending = u32::try_from(
+            requests.open.len() + requests.unmatched_open.len() + requests.uncertain.len(),
+        )
+        .unwrap_or(u32::MAX);
         for (segment, start, end) in stalls {
             // The reader samples as a stall begins; later samples see it half over.
             let began = samples.partition_point(|&(at, _)| at <= start);
@@ -575,6 +925,8 @@ impl Summary {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::wait::Supplied;
 
@@ -766,10 +1118,253 @@ mod tests {
             .iter()
             .map(|r| match r.event {
                 Event::End { bytes } => bytes,
+                Event::Dropped { events } => 100 + events,
                 _ => u64::MAX,
             })
             .collect();
-        assert_eq!(kept, [0, 1, 8, 9]);
+        assert_eq!(kept, [0, 1, 106, 8, 9], "the cut is marked");
         assert_eq!(dropped, 6);
+    }
+
+    #[test]
+    fn request_time_splits_into_order_lock_and_read_and_gaps_without_requests() {
+        let arrive = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        let stage = |request, stage| Event::RequestStage { request, stage };
+        let reply = |request, result| Event::Replied {
+            request,
+            bytes: 0,
+            result,
+        };
+        let records = [
+            at(0, Event::Open { size: 8 }),
+            at(
+                30,
+                Event::Opened {
+                    request: 1,
+                    handle: 3,
+                    inode: 9,
+                    before_ns: 20,
+                },
+            ),
+            at(100, arrive(2)),
+            at(110, stage(2, ReadStage::Lock)),
+            at(130, stage(2, ReadStage::Read)),
+            // Overlaps request 2: both in the daemon at once count once.
+            at(150, arrive(3)),
+            at(200, reply(2, Reply::Data)),
+            at(250, reply(3, Reply::Cancelled)),
+            // No request in the daemon from 250 to 1250.
+            at(1250, arrive(4)),
+            at(1260, stage(4, ReadStage::Lock)),
+            at(1270, stage(4, ReadStage::Read)),
+            at(1300, reply(4, Reply::Error)),
+            // A reply whose arrival was dropped, and a request still in the daemon.
+            at(1400, reply(5, Reply::Data)),
+            at(1500, arrive(6)),
+        ];
+        let s = Summary::of(&records, 0);
+        assert_eq!((s.open_before_ns, s.open_reply_ns), (Some(20), Some(30)));
+        assert_eq!(s.requests, 4);
+        assert_eq!((s.requests_failed, s.requests_cancelled), (1, 1));
+        assert_eq!((s.requests_pending, s.requests_unmatched), (1, 1));
+        assert_eq!(
+            (s.first_request_ns, s.first_reply_ns),
+            (Some(100), Some(100))
+        );
+        // Request 3 never left the order stage: 100 ns.
+        assert_eq!(s.request_order_ns, 10 + 100 + 10);
+        assert_eq!(s.request_lock_ns, 20 + 10);
+        assert_eq!(s.request_read_ns, 70 + 30);
+        assert_eq!(s.longest_order_ns, 100);
+        assert_eq!(s.longest_request_ns, 100);
+        assert_eq!(s.in_request_ns, 150 + 50);
+        // Request 5 was in the daemon before 1400 since an unknown time: only the gap
+        // from its reply to the arrival at 1500 counts.
+        assert_eq!(s.no_request_ns, 1000 + 100);
+        assert_eq!(s.longest_no_request_ns, 1000);
+    }
+
+    fn requests_until(records: &[Record], dropped: u64, now: u64) -> Summary {
+        Summary::until(records, dropped, Some(now))
+    }
+
+    #[test]
+    fn a_live_summary_counts_unfinished_waits_to_now() {
+        let arrive = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        let waiting = [
+            at(0, Event::Open { size: 8 }),
+            at(100, arrive(1)),
+            at(110, stage_of(1, ReadStage::Lock)),
+            at(120, stage_of(1, ReadStage::Read)),
+        ];
+        let s = requests_until(&waiting, 0, 1120);
+        assert_eq!(
+            s.request_read_ns, 1000,
+            "the read still waiting on the backend"
+        );
+        assert_eq!(s.longest_read_ns, 1000);
+        assert_eq!(s.in_request_ns, 1020);
+        assert_eq!(s.requests_pending, 1);
+        assert_eq!(
+            Summary::of(&waiting, 0).request_read_ns,
+            0,
+            "no snapshot time"
+        );
+
+        let quiet = [
+            at(0, Event::Open { size: 8 }),
+            at(100, arrive(1)),
+            at(
+                120,
+                Event::Replied {
+                    request: 1,
+                    bytes: 0,
+                    result: Reply::Data,
+                },
+            ),
+        ];
+        let s = requests_until(&quiet, 0, 1120);
+        assert_eq!(s.no_request_ns, 1000, "no request since the last reply");
+
+        let mut ended = quiet.to_vec();
+        ended.push(at(150, Event::End { bytes: 0 }));
+        assert_eq!(requests_until(&ended, 0, 1120).no_request_ns, 30);
+    }
+
+    #[test]
+    fn dropped_events_are_not_counted_as_time_without_requests() {
+        let arrive = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        let reply = |request| Event::Replied {
+            request,
+            bytes: 0,
+            result: Reply::Data,
+        };
+        // Request 2 arrived somewhere in the dropped part.
+        let records = [
+            at(0, Event::Open { size: 8 }),
+            at(10, arrive(1)),
+            at(20, reply(1)),
+            at(90, Event::Dropped { events: 1 }),
+            at(90, stage_of(2, ReadStage::Read)),
+            at(95, stage_of(2, ReadStage::Read)),
+            at(100, reply(2)),
+            at(110, arrive(3)),
+            at(120, reply(3)),
+        ];
+        let s = Summary::of(&records, 1);
+        assert_eq!(s.no_request_ns, 10, "only 100 to 110 is known");
+        assert_eq!(s.requests_unmatched, 1, "counted once");
+        assert_eq!(s.events, records.len() - 1, "the marker is no event");
+
+        // A request open across the cut keeps its total but loses its stage split.
+        let records = [
+            at(10, arrive(1)),
+            at(20, stage_of(1, ReadStage::Read)),
+            at(50, Event::Dropped { events: 3 }),
+            at(80, reply(1)),
+        ];
+        let s = Summary::of(&records, 3);
+        assert_eq!(
+            s.request_read_ns, 0,
+            "its stage events may be the dropped ones"
+        );
+        assert_eq!(s.longest_request_ns, 70);
+
+        // Its reply may be dropped: no request time runs on from before the cut.
+        let records = [at(10, arrive(1)), at(90, Event::Dropped { events: 1 })];
+        let s = requests_until(&records, 1, 1000);
+        assert_eq!(s.in_request_ns, 0);
+        assert_eq!(s.requests_pending, 1);
+
+        // Request 1 is still in the daemon when request 2 replies: no gap after it.
+        let records = [
+            at(50, Event::Dropped { events: 2 }),
+            at(50, stage_of(1, ReadStage::Read)),
+            at(60, arrive(2)),
+            at(70, reply(2)),
+        ];
+        let s = requests_until(&records, 2, 1070);
+        assert_eq!(s.no_request_ns, 0);
+        assert_eq!(s.requests_pending, 1);
+        let mut replied = records.to_vec();
+        replied.push(at(80, reply(1)));
+        assert_eq!(requests_until(&replied, 2, 1080).no_request_ns, 1000);
+    }
+
+    #[test]
+    fn the_cut_goes_before_the_earliest_kept_tail_event() {
+        let trace = Trace::new(4);
+        let start = trace.started();
+        let request = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        trace.record_at(start + Duration::from_nanos(10), request(1));
+        trace.record_at(start + Duration::from_nanos(15), request(2));
+        trace.record_at(
+            start + Duration::from_nanos(20),
+            stage_of(1, ReadStage::Lock),
+        );
+        trace.record_at(
+            start + Duration::from_nanos(100),
+            Event::Window { segment: 0 },
+        );
+        // Stamped before the sample, recorded after it.
+        trace.record_at(
+            start + Duration::from_nanos(90),
+            stage_of(1, ReadStage::Read),
+        );
+        let (records, dropped) = trace.records();
+        assert_eq!(dropped, 1, "the lock stage");
+        let cut = records
+            .iter()
+            .position(|r| matches!(r.event, Event::Dropped { .. }))
+            .unwrap();
+        assert_eq!(records[cut].at_ns, 90);
+        assert!(records[cut + 1..].iter().all(|r| r.at_ns >= 90));
+        let s = Summary::of(&records, dropped);
+        assert_eq!(
+            s.request_order_ns, 0,
+            "order time across the cut is unknown"
+        );
+    }
+
+    fn stage_of(request: u64, stage: ReadStage) -> Event {
+        Event::RequestStage { request, stage }
+    }
+
+    #[test]
+    fn a_stream_without_requests_has_no_request_timing() {
+        let records = [
+            at(0, Event::Open { size: 8 }),
+            at(9, Event::End { bytes: 0 }),
+        ];
+        let s = Summary::of(&records, 0);
+        assert_eq!(s.requests, 0);
+        assert_eq!((s.first_request_ns, s.first_reply_ns), (None, None));
+        assert_eq!((s.in_request_ns, s.no_request_ns), (0, 0));
+    }
+
+    #[test]
+    fn the_wall_clock_anchor_is_taken_at_the_start() {
+        let before = unix_ns(SystemTime::now());
+        let trace = Trace::new(4);
+        let after = unix_ns(SystemTime::now());
+        assert!((before..=after).contains(&trace.started_unix_ns()));
+        assert_eq!(trace.capacity(), 4);
+        assert_eq!(trace.at_ns(trace.started()), 0);
     }
 }

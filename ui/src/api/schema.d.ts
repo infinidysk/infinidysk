@@ -1421,8 +1421,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One trace as JSON lines: a header (`read`, `providers` by id, `summary`, `dropped`),
-         *     then one event per line in time order.
+         * One trace as JSON lines: a header (`read`, `providers` by id, `summary`, `dropped`,
+         *     `clock`, `limits`, `coverage`), then one event per line in time order.
          */
         get: operations["get_trace"];
         put?: never;
@@ -2731,14 +2731,27 @@ export interface components {
             trigger: components["schemas"]["RunTrigger"];
         };
         LivePending: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Since the request reached the daemon.
+             */
             age_ms: number;
             /** Format: int64 */
             offset: number;
+            /**
+             * Format: int64
+             * @description FUSE request id, as in trace `request` events.
+             */
+            request: number;
             /** Format: int32 */
             size: number;
             /** @description `order` (behind earlier reads of the handle), `handle_lock` or `read`. */
             stage: string;
+            /**
+             * Format: int64
+             * @description Time in `stage`.
+             */
+            stage_ms: number;
         };
         LiveProvider: {
             /** @description Connections with at least one request on them; at most `max_connections`. */
@@ -2780,8 +2793,17 @@ export interface components {
             client: string;
             /** @description `fuse` or `webdav`. */
             delivery: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Stream wait of the first read that returned bytes. Excludes FUSE ordering and
+             *     handle-lock waits and time before that read; not click-to-play time.
+             */
             first_byte_ms?: number | null;
+            /**
+             * Format: int64
+             * @description FUSE file handle, once the open replied.
+             */
+            handle?: number | null;
             head?: components["schemas"]["LiveHead"] | null;
             /** Format: int64 */
             id: number;
@@ -3126,6 +3148,28 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * @description The cgroup's `memory.events`: cumulative counts since the cgroup was created, so
+         *     compare two samples. `high` and `max` count throttling and reclaim at those limits,
+         *     `oom_kill` processes killed. None for a key this kernel does not report.
+         */
+        MemoryEvents: {
+            /** Format: int64 */
+            high?: number | null;
+            /** Format: int64 */
+            low?: number | null;
+            /** Format: int64 */
+            max?: number | null;
+            /** Format: int64 */
+            oom?: number | null;
+            /** Format: int64 */
+            oom_kill?: number | null;
+        };
+        /** @description The cgroup's `memory.pressure` (pressure stall information). */
+        MemoryPressure: {
+            full?: components["schemas"]["Psi"] | null;
+            some?: components["schemas"]["Psi"] | null;
+        };
+        /**
          * @description How a session was started.
          * @enum {string}
          */
@@ -3311,6 +3355,30 @@ export interface components {
         };
         Paused: {
             paused: boolean;
+        };
+        /** @description A FUSE read request in the daemon, as of the response. */
+        PendingView: {
+            /**
+             * Format: int64
+             * @description Since it reached the daemon.
+             */
+            age_ms: number;
+            /** Format: int64 */
+            offset: number;
+            /**
+             * Format: int64
+             * @description FUSE request id, as in trace `request` events.
+             */
+            request: number;
+            /** Format: int32 */
+            size: number;
+            /** @description `order` (behind earlier reads of the handle), `handle_lock` or `read`. */
+            stage: string;
+            /**
+             * Format: int64
+             * @description Time in `stage`.
+             */
+            stage_ms: number;
         };
         /** @description Streaming and cache tuning: a preset, plus overrides (`None` takes the preset's value). */
         Performance: {
@@ -3741,6 +3809,20 @@ export interface components {
              */
             used: number;
         };
+        /**
+         * @description One pressure line: percent of wall time stalled, averaged by the kernel over 10, 60 and
+         *     300 s, and `total_us` stalled since the cgroup was created (cumulative).
+         */
+        Psi: {
+            /** Format: double */
+            avg10: number;
+            /** Format: double */
+            avg300: number;
+            /** Format: double */
+            avg60: number;
+            /** Format: int64 */
+            total_us: number;
+        };
         /** @description Import queue choices; everything else is fixed by `infinidysk-lab:docs/import-policy.md`. */
         Queue: {
             /**
@@ -3824,9 +3906,16 @@ export interface components {
             delivery: components["schemas"]["DeliveryView"];
             /**
              * Format: int64
-             * @description From open to the first byte served.
+             * @description Stream wait of the first read that returned bytes: from its first pending poll to
+             *     its bytes, 0 when they were ready. Excludes FUSE ordering and handle-lock waits
+             *     and time before that read; not click-to-play time.
              */
             first_byte_ms?: number | null;
+            /**
+             * Format: int64
+             * @description FUSE file handle, once the open replied.
+             */
+            handle?: number | null;
             /** Format: int64 */
             id: number;
             /** Format: uuid */
@@ -3837,6 +3926,8 @@ export interface components {
              */
             opened_at: number;
             path: string;
+            /** @description FUSE read requests in the daemon and not answered yet, oldest first. */
+            pending: components["schemas"]["PendingView"][];
             /** @description Player id from a signed `/view` link. */
             player?: string | null;
             /** Format: int64 */
@@ -4002,8 +4093,9 @@ export interface components {
             cgroup_sock_bytes?: number | null;
             /**
              * Format: int64
-             * @description `memory.swap.current`, read once a minute with `process_memory`; none without swap
-             *     accounting.
+             * @description `memory.swap.current`, read once a minute with `process_memory` (at its `at`); none
+             *     without swap accounting. Swap in use shows what was swapped out at some point, not
+             *     that anything waits on it now; `memory_pressure` shows stalls.
              */
             cgroup_swap_bytes?: number | null;
             /**
@@ -4016,6 +4108,7 @@ export interface components {
              * @description The CPU quota, else the CPUs this process may run on.
              */
             cpu_limit_cores: number;
+            memory_events?: components["schemas"]["MemoryEvents"] | null;
             /**
              * Format: int64
              * @description Page cache and reclaimable slab (dentries, inodes); the kernel may free it under
@@ -4029,6 +4122,7 @@ export interface components {
             memory_limit_bytes: number;
             /** @description Whether `memory_limit_bytes` is a cgroup limit rather than the host's memory. */
             memory_limited: boolean;
+            memory_pressure?: components["schemas"]["MemoryPressure"] | null;
             /**
              * Format: int64
              * @description Memory in use apart from the kernel cache: the process, kernel and socket buffers.

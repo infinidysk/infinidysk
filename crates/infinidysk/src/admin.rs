@@ -1702,17 +1702,39 @@ struct ReadView {
     traced: bool,
     /// Player id from a signed `/view` link.
     player: Option<String>,
-    /// From open to the first byte served.
+    /// Stream wait of the first read that returned bytes: from its first pending poll to
+    /// its bytes, 0 when they were ready. Excludes FUSE ordering and handle-lock waits
+    /// and time before that read; not click-to-play time.
     first_byte_ms: Option<u64>,
     /// Waits for data of at least 1 s, other than for the first byte and the first byte
     /// after a seek.
     stalls: u64,
     stall_ms: u64,
     seeks: u64,
+    /// FUSE file handle, once the open replied.
+    handle: Option<u64>,
+    /// FUSE read requests in the daemon and not answered yet, oldest first.
+    pending: Vec<PendingView>,
 }
 
-fn read_view(session: &Session) -> ReadView {
+/// A FUSE read request in the daemon, as of the response.
+#[derive(Serialize, ToSchema)]
+struct PendingView {
+    /// FUSE request id, as in trace `request` events.
+    request: u64,
+    offset: u64,
+    size: u32,
+    /// Since it reached the daemon.
+    age_ms: u64,
+    /// `order` (behind earlier reads of the handle), `handle_lock` or `read`.
+    stage: &'static str,
+    /// Time in `stage`.
+    stage_ms: u64,
+}
+
+fn read_view(session: &Session, now: Instant) -> ReadView {
     let (stalls, stalled) = session.stalls();
+    let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
     ReadView {
         id: session.id,
         item_id: session.item.0,
@@ -1729,12 +1751,23 @@ fn read_view(session: &Session) -> ReadView {
         position: session.pos(),
         traced: session.trace.is_some(),
         player: session.player.clone(),
-        first_byte_ms: session
-            .first_byte()
-            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+        first_byte_ms: session.first_byte().map(ms),
         stalls,
-        stall_ms: u64::try_from(stalled.as_millis()).unwrap_or(u64::MAX),
+        stall_ms: ms(stalled),
         seeks: session.seeks(),
+        handle: session.handle(),
+        pending: session
+            .requests_at(now)
+            .into_iter()
+            .map(|r| PendingView {
+                request: r.request,
+                offset: r.offset,
+                size: r.size,
+                age_ms: ms(r.age),
+                stage: r.stage.label(),
+                stage_ms: ms(r.stage_age),
+            })
+            .collect(),
     }
 }
 
@@ -1759,7 +1792,7 @@ async fn get_reads(
             .open()
             .iter()
             .filter(|s| query.player.is_none() || s.player == query.player)
-            .map(|s| read_view(s))
+            .map(|s| read_view(s, Instant::now()))
             .collect(),
     )
 }
@@ -1843,15 +1876,15 @@ async fn get_traces(State(admin): State<Arc<Admin>>) -> Json<Vec<TraceView>> {
             .filter_map(|s| {
                 Some(TraceView {
                     summary: s.trace.as_ref()?.summary(),
-                    read: read_view(s),
+                    read: read_view(s, Instant::now()),
                 })
             })
             .collect(),
     )
 }
 
-/// One trace as JSON lines: a header (`read`, `providers` by id, `summary`, `dropped`),
-/// then one event per line in time order.
+/// One trace as JSON lines: a header (`read`, `providers` by id, `summary`, `dropped`,
+/// `clock`, `limits`, `coverage`), then one event per line in time order.
 #[utoipa::path(get, path = "/api/v1/traces/{id}", tag = "tracing",
     params(("id" = u64, Path)),
     responses((status = 200, content_type = "application/x-ndjson", body = String),
@@ -1888,7 +1921,10 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
     let session = admin.vfs.sessions().get(id).ok_or(Fail::NotFound)?;
     let trace = session.trace.as_ref().ok_or(Fail::NotFound)?;
     let (records, dropped) = trace.records();
-    let mut read = read_view(&session);
+    // Taken after the records, so no exported event or pending arrival is past it.
+    let exported = Instant::now();
+    let exported_unix_ns = infinidysk_core::trace::unix_ns(SystemTime::now());
+    let mut read = read_view(&session, exported);
     let mut providers = admin.client.provider_names();
     let mut header = json!({});
     if redact {
@@ -1917,8 +1953,23 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
     }
     header["read"] = json!(read);
     header["providers"] = json!(providers);
-    header["summary"] = json!(Summary::of(&records, dropped));
+    let summary = Summary::until(&records, dropped, Some(trace.at_ns(exported)));
+    let events = summary.events;
+    header["summary"] = json!(summary);
     header["dropped"] = json!(dropped);
+    header["clock"] = json!({
+        "started_unix_ns": trace.started_unix_ns(),
+        "exported_unix_ns": exported_unix_ns,
+        "exported_at_ns": trace.at_ns(exported),
+        "note": TRACE_CLOCK_NOTE,
+    });
+    header["limits"] = json!({
+        "capacity": trace.capacity(),
+        "events": events,
+        "dropped": dropped,
+        "min_idle_ms": 50,
+    });
+    header["coverage"] = json!(trace_coverage(&session, dropped));
     let mut body = header.to_string();
     for record in &records {
         body.push('\n');
@@ -1926,4 +1977,40 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
     }
     body.push('\n');
     Ok(body)
+}
+
+const TRACE_CLOCK_NOTE: &str = "at_ns counts from the trace start on a monotonic clock. Wall \
+    time of an event is started_unix_ns + at_ns; the wall clock is read once, so a later \
+    clock step does not bend durations. exported_at_ns is the export on the same scale: a \
+    pending request's age runs to it.";
+
+/// What this trace cannot show, so a reader does not take a gap for an answer.
+fn trace_coverage(session: &Session, dropped: u64) -> Vec<&'static str> {
+    let mut notes = Vec::new();
+    match session.delivery {
+        Delivery::Fuse => {
+            notes.push(
+                "FUSE requests are timed from their arrival in the daemon. Time in the \
+                 kernel before that (its queue, page cache hits, readahead decisions) and \
+                 player behaviour are not visible.",
+            );
+            if session.handle().is_none() {
+                notes.push("No open reply was recorded: the open failed, or is still running.");
+            }
+        }
+        Delivery::WebDav => {
+            notes.push("WebDAV reads are not timed per request; only stream events are recorded.");
+        }
+    }
+    if dropped > 0 {
+        notes.push(
+            "Events between the kept start and the kept end were dropped, marked by a \
+             dropped event: request counts, gaps and stage totals cover the kept events \
+             only. Time across the dropped part counts as neither a gap nor a stage.",
+        );
+    }
+    if session.closed_at().is_none() {
+        notes.push("The read is still open: totals run to the export, not to the end.");
+    }
+    notes
 }

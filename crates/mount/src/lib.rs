@@ -472,10 +472,34 @@ impl Drop for Turn<'_> {
 }
 
 impl<R: AsyncRead + AsyncSeek + Unpin> OpenFile<R> {
-    async fn read(&self, id: u64, offset: u64, size: u32) -> std::io::Result<BytesMut> {
-        let listed = self.session.as_ref().map(|s| s.request(id, offset, size));
+    /// Reads `size` bytes at `offset` for FUSE request `id`, which reached the daemon at
+    /// `arrived`; a traced session records each stage and the reply.
+    async fn read(
+        &self,
+        id: u64,
+        offset: u64,
+        size: u32,
+        arrived: Instant,
+    ) -> std::io::Result<BytesMut> {
+        let listed = self
+            .session
+            .as_ref()
+            .map(|s| s.request(id, offset, size, arrived));
+        let result = self.read_listed(listed.as_ref(), offset, size).await;
+        if let Some(listed) = listed {
+            listed.end(result.as_ref().ok().map(BytesMut::len));
+        }
+        result
+    }
+
+    async fn read_listed(
+        &self,
+        listed: Option<&infinidysk_vfs::Request>,
+        offset: u64,
+        size: u32,
+    ) -> std::io::Result<BytesMut> {
         let stage = |stage| {
-            if let Some(listed) = &listed {
+            if let Some(listed) = listed {
                 listed.stage(stage);
             }
         };
@@ -864,22 +888,31 @@ impl Fs {
     }
 
     /// Logs one kernel request on [`OPS`]; fields are only built when that is enabled.
+    /// `child` is the inode a lookup found.
+    #[allow(clippy::too_many_arguments)] // One call per callback; a struct would only rename them.
     fn traced<T>(
         &self,
         req: &Request,
         op: &'static str,
         ino: Inode,
+        child: Option<Inode>,
         name: Option<&OsStr>,
         started: Instant,
         result: Result<T>,
     ) -> Result<T> {
+        let errno = result.as_ref().err().map_or(0, |e| -libc::c_int::from(*e));
+        // Only while a trace window is open, without paths: correlates slow lookups
+        // before an open with the read traces.
+        self.vfs
+            .sessions()
+            .fuse_op(op, req.unique, ino, child, started, errno);
         debug!(
             target: OPS,
             op,
             path = %self.describe(ino, name),
             // procfs reads never wait on a disk.
             caller = %caller_label(process(req.pid), req.pid, req.uid, req.gid),
-            errno = result.as_ref().err().map_or(0, |e| -libc::c_int::from(*e)),
+            errno,
             us = started.elapsed().as_micros(),
         );
         result
@@ -983,6 +1016,10 @@ impl Filesystem for Fs {
 
     async fn lookup(&self, req: Request, parent: Inode, name: &OsStr) -> Result<ReplyEntry> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("lookup", req.unique, parent, started);
         let result = guarded("lookup", async {
             let path = child_path(&self.path(parent)?, name)?;
             let node = self.node(&path).await?;
@@ -995,7 +1032,8 @@ impl Filesystem for Fs {
             })
         })
         .await;
-        self.traced(&req, "lookup", parent, Some(name), started, result)
+        let child = result.as_ref().ok().map(|e| e.attr.ino);
+        self.traced(&req, "lookup", parent, child, Some(name), started, result)
     }
 
     async fn forget(&self, _req: Request, inode: Inode, nlookup: u64) {
@@ -1017,6 +1055,10 @@ impl Filesystem for Fs {
         _flags: u32,
     ) -> Result<ReplyAttr> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("getattr", req.unique, inode, started);
         let result = guarded("getattr", async {
             // A buffered read refreshes expired attributes through here, naming its handle.
             // Answer from the handle so reads never wait on, or fail with, the database.
@@ -1035,11 +1077,15 @@ impl Filesystem for Fs {
             })
         })
         .await;
-        self.traced(&req, "getattr", inode, None, started, result)
+        self.traced(&req, "getattr", inode, None, None, started, result)
     }
 
     async fn readlink(&self, req: Request, inode: Inode) -> Result<ReplyData> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("readlink", req.unique, inode, started);
         let result = guarded("readlink", async {
             match self.node(&self.path(inode)?).await? {
                 Node::Link { target, .. } => Ok(ReplyData {
@@ -1049,19 +1095,19 @@ impl Filesystem for Fs {
             }
         })
         .await;
-        self.traced(&req, "readlink", inode, None, started, result)
+        self.traced(&req, "readlink", inode, None, None, started, result)
     }
 
     async fn unlink(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         let started = Instant::now();
         let result = guarded("unlink", self.delete(parent, name)).await;
-        self.traced(&req, "unlink", parent, Some(name), started, result)
+        self.traced(&req, "unlink", parent, None, Some(name), started, result)
     }
 
     async fn rmdir(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         let started = Instant::now();
         let result = guarded("rmdir", self.delete(parent, name)).await;
-        self.traced(&req, "rmdir", parent, Some(name), started, result)
+        self.traced(&req, "rmdir", parent, None, Some(name), started, result)
     }
 
     /// Mode, owner and time changes are accepted and ignored, as apps treat them as
@@ -1141,6 +1187,10 @@ impl Filesystem for Fs {
 
     async fn open(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("open", req.unique, inode, started);
         let open = async {
             if flags & libc::O_ACCMODE.cast_unsigned() != libc::O_RDONLY.cast_unsigned() {
                 return Err(libc::EROFS.into());
@@ -1173,12 +1223,19 @@ impl Filesystem for Fs {
                 }
             };
             Ok(ReplyOpen {
-                fh: self.insert(Handle::File(Arc::new(file), attr)),
+                fh: {
+                    let session = file.session.clone();
+                    let fh = self.insert(Handle::File(Arc::new(file), attr));
+                    if let Some(session) = session {
+                        session.opened(req.unique, fh, inode, started);
+                    }
+                    fh
+                },
                 flags: FOPEN_KEEP_CACHE,
             })
         };
         let result = guarded("open", self.interruptible(&req, open)).await;
-        self.traced(&req, "open", inode, None, started, result)
+        self.traced(&req, "open", inode, None, None, started, result)
     }
 
     async fn read(
@@ -1194,10 +1251,12 @@ impl Filesystem for Fs {
             return Err(Errno::new_is_dir());
         };
         let read = async {
-            file.read(req.unique, offset, size).await.map_err(|error| {
-                warn!(path = &*file.path, offset, reason = %error, "FUSE read failed");
-                Errno::from(libc::EIO)
-            })
+            file.read(req.unique, offset, size, started)
+                .await
+                .map_err(|error| {
+                    warn!(path = &*file.path, offset, reason = %error, "FUSE read failed");
+                    Errno::from(libc::EIO)
+                })
         };
         let result = guarded("read", self.interruptible(&req, read)).await;
         // Reads waiting their turn recheck however this one ended.
@@ -1239,7 +1298,7 @@ impl Filesystem for Fs {
     ) -> Result<()> {
         let started = Instant::now();
         lock(&self.handles).remove(&fh);
-        self.traced(&req, "release", inode, None, started, Ok(()))
+        self.traced(&req, "release", inode, None, None, started, Ok(()))
     }
 
     async fn statfs(&self, _req: Request, _inode: Inode) -> Result<ReplyStatFs> {
@@ -1257,6 +1316,10 @@ impl Filesystem for Fs {
 
     async fn opendir(&self, req: Request, inode: Inode, _flags: u32) -> Result<ReplyOpen> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("opendir", req.unique, inode, started);
         let result = guarded("opendir", async {
             let path = self.path(inode)?;
             let node = self.node(&path).await?;
@@ -1273,7 +1336,7 @@ impl Filesystem for Fs {
             })
         })
         .await;
-        self.traced(&req, "opendir", inode, None, started, result)
+        self.traced(&req, "opendir", inode, None, None, started, result)
     }
 
     async fn releasedir(&self, _req: Request, _inode: Inode, fh: u64, _flags: u32) -> Result<()> {
@@ -1702,7 +1765,7 @@ mod tests {
         let probe = file.reader.lock().await;
         let read = tokio::spawn({
             let file = Arc::clone(&file);
-            async move { file.read(1, 4096, 4096).await }
+            async move { file.read(1, 4096, 4096, Instant::now()).await }
         });
         tokio::time::sleep(ORDER_WAIT * 3).await;
         drop(probe);

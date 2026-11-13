@@ -39,6 +39,8 @@ const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 const SAMPLES_PER_MINUTE: usize = 30;
 /// Swap and `/proc/self/status` are read this often, not every sample.
 const SLOW_READ_EVERY: Duration = Duration::from_mins(1);
+/// Memory samples kept for support packs: 10 minutes at [`SAMPLE_EVERY`].
+const RESOURCE_SAMPLES: usize = 300;
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
 const DAY_MS: i64 = 24 * HOUR_MS;
@@ -108,6 +110,10 @@ struct Sampled {
     kernel_queued: Option<(Instant, bool)>,
     /// The last [`SlowRead`].
     slow: Option<SlowRead>,
+    /// Memory evidence per sample, newest last.
+    resources: VecDeque<ResourceSample>,
+    /// Why the last sample had no resources.
+    resources_unavailable: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -234,10 +240,142 @@ struct Resources {
     cgroup_slab_reclaimable_bytes: Option<u64>,
     cgroup_anon_thp_bytes: Option<u64>,
     cgroup_shmem_bytes: Option<u64>,
-    /// `memory.swap.current`, read once a minute with `process_memory`; none without swap
-    /// accounting.
+    /// `memory.swap.current`, read once a minute with `process_memory` (at its `at`); none
+    /// without swap accounting. Swap in use shows what was swapped out at some point, not
+    /// that anything waits on it now; `memory_pressure` shows stalls.
     cgroup_swap_bytes: Option<u64>,
+    /// `memory.events`, read every sample; none when unreadable.
+    memory_events: Option<MemoryEvents>,
+    /// `memory.pressure` (PSI), read every sample; none when unreadable, or when this
+    /// kernel has no PSI.
+    memory_pressure: Option<MemoryPressure>,
     process_memory: ProcessMemory,
+}
+
+/// The cgroup's `memory.events`: cumulative counts since the cgroup was created, so
+/// compare two samples. `high` and `max` count throttling and reclaim at those limits,
+/// `oom_kill` processes killed. None for a key this kernel does not report.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
+struct MemoryEvents {
+    low: Option<u64>,
+    high: Option<u64>,
+    max: Option<u64>,
+    oom: Option<u64>,
+    oom_kill: Option<u64>,
+}
+
+impl MemoryEvents {
+    fn parse(text: &str) -> Self {
+        Self {
+            low: stat_field(text, "low"),
+            high: stat_field(text, "high"),
+            max: stat_field(text, "max"),
+            oom: stat_field(text, "oom"),
+            oom_kill: stat_field(text, "oom_kill"),
+        }
+    }
+}
+
+/// The cgroup's `memory.pressure` (pressure stall information).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, ToSchema)]
+struct MemoryPressure {
+    /// Some tasks stalled on memory: reclaim, swap-in, refaults.
+    some: Option<Psi>,
+    /// All non-idle tasks stalled on memory at once.
+    full: Option<Psi>,
+}
+
+impl MemoryPressure {
+    fn parse(text: &str) -> Self {
+        let line = |kind: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(kind)?.strip_prefix(' '))
+                .and_then(Psi::parse)
+        };
+        Self {
+            some: line("some"),
+            full: line("full"),
+        }
+    }
+}
+
+/// One pressure line: percent of wall time stalled, averaged by the kernel over 10, 60 and
+/// 300 s, and `total_us` stalled since the cgroup was created (cumulative).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+struct Psi {
+    avg10: f64,
+    avg60: f64,
+    avg300: f64,
+    total_us: u64,
+}
+
+impl Psi {
+    /// `avg10=0.00 avg60=0.00 avg300=0.00 total=0`.
+    fn parse(fields: &str) -> Option<Self> {
+        let field = |key: &str| {
+            fields
+                .split_whitespace()
+                .find_map(|f| f.strip_prefix(key)?.strip_prefix('='))
+        };
+        Some(Self {
+            avg10: field("avg10")?.parse().ok()?,
+            avg60: field("avg60")?.parse().ok()?,
+            avg300: field("avg300")?.parse().ok()?,
+            total_us: field("total")?.parse().ok()?,
+        })
+    }
+}
+
+/// Memory evidence of one sample, for support packs.
+#[derive(Clone, Copy, Serialize)]
+struct ResourceSample {
+    /// When it was sampled, Unix milliseconds.
+    at: i64,
+    /// `memory.current`: the process, the kernel for it, and page cache.
+    memory_current_bytes: u64,
+    memory_kernel_cache_bytes: u64,
+    /// `memory.max`, or the host's memory when that is lower or unset.
+    memory_limit_bytes: u64,
+    memory_limited: bool,
+    /// `memory.swap.current` as read at `swap_at` (once a minute), not at `at`.
+    swap_bytes: Option<u64>,
+    swap_at: i64,
+    events: Option<MemoryEvents>,
+    pressure: Option<MemoryPressure>,
+}
+
+/// The last 10 minutes of memory evidence.
+#[derive(Serialize)]
+pub struct ResourceHistory {
+    sample_every_ms: u64,
+    max_samples: usize,
+    /// Why the newest sample had no resources; samples stop while this is set.
+    unavailable: Option<String>,
+    notes: &'static str,
+    /// Oldest first.
+    samples: Vec<ResourceSample>,
+}
+
+const RESOURCE_NOTES: &str = "memory.events counters and PSI total_us are cumulative since \
+    the cgroup was created: compare samples. PSI avg10/avg60/avg300 are percentages the \
+    kernel averages itself. Swap is read once a minute at swap_at. Swap in use does not show \
+    that anything waits on memory now; only pressure does. null means the file was missing \
+    or unreadable (no PSI in this kernel, or no swap accounting).";
+
+impl ResourceSample {
+    fn of(at: i64, r: &Resources) -> Self {
+        Self {
+            at,
+            memory_current_bytes: r.memory_process_bytes + r.memory_kernel_cache_bytes,
+            memory_kernel_cache_bytes: r.memory_kernel_cache_bytes,
+            memory_limit_bytes: r.memory_limit_bytes,
+            memory_limited: r.memory_limited,
+            swap_bytes: r.cgroup_swap_bytes,
+            swap_at: r.process_memory.at,
+            events: r.memory_events,
+            pressure: r.memory_pressure,
+        }
+    }
 }
 
 impl Resources {
@@ -288,6 +426,8 @@ struct LiveRead {
     position: u64,
     served: u64,
     bps: u64,
+    /// Stream wait of the first read that returned bytes. Excludes FUSE ordering and
+    /// handle-lock waits and time before that read; not click-to-play time.
     first_byte_ms: Option<u64>,
     stalls: u64,
     stall_ms: u64,
@@ -297,6 +437,8 @@ struct LiveRead {
     budget_bytes: u64,
     /// How long the reader has waited for data; none while it is not waiting.
     waiting_ms: Option<u64>,
+    /// FUSE file handle, once the open replied.
+    handle: Option<u64>,
     /// FUSE requests on this read not answered yet, oldest first.
     pending: Vec<LivePending>,
     /// The segment the reader is blocked on.
@@ -328,11 +470,16 @@ struct LiveFuse {
 
 #[derive(Clone, Serialize, ToSchema)]
 struct LivePending {
+    /// FUSE request id, as in trace `request` events.
+    request: u64,
     offset: u64,
     size: u32,
+    /// Since the request reached the daemon.
     age_ms: u64,
     /// `order` (behind earlier reads of the handle), `handle_lock` or `read`.
     stage: &'static str,
+    /// Time in `stage`.
+    stage_ms: u64,
 }
 
 #[derive(Clone, Serialize, ToSchema)]
@@ -755,6 +902,18 @@ impl Metrics {
         self.live.subscribe()
     }
 
+    /// Memory evidence of the last 10 minutes, for support packs.
+    pub fn resource_history(&self) -> ResourceHistory {
+        let state = self.state();
+        ResourceHistory {
+            sample_every_ms: u64::try_from(SAMPLE_EVERY.as_millis()).unwrap_or(u64::MAX),
+            max_samples: RESOURCE_SAMPLES,
+            unavailable: state.resources_unavailable.clone(),
+            notes: RESOURCE_NOTES,
+            samples: state.resources.iter().copied().collect(),
+        }
+    }
+
     /// Opens the store, then samples every 2 s and writes each finished minute until
     /// `cancel`, then writes the rest and closes the store.
     pub async fn run(&self, cancel: CancellationToken) {
@@ -900,10 +1059,16 @@ impl Metrics {
                 r.cgroup_swap_bytes = slow.cgroup_swap_bytes;
                 r.process_memory = slow.process;
                 state.slow = Some(slow);
+                if state.resources.len() == RESOURCE_SAMPLES {
+                    state.resources.pop_front();
+                }
+                state.resources.push_back(ResourceSample::of(at, &r));
+                state.resources_unavailable = None;
                 (Some(r), None)
             }
             Err(reason) => {
                 state.cpu = None;
+                state.resources_unavailable = Some(reason.clone());
                 (None, Some(reason))
             }
         };
@@ -1046,14 +1211,17 @@ impl Metrics {
                     traced: s.trace.is_some(),
                     budget_bytes: s.watch().budget(),
                     waiting_ms: s.waiting().map(ms),
+                    handle: s.handle(),
                     pending: s
                         .requests()
                         .into_iter()
                         .map(|r| LivePending {
+                            request: r.request,
                             offset: r.offset,
                             size: r.size,
                             age_ms: ms(r.age),
                             stage: r.stage.label(),
+                            stage_ms: ms(r.stage_age),
                         })
                         .collect(),
                     head: s.watch().head().map(|(segment, wait)| LiveHead {
@@ -2344,6 +2512,10 @@ impl Cgroup {
                 cgroup_anon_thp_bytes: stat_field(&stat, "anon_thp"),
                 cgroup_shmem_bytes: stat_field(&stat, "shmem"),
                 cgroup_swap_bytes: None,
+                memory_events: read("memory.events").ok().map(|t| MemoryEvents::parse(&t)),
+                memory_pressure: read("memory.pressure")
+                    .ok()
+                    .map(|t| MemoryPressure::parse(&t)),
                 process_memory: ProcessMemory::default(),
             },
         ))
@@ -2483,12 +2655,15 @@ mod tests {
             traced: false,
             budget_bytes: 0,
             waiting_ms,
+            handle: None,
             pending: oldest_ms
                 .map(|age_ms| LivePending {
+                    request: 0,
                     offset: 0,
                     size: 0,
                     age_ms,
                     stage: "order",
+                    stage_ms: age_ms,
                 })
                 .into_iter()
                 .collect(),
@@ -2637,9 +2812,11 @@ mod tests {
                 "cgroup_swap_bytes",
                 "cpu_cores",
                 "cpu_limit_cores",
+                "memory_events",
                 "memory_kernel_cache_bytes",
                 "memory_limit_bytes",
                 "memory_limited",
+                "memory_pressure",
                 "memory_process_bytes",
                 "memory_segment_cache_bytes",
                 "memory_segment_cache_limit_bytes",
@@ -2684,6 +2861,49 @@ mod tests {
         let (_, r) = cgroup.read().expect("all cgroup files exist");
         assert_eq!(r.memory_kernel_cache_bytes, 2000);
         assert_eq!(r.memory_process_bytes, 0);
+        // Without memory.events and memory.pressure (no PSI) they are unavailable.
+        assert_eq!((r.memory_events, r.memory_pressure), (None, None));
+
+        write(
+            "memory.events",
+            "low 0\nhigh 12\nmax 3\noom 1\noom_kill 1\noom_group_kill 0\n",
+        );
+        write(
+            "memory.pressure",
+            "some avg10=1.50 avg60=0.25 avg300=0.00 total=123456\n\
+             full avg10=0.00 avg60=0.00 avg300=0.00 total=789\n",
+        );
+        let (_, r) = cgroup.read().expect("all cgroup files exist");
+        assert_eq!(
+            r.memory_events,
+            Some(MemoryEvents {
+                low: Some(0),
+                high: Some(12),
+                max: Some(3),
+                oom: Some(1),
+                oom_kill: Some(1),
+            })
+        );
+        let pressure = r.memory_pressure.expect("pressure was read");
+        assert_eq!(
+            pressure.some,
+            Some(Psi {
+                avg10: 1.5,
+                avg60: 0.25,
+                avg300: 0.0,
+                total_us: 123_456,
+            })
+        );
+        assert_eq!(pressure.full.map(|p| p.total_us), Some(789));
+        // An older kernel without the `full` line.
+        assert_eq!(
+            MemoryPressure::parse("some avg10=0.00 avg60=0.00 avg300=0.00 total=5\n").full,
+            None
+        );
+        let sample = serde_json::to_value(ResourceSample::of(7, &r)).expect("sample serializes");
+        assert_eq!(sample["memory_current_bytes"], 2000);
+        assert_eq!(sample["events"]["high"], 12);
+        assert_eq!(sample["pressure"]["some"]["total_us"], 123_456);
 
         fs::remove_dir_all(&dir).expect("temp dir is removable");
     }
