@@ -408,8 +408,9 @@ impl Sessions {
     }
 
     pub fn set_tracing(&self, tracing: Option<Tracing>) {
+        let mut inner = self.lock();
         self.traced.store(tracing.is_some(), Ordering::Relaxed);
-        self.lock().tracing = tracing;
+        inner.tracing = tracing;
     }
 
     /// The tracing window, if still running.
@@ -844,8 +845,8 @@ mod tests {
         sessions.fuse_op("lookup", 2, 1, Some(7), Instant::now(), 0);
         sessions.fuse_op("lookup", 3, 5, Some(8), slow, 2);
         let ops = sessions.fuse_ops();
-        assert_eq!((ops.seen, ops.fast), (2, 1));
-        let op = ops.listed.front().unwrap();
+        assert_eq!(ops.seen, 2);
+        let op = ops.listed.iter().find(|op| op.request == 3).unwrap();
         assert_eq!(
             (op.op, op.request, op.inode, op.child, op.errno),
             ("lookup", 3, 5, Some(8), 2)

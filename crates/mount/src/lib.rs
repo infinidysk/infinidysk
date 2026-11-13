@@ -1316,6 +1316,10 @@ impl Filesystem for Fs {
 
     async fn opendir(&self, req: Request, inode: Inode, _flags: u32) -> Result<ReplyOpen> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("opendir", req.unique, inode, started);
         let result = guarded("opendir", async {
             let path = self.path(inode)?;
             let node = self.node(&path).await?;

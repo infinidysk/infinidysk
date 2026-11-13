@@ -60,8 +60,9 @@ keeps no copy of it.
                          installs imported from C#).
   traces/                Read traces, when included: index.json lists them, one NDJSON
                          file per trace (header line, then one event per line).
-                         fuse-ops.json lists FUSE lookup, getattr, readlink and open
-                         calls of 1 ms or more while tracing was on (inodes, no paths).
+                         fuse-ops.json lists FUSE metadata calls (lookup, getattr,
+                         readlink, open, opendir and more) of 1 ms or more while
+                         tracing was on (inodes, no paths).
 
 Timing terms
 
@@ -436,8 +437,8 @@ fn fuse_ops(admin: &Admin) -> Value {
                  go first (dropped). Times are the daemon's: from the call's arrival to \
                  its reply. open's inode matches the trace's opened event; lookup's \
                  inode is the parent directory and its child_inode is the one an open \
-                 names. pending lists lookup, getattr, readlink and open calls with no \
-                 reply at export, oldest first, with their age at export.",
+                 names. pending lists lookup, getattr, readlink, open and opendir calls \
+                 with no reply at export, oldest first, with their age at export.",
         "min_took_us": u64::try_from(infinidysk_vfs::FuseOps::MIN.as_micros()).unwrap_or(u64::MAX),
         "max_listed": infinidysk_vfs::FuseOps::KEPT,
         "seen": ops.seen,

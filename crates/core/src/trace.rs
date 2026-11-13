@@ -547,6 +547,9 @@ struct Requests {
     unmatched: HashSet<u64>,
     /// Unmatched requests seen in a stage and not replied yet: still in the daemon.
     unmatched_open: HashSet<u64>,
+    /// Requests open at a cut, to their arrival: their reply may be among the dropped
+    /// events, so whether they are still in the daemon is unknown.
+    uncertain: HashMap<u64, u64>,
 }
 
 impl Requests {
@@ -564,6 +567,14 @@ impl Requests {
     }
 
     fn stage(&mut self, summary: &mut Summary, request: u64, stage: ReadStage, at: u64) {
+        if let Some(arrived) = self.uncertain.remove(&request) {
+            // Seen again: it is in the daemon from here.
+            if self.open.is_empty() {
+                self.busy_since = at;
+            }
+            self.open.insert(request, (arrived, Some(stage), at));
+            return;
+        }
         let Some((_, current, since)) = self.open.get_mut(&request) else {
             self.unmatched(summary, request);
             // The daemon holds a request: no gap until it replies.
@@ -581,13 +592,26 @@ impl Requests {
         }
     }
 
-    /// Events were dropped here: stages and gaps across this point are unknown.
-    fn cut(&mut self, at: u64) {
-        for (_, stage, since) in self.open.values_mut() {
-            (*stage, *since) = (None, at);
-        }
-        if self.open.is_empty() {
-            self.emptied = None;
+    /// Events were dropped here: stages, gaps and request time across this point are
+    /// unknown.
+    fn cut(&mut self) {
+        self.uncertain.extend(
+            self.open
+                .drain()
+                .map(|(request, (arrived, _, _))| (request, arrived)),
+        );
+        self.emptied = None;
+    }
+
+    /// No request the daemon may still hold outside `open`.
+    fn settled(&self) -> bool {
+        self.unmatched_open.is_empty() && self.uncertain.is_empty()
+    }
+
+    fn took(&self, summary: &mut Summary, request: u64, ns: u64) {
+        summary.longest_request_ns = summary.longest_request_ns.max(ns);
+        if self.first == Some(request) {
+            summary.first_reply_ns = Some(ns);
         }
     }
 
@@ -598,24 +622,24 @@ impl Requests {
             Reply::Cancelled => summary.requests_cancelled += 1,
         }
         let Some((arrived, stage, since)) = self.open.remove(&request) else {
-            self.unmatched(summary, request);
-            self.unmatched_open.remove(&request);
-            if self.open.is_empty() && self.unmatched_open.is_empty() {
+            if let Some(arrived) = self.uncertain.remove(&request) {
+                self.took(summary, request, at.saturating_sub(arrived));
+            } else {
+                self.unmatched(summary, request);
+                self.unmatched_open.remove(&request);
+            }
+            if self.open.is_empty() && self.settled() {
                 self.emptied = Some(at);
             }
             return;
         };
         Self::spent(summary, stage, at.saturating_sub(since));
-        let took = at.saturating_sub(arrived);
-        summary.longest_request_ns = summary.longest_request_ns.max(took);
-        if self.first == Some(request) {
-            summary.first_reply_ns = Some(took);
-        }
+        self.took(summary, request, at.saturating_sub(arrived));
         if self.open.is_empty() {
             summary.in_request_ns = summary
                 .in_request_ns
                 .saturating_add(at.saturating_sub(self.busy_since));
-            self.emptied = self.unmatched_open.is_empty().then_some(at);
+            self.emptied = self.settled().then_some(at);
         }
     }
 
@@ -793,7 +817,7 @@ impl Summary {
                     ended = true;
                     requests.end(&mut summary, record.at_ns);
                 }
-                Event::Dropped { .. } => requests.cut(record.at_ns),
+                Event::Dropped { .. } => requests.cut(),
                 Event::Segment {
                     segment,
                     hedge,
@@ -868,8 +892,10 @@ impl Summary {
         if let Some(now) = now_ns.filter(|_| !ended) {
             requests.snapshot(&mut summary, now);
         }
-        summary.requests_pending =
-            u32::try_from(requests.open.len() + requests.unmatched_open.len()).unwrap_or(u32::MAX);
+        summary.requests_pending = u32::try_from(
+            requests.open.len() + requests.unmatched_open.len() + requests.uncertain.len(),
+        )
+        .unwrap_or(u32::MAX);
         for (segment, start, end) in stalls {
             // The reader samples as a stall begins; later samples see it half over.
             let began = samples.partition_point(|&(at, _)| at <= start);
@@ -1255,6 +1281,12 @@ mod tests {
             "its stage events may be the dropped ones"
         );
         assert_eq!(s.longest_request_ns, 70);
+
+        // Its reply may be dropped: no request time runs on from before the cut.
+        let records = [at(10, arrive(1)), at(90, Event::Dropped { events: 1 })];
+        let s = requests_until(&records, 1, 1000);
+        assert_eq!(s.in_request_ns, 0);
+        assert_eq!(s.requests_pending, 1);
 
         // Request 1 is still in the daemon when request 2 replies: no gap after it.
         let records = [
