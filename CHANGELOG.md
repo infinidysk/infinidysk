@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.0-beta.10](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.9...v2.0.0-beta.10) (2026-11-13)
+
+
+### Features
+
+* **mount:** traces and support packs show where playback start-up time goes ([#1923](https://github.com/infinidysk/infinidysk/issues/1923)) ([53ba6cc](https://github.com/infinidysk/infinidysk/commit/53ba6cc5a2b85afa898ae3902f04ce89186c8d22))
+
+
+### Bug Fixes
+
+* **deps:** Bump the cargo-minor-patch group with 2 updates ([#1922](https://github.com/infinidysk/infinidysk/issues/1922)) ([60f2744](https://github.com/infinidysk/infinidysk/commit/60f274471dded75fe5b62e0f24ef2207031cbb04))
+* **health:** skip media analysis requests for deleted files ([#1916](https://github.com/infinidysk/infinidysk/issues/1916)) ([a5b33db](https://github.com/infinidysk/infinidysk/commit/a5b33db6fafd2c34d7f2eca1e9b531b6ce871faa))
+* **stream:** reuse metadata scan data for library scans and playback ([#1914](https://github.com/infinidysk/infinidysk/issues/1914)) ([a248440](https://github.com/infinidysk/infinidysk/commit/a248440504a84c6d4a8dea2daff074b17320b1fa))
+
 ## [2.0.0-beta.9](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.8...v2.0.0-beta.9) (2026-11-13)
 
 
