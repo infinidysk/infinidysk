@@ -490,9 +490,9 @@ pub async fn serve(
     drop(mount_tx);
     #[cfg(target_os = "linux")]
     let mount = fuse.then(|| {
-        tokio::spawn(infinidysk_fuse::run(
+        tokio::spawn(infinidysk_mount::run(
             Arc::clone(&vfs),
-            infinidysk_fuse::Config {
+            infinidysk_mount::Config {
                 mount_dir: settings.mount.dir.clone().into(),
                 uid: boot.uid,
                 gid: boot.gid,

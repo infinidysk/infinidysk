@@ -23,7 +23,7 @@ Dependencies point downward only. Parsers do no I/O. No traits just for mocking.
 | | `queue` | NZB → archive/multipart → PAR2 → items |
 | | `health` | health checks and repair |
 | L4 | `webdav` | axum WebDAV |
-| | `fuse` | `fuse3` mount; Linux only (`cfg(target_os = "linux")`), so macOS dev builds skip it |
+| | `mount` | FUSE mount on `infinidysk-fuse`; Linux only (`cfg(target_os = "linux")`), so macOS dev builds skip it |
 | bin | `infinidysk` | lib + thin `main.rs`: config, auth, SAB API, admin API, embedded UI |
 | side | `import` | one-time C# `/config` importer (deletable) |
 | | `testkit` | loopback NNTP server, seed-1025 corpus (dev-dependency only) |

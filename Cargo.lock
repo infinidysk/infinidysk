@@ -823,7 +823,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -910,25 +910,6 @@ name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
-
-[[package]]
-name = "fuse3"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09349e068fa9cd4a824467af7c7d482dc4da154fed4689ab867672b87118816"
-dependencies = [
- "async-notify",
- "bytes",
- "futures-util",
- "libc",
- "nix",
- "slab",
- "tokio",
- "tracing",
- "trait-make",
- "which",
- "zerocopy",
-]
 
 [[package]]
 name = "futures-channel"
@@ -1418,9 +1399,9 @@ dependencies = [
  "infinidysk-arr",
  "infinidysk-core",
  "infinidysk-db",
- "infinidysk-fuse",
  "infinidysk-health",
  "infinidysk-import",
+ "infinidysk-mount",
  "infinidysk-nntp",
  "infinidysk-queue",
  "infinidysk-stream",
@@ -1532,21 +1513,21 @@ dependencies = [
 
 [[package]]
 name = "infinidysk-fuse"
-version = "0.0.0"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f074f6f3d1a60238cf914f56a7466bae65d981308f1aa42e8b00b808aac913d"
 dependencies = [
+ "async-notify",
  "bytes",
- "fuse3",
  "futures-util",
- "infinidysk-core",
- "infinidysk-db",
- "infinidysk-nntp",
- "infinidysk-stream",
- "infinidysk-testkit",
- "infinidysk-vfs",
+ "libc",
  "nix",
+ "slab",
  "tokio",
- "tokio-util",
  "tracing",
+ "trait-make",
+ "which",
+ "zerocopy",
 ]
 
 [[package]]
@@ -1594,6 +1575,25 @@ dependencies = [
  "tracing",
  "uuid",
  "zstd",
+]
+
+[[package]]
+name = "infinidysk-mount"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "infinidysk-core",
+ "infinidysk-db",
+ "infinidysk-fuse",
+ "infinidysk-nntp",
+ "infinidysk-stream",
+ "infinidysk-testkit",
+ "infinidysk-vfs",
+ "nix",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -2531,7 +2531,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2873,7 +2873,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4116,7 +4116,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ Rules for AI agents working on **infinidysk 2.x**, the from-scratch Rust rewrite
 
 A Usenet-backed virtual filesystem. It imports NZBs from Sonarr/Radarr through a **SABnzbd-compatible API** and serves the media through a **native FUSE mount** and **WebDAV**, streaming directly from Usenet providers without downloading files to disk.
 
-Target: a single Rust binary (tokio, axum, rustls, `fuse3`, sqlx on SQLite + PostgreSQL) with an embedded React + Vite SPA, shipped as a Linux x64/arm64 Docker image on `ubuntu:26.04` (glibc; no musl/Alpine). macOS is for development and benchmarking only. No Windows.
+Target: a single Rust binary (tokio, axum, rustls, `infinidysk-fuse`, sqlx on SQLite + PostgreSQL) with an embedded React + Vite SPA, shipped as a Linux x64/arm64 Docker image on `ubuntu:26.04` (glibc; no musl/Alpine). macOS is for development and benchmarking only. No Windows.
 
 ## Load on demand
 

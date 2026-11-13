@@ -21,11 +21,11 @@ use std::task::{Context, Poll, ready};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use bytes::{BufMut, BytesMut};
-use fuse3::raw::MountHandle;
-use fuse3::raw::prelude::*;
-use fuse3::{Errno, Inode, MountOptions, Result};
 use futures_util::stream::{self, Stream};
 use futures_util::{FutureExt as _, StreamExt as _};
+use infinidysk_fuse::raw::MountHandle;
+use infinidysk_fuse::raw::prelude::*;
+use infinidysk_fuse::{Errno, Inode, MountOptions, Result};
 use infinidysk_vfs::{Delivery, Handle as File, Kernel, Kind, Node, Origin, ReadStage, Vfs};
 use nix::libc;
 use nix::mount::{MntFlags, MsFlags, umount2};
@@ -35,9 +35,9 @@ use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
-/// Per-request log target: `RUST_LOG=infinidysk_fuse::ops=debug` logs every kernel request
+/// Per-request log target: `RUST_LOG=infinidysk_mount::ops=debug` logs every kernel request
 /// but reads, `=trace` adds reads.
-const OPS: &str = "infinidysk_fuse::ops";
+const OPS: &str = "infinidysk_mount::ops";
 
 /// New and removed names show within this.
 const ENTRY_TTL: Duration = Duration::from_secs(1);
@@ -628,7 +628,7 @@ impl Inodes {
 }
 
 /// A readdirplus listing that gives back the lookups of entries the reply never sent:
-/// the one fuse3 pulls past a full buffer, or all of them when the reply fails.
+/// the one infinidysk-fuse pulls past a full buffer, or all of them when the reply fails.
 struct Counted<'a, S> {
     entries: S,
     inodes: &'a Mutex<Inodes>,
@@ -660,7 +660,7 @@ where
 
 impl<S> Drop for Counted<'_, S> {
     fn drop(&mut self) {
-        // fuse3 asks for the next entry only after packing the previous one.
+        // infinidysk-fuse asks for the next entry only after packing the previous one.
         if let Some(&ino) = self.pulled.last() {
             lock(self.inodes).forget(ino, 1);
         }
@@ -988,7 +988,7 @@ impl Filesystem for Fs {
             let node = self.node(&path).await?;
             let ino = lock(&self.inodes).remember(&path);
             Ok(ReplyEntry {
-                // fuse3 uses this for both the name and its attributes.
+                // infinidysk-fuse uses this for both the name and its attributes.
                 ttl: ttls(&node).0,
                 attr: self.attr(ino, &node),
                 generation: 0,
@@ -1391,7 +1391,7 @@ mod tests {
             lookups
         };
 
-        // A full reply: fuse3 packs two entries, pulls the third, then drops the stream.
+        // A full reply: infinidysk-fuse packs two entries, pulls the third, then drops the stream.
         let reply = fs
             .readdirplus(Request::default(), ROOT, fh, 0, 0)
             .await
