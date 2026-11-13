@@ -280,6 +280,62 @@ async fn an_idle_reader_holding_the_budget_does_not_freeze_another() {
 }
 
 #[tokio::test]
+async fn playback_does_not_join_analysis_waiting_for_a_maintenance_lease() {
+    let corpus = Corpus::generate(1025, 1, ARTICLE_SIZE);
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    let (client, layout) = setup(&corpus, &server);
+    let cache = Arc::new(Cache::new(true, ARTICLE_SIZE as u64 * 64));
+    let lease = client.exclusive("", Duration::from_secs(5)).await.unwrap();
+    let mut analysis = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 1)
+        .with_cache(Arc::clone(&cache))
+        .with_strict();
+    let analyzing = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        analysis.read_to_end(&mut bytes).await.unwrap();
+        bytes
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while cache.stats().misses == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(server.body_commands(), 0, "analysis waits behind the lease");
+
+    let trace = Arc::new(Trace::new(1000));
+    let mut playback = SegmentReader::new(client, layout, 1)
+        .with_cache(cache)
+        .with_trace(Arc::clone(&trace));
+    let mut bytes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), playback.read_to_end(&mut bytes))
+        .await
+        .expect("playback must bypass the blocked analysis fetch")
+        .unwrap();
+    assert_eq!(bytes, corpus.data);
+    drop(lease);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), analyzing)
+            .await
+            .unwrap()
+            .unwrap(),
+        corpus.data
+    );
+    assert!(
+        trace.records().0.iter().all(|record| !matches!(
+            record.event,
+            Event::Segment {
+                step: Step::Joined { .. },
+                ..
+            }
+        )),
+        "playback starts its own priority fetch"
+    );
+}
+
+#[tokio::test]
 async fn readers_share_fetches_and_reread_from_the_cache() {
     let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
     let server = LoopbackServer::start(corpus.articles.clone())
