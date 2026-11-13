@@ -21,11 +21,11 @@ bytes = "1.12.1"
 cmake = "0.1"
 crc32fast = "1.5.2"
 flate2 = "1.1.10"
-fuse3 = { version = "0.10.0", features = ["tokio-runtime", "unprivileged"] }
 futures-util = { version = "0.3.34", default-features = false }
 hmac = "0.13.0"
 http-body-util = "0.1.5"
 httpdate = "1.0.3"
+infinidysk-fuse = { version = "0.10.1", features = ["tokio-runtime", "unprivileged"] }
 ipnet = "2.12.2"
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-always"] }
 lzma-rs = { version = "0.3.0", default-features = false }

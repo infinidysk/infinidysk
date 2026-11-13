@@ -56,11 +56,11 @@ pub fn started_ms() -> i64 {
 
 /// The FUSE library's request session. It warns whenever an interrupt reply lands after its
 /// request finished, a normal race, and opens an INFO span per request.
-const FUSE_SESSION: &str = "fuse3::raw::session";
+const FUSE_SESSION: &str = "infinidysk_fuse::raw::session";
 
 /// The log filter for a `RUST_LOG` value (`None` when unset): `info` when unset or invalid.
 /// [`FUSE_SESSION`] stays at `error` unless a directive targets it; `EnvFilter` matches
-/// targets by prefix, so `fuse3=debug` does.
+/// targets by prefix, so `infinidysk_fuse=debug` does.
 pub fn filter(rust_log: Option<&str>) -> EnvFilter {
     let quiet = format!("{FUSE_SESSION}=error");
     let fallback = || EnvFilter::new(format!("info,{quiet}"));
@@ -432,7 +432,7 @@ mod tests {
                 .with(filter(rust_log))
                 .with(Capture::MEMORY);
             tracing::subscriber::with_default(subscriber, || {
-                tracing::warn!(target: "fuse3::raw::session", "{message}");
+                tracing::warn!(target: "infinidysk_fuse::raw::session", "{message}");
             });
             LOGS.snapshot(Level::Warn, None)
                 .iter()
@@ -443,7 +443,10 @@ mod tests {
             Some("info,infinidysk_mount=debug"),
             "fuse session: app only"
         ));
-        assert!(logged(Some("info,fuse3=warn"), "fuse session: named"));
+        assert!(logged(
+            Some("info,infinidysk_fuse=warn"),
+            "fuse session: named"
+        ));
     }
 
     #[test]
