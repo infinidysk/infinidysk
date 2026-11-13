@@ -311,4 +311,8 @@ async fn reads_the_tree_through_the_kernel() {
     let ops = vfs.sessions().fuse_ops();
     assert!(ops.seen > 0, "metadata calls were counted while tracing");
     assert_eq!(ops.seen, ops.fast + ops.listed.len() as u64 + ops.dropped);
+    assert!(
+        vfs.sessions().pending_ops().is_empty(),
+        "every metadata call replied"
+    );
 }

@@ -888,11 +888,14 @@ impl Fs {
     }
 
     /// Logs one kernel request on [`OPS`]; fields are only built when that is enabled.
+    /// `child` is the inode a lookup found.
+    #[allow(clippy::too_many_arguments)] // One call per callback; a struct would only rename them.
     fn traced<T>(
         &self,
         req: &Request,
         op: &'static str,
         ino: Inode,
+        child: Option<Inode>,
         name: Option<&OsStr>,
         started: Instant,
         result: Result<T>,
@@ -902,7 +905,7 @@ impl Fs {
         // before an open with the read traces.
         self.vfs
             .sessions()
-            .fuse_op(op, req.unique, ino, started, errno);
+            .fuse_op(op, req.unique, ino, child, started, errno);
         debug!(
             target: OPS,
             op,
@@ -1013,6 +1016,10 @@ impl Filesystem for Fs {
 
     async fn lookup(&self, req: Request, parent: Inode, name: &OsStr) -> Result<ReplyEntry> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("lookup", req.unique, parent, started);
         let result = guarded("lookup", async {
             let path = child_path(&self.path(parent)?, name)?;
             let node = self.node(&path).await?;
@@ -1025,7 +1032,8 @@ impl Filesystem for Fs {
             })
         })
         .await;
-        self.traced(&req, "lookup", parent, Some(name), started, result)
+        let child = result.as_ref().ok().map(|e| e.attr.ino);
+        self.traced(&req, "lookup", parent, child, Some(name), started, result)
     }
 
     async fn forget(&self, _req: Request, inode: Inode, nlookup: u64) {
@@ -1047,6 +1055,10 @@ impl Filesystem for Fs {
         _flags: u32,
     ) -> Result<ReplyAttr> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("getattr", req.unique, inode, started);
         let result = guarded("getattr", async {
             // A buffered read refreshes expired attributes through here, naming its handle.
             // Answer from the handle so reads never wait on, or fail with, the database.
@@ -1065,11 +1077,15 @@ impl Filesystem for Fs {
             })
         })
         .await;
-        self.traced(&req, "getattr", inode, None, started, result)
+        self.traced(&req, "getattr", inode, None, None, started, result)
     }
 
     async fn readlink(&self, req: Request, inode: Inode) -> Result<ReplyData> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("readlink", req.unique, inode, started);
         let result = guarded("readlink", async {
             match self.node(&self.path(inode)?).await? {
                 Node::Link { target, .. } => Ok(ReplyData {
@@ -1079,19 +1095,19 @@ impl Filesystem for Fs {
             }
         })
         .await;
-        self.traced(&req, "readlink", inode, None, started, result)
+        self.traced(&req, "readlink", inode, None, None, started, result)
     }
 
     async fn unlink(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         let started = Instant::now();
         let result = guarded("unlink", self.delete(parent, name)).await;
-        self.traced(&req, "unlink", parent, Some(name), started, result)
+        self.traced(&req, "unlink", parent, None, Some(name), started, result)
     }
 
     async fn rmdir(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         let started = Instant::now();
         let result = guarded("rmdir", self.delete(parent, name)).await;
-        self.traced(&req, "rmdir", parent, Some(name), started, result)
+        self.traced(&req, "rmdir", parent, None, Some(name), started, result)
     }
 
     /// Mode, owner and time changes are accepted and ignored, as apps treat them as
@@ -1171,6 +1187,10 @@ impl Filesystem for Fs {
 
     async fn open(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         let started = Instant::now();
+        let _pending = self
+            .vfs
+            .sessions()
+            .begin_op("open", req.unique, inode, started);
         let open = async {
             if flags & libc::O_ACCMODE.cast_unsigned() != libc::O_RDONLY.cast_unsigned() {
                 return Err(libc::EROFS.into());
@@ -1215,7 +1235,7 @@ impl Filesystem for Fs {
             })
         };
         let result = guarded("open", self.interruptible(&req, open)).await;
-        self.traced(&req, "open", inode, None, started, result)
+        self.traced(&req, "open", inode, None, None, started, result)
     }
 
     async fn read(
@@ -1278,7 +1298,7 @@ impl Filesystem for Fs {
     ) -> Result<()> {
         let started = Instant::now();
         lock(&self.handles).remove(&fh);
-        self.traced(&req, "release", inode, None, started, Ok(()))
+        self.traced(&req, "release", inode, None, None, started, Ok(()))
     }
 
     async fn statfs(&self, _req: Request, _inode: Inode) -> Result<ReplyStatFs> {
@@ -1312,7 +1332,7 @@ impl Filesystem for Fs {
             })
         })
         .await;
-        self.traced(&req, "opendir", inode, None, started, result)
+        self.traced(&req, "opendir", inode, None, None, started, result)
     }
 
     async fn releasedir(&self, _req: Request, _inode: Inode, fh: u64, _flags: u32) -> Result<()> {

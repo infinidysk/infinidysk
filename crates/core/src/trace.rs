@@ -3,7 +3,7 @@
 //! A stream without a [`Trace`] records nothing. With one, each event is a short lock
 //! and a copy of a fixed-size value; analysis ([`Trace::summary`]) runs only on demand.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -241,6 +241,11 @@ pub enum Event {
     End {
         bytes: u64,
     },
+    /// Not recorded: [`Trace::records`] marks where `events` were dropped, so a summary
+    /// does not take the missing time for a gap.
+    Dropped {
+        events: u64,
+    },
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if passes a reference.
@@ -348,18 +353,27 @@ impl Trace {
     #[must_use]
     pub fn records(&self) -> (Vec<Record>, u64) {
         let buf = self.lock();
-        let mut records: Vec<Record> = buf.head.iter().chain(&buf.tail).copied().collect();
+        let mut records: Vec<Record> = buf.head.clone();
         let dropped = buf.dropped;
+        if let Some(first) = buf.tail.front().filter(|_| dropped > 0) {
+            records.push(Record {
+                at_ns: first.at_ns,
+                event: Event::Dropped { events: dropped },
+            });
+        }
+        records.extend(buf.tail.iter().copied());
         drop(buf);
         // Threads stamp before taking the lock, so neighbours can land out of order.
         records.sort_by_key(|r| r.at_ns);
         (records, dropped)
     }
 
+    /// The summary up to now: a read still open counts its unfinished waits to now.
     #[must_use]
     pub fn summary(&self) -> Summary {
+        let now = self.at_ns(Instant::now());
         let (records, dropped) = self.records();
-        Summary::of(&records, dropped)
+        Summary::until(&records, dropped, Some(now))
     }
 
     fn lock(&self) -> MutexGuard<'_, Buf> {
@@ -513,13 +527,17 @@ impl Causes {
 /// Read requests in the daemon while a [`Summary`] walks the records.
 #[derive(Default)]
 struct Requests {
-    /// Request id to its arrival, current stage and when that stage began.
-    open: HashMap<u64, (u64, ReadStage, u64)>,
-    /// When the last request left the daemon with none left in it.
+    /// Request id to its arrival, current stage (none when its stage events were
+    /// dropped) and when that stage began.
+    open: HashMap<u64, (u64, Option<ReadStage>, u64)>,
+    /// When the last request left the daemon with none left in it; none when that is
+    /// unknown (dropped events).
     emptied: Option<u64>,
     /// When requests were last counted into `in_request_ns`.
     busy_since: u64,
     first: Option<u64>,
+    /// Requests seen without their arrival, counted once.
+    unmatched: HashSet<u64>,
 }
 
 impl Requests {
@@ -533,16 +551,36 @@ impl Requests {
             }
             self.busy_since = at;
         }
-        self.open.insert(request, (at, ReadStage::Order, at));
+        self.open.insert(request, (at, Some(ReadStage::Order), at));
     }
 
     fn stage(&mut self, summary: &mut Summary, request: u64, stage: ReadStage, at: u64) {
         let Some((_, current, since)) = self.open.get_mut(&request) else {
-            summary.requests_unmatched += 1;
+            self.unmatched(summary, request);
+            // The daemon held a request: the time since the last reply was no gap.
+            if self.open.is_empty() {
+                self.emptied = None;
+            }
             return;
         };
         Self::spent(summary, *current, at.saturating_sub(*since));
-        (*current, *since) = (stage, at);
+        (*current, *since) = (Some(stage), at);
+    }
+
+    fn unmatched(&mut self, summary: &mut Summary, request: u64) {
+        if self.unmatched.insert(request) {
+            summary.requests_unmatched += 1;
+        }
+    }
+
+    /// Events were dropped here: stages and gaps across this point are unknown.
+    fn cut(&mut self, at: u64) {
+        for (_, stage, since) in self.open.values_mut() {
+            (*stage, *since) = (None, at);
+        }
+        if self.open.is_empty() {
+            self.emptied = None;
+        }
     }
 
     fn reply(&mut self, summary: &mut Summary, request: u64, result: Reply, at: u64) {
@@ -552,7 +590,10 @@ impl Requests {
             Reply::Cancelled => summary.requests_cancelled += 1,
         }
         let Some((arrived, stage, since)) = self.open.remove(&request) else {
-            summary.requests_unmatched += 1;
+            self.unmatched(summary, request);
+            if self.open.is_empty() {
+                self.emptied = Some(at);
+            }
             return;
         };
         Self::spent(summary, stage, at.saturating_sub(since));
@@ -578,16 +619,35 @@ impl Requests {
         }
     }
 
+    /// A snapshot at `at` of a stream still open: unfinished waits run to it.
+    fn snapshot(&self, summary: &mut Summary, at: u64) {
+        if self.open.is_empty() {
+            if let Some(emptied) = self.emptied {
+                Self::gap(summary, at.saturating_sub(emptied));
+            }
+            return;
+        }
+        for &(_, stage, since) in self.open.values() {
+            Self::spent(summary, stage, at.saturating_sub(since));
+        }
+        summary.in_request_ns = summary
+            .in_request_ns
+            .saturating_add(at.saturating_sub(self.busy_since));
+    }
+
     fn gap(summary: &mut Summary, ns: u64) {
         summary.no_request_ns = summary.no_request_ns.saturating_add(ns);
         summary.longest_no_request_ns = summary.longest_no_request_ns.max(ns);
     }
 
-    fn spent(summary: &mut Summary, stage: ReadStage, ns: u64) {
+    fn spent(summary: &mut Summary, stage: Option<ReadStage>, ns: u64) {
         let (total, longest) = match stage {
-            ReadStage::Order => (&mut summary.request_order_ns, &mut summary.longest_order_ns),
-            ReadStage::Lock => (&mut summary.request_lock_ns, &mut summary.longest_lock_ns),
-            ReadStage::Read => (&mut summary.request_read_ns, &mut summary.longest_read_ns),
+            Some(ReadStage::Order) => {
+                (&mut summary.request_order_ns, &mut summary.longest_order_ns)
+            }
+            Some(ReadStage::Lock) => (&mut summary.request_lock_ns, &mut summary.longest_lock_ns),
+            Some(ReadStage::Read) => (&mut summary.request_read_ns, &mut summary.longest_read_ns),
+            None => return,
         };
         *total = total.saturating_add(ns);
         *longest = (*longest).max(ns);
@@ -679,11 +739,21 @@ pub struct Summary {
 }
 
 impl Summary {
-    /// `records` in time order.
+    /// `records` in time order, up to the last of them.
     #[must_use]
     pub fn of(records: &[Record], dropped: u64) -> Self {
+        Self::until(records, dropped, None)
+    }
+
+    /// `records` in time order; a stream without an end counts its unfinished request
+    /// waits and its gap without requests to `now_ns`.
+    #[must_use]
+    pub fn until(records: &[Record], dropped: u64, now_ns: Option<u64>) -> Self {
         let mut summary = Self {
-            events: records.len(),
+            events: records
+                .iter()
+                .filter(|r| !matches!(r.event, Event::Dropped { .. }))
+                .count(),
             dropped,
             ..Self::default()
         };
@@ -694,6 +764,7 @@ impl Summary {
         let mut samples: Vec<(u64, bool)> = Vec::new();
         let mut asked = None;
         let mut requests = Requests::default();
+        let mut ended = false;
         for record in records {
             match record.event {
                 Event::Opened { before_ns, .. } => {
@@ -709,7 +780,11 @@ impl Summary {
                 Event::Replied {
                     request, result, ..
                 } => requests.reply(&mut summary, request, result, record.at_ns),
-                Event::End { .. } => requests.end(&mut summary, record.at_ns),
+                Event::End { .. } => {
+                    ended = true;
+                    requests.end(&mut summary, record.at_ns);
+                }
+                Event::Dropped { .. } => requests.cut(record.at_ns),
                 Event::Segment {
                     segment,
                     hedge,
@@ -780,6 +855,9 @@ impl Summary {
                 }
                 Event::Open { .. } => {}
             }
+        }
+        if let Some(now) = now_ns.filter(|_| !ended) {
+            requests.snapshot(&mut summary, now);
         }
         summary.requests_pending = u32::try_from(requests.open.len()).unwrap_or(u32::MAX);
         for (segment, start, end) in stalls {
@@ -1002,10 +1080,11 @@ mod tests {
             .iter()
             .map(|r| match r.event {
                 Event::End { bytes } => bytes,
+                Event::Dropped { events } => 100 + events,
                 _ => u64::MAX,
             })
             .collect();
-        assert_eq!(kept, [0, 1, 8, 9]);
+        assert_eq!(kept, [0, 1, 106, 8, 9], "the cut is marked");
         assert_eq!(dropped, 6);
     }
 
@@ -1065,9 +1144,109 @@ mod tests {
         assert_eq!(s.longest_order_ns, 100);
         assert_eq!(s.longest_request_ns, 100);
         assert_eq!(s.in_request_ns, 150 + 50);
-        // From the reply at 1300 to the arrival at 1500, too.
-        assert_eq!(s.no_request_ns, 1000 + 200);
+        // Request 5 was in the daemon before 1400 since an unknown time: only the gap
+        // from its reply to the arrival at 1500 counts.
+        assert_eq!(s.no_request_ns, 1000 + 100);
         assert_eq!(s.longest_no_request_ns, 1000);
+    }
+
+    fn requests_until(records: &[Record], dropped: u64, now: u64) -> Summary {
+        Summary::until(records, dropped, Some(now))
+    }
+
+    #[test]
+    fn a_live_summary_counts_unfinished_waits_to_now() {
+        let arrive = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        let waiting = [
+            at(0, Event::Open { size: 8 }),
+            at(100, arrive(1)),
+            at(110, stage_of(1, ReadStage::Lock)),
+            at(120, stage_of(1, ReadStage::Read)),
+        ];
+        let s = requests_until(&waiting, 0, 1120);
+        assert_eq!(
+            s.request_read_ns, 1000,
+            "the read still waiting on the backend"
+        );
+        assert_eq!(s.longest_read_ns, 1000);
+        assert_eq!(s.in_request_ns, 1020);
+        assert_eq!(s.requests_pending, 1);
+        assert_eq!(
+            Summary::of(&waiting, 0).request_read_ns,
+            0,
+            "no snapshot time"
+        );
+
+        let quiet = [
+            at(0, Event::Open { size: 8 }),
+            at(100, arrive(1)),
+            at(
+                120,
+                Event::Replied {
+                    request: 1,
+                    bytes: 0,
+                    result: Reply::Data,
+                },
+            ),
+        ];
+        let s = requests_until(&quiet, 0, 1120);
+        assert_eq!(s.no_request_ns, 1000, "no request since the last reply");
+
+        let mut ended = quiet.to_vec();
+        ended.push(at(150, Event::End { bytes: 0 }));
+        assert_eq!(requests_until(&ended, 0, 1120).no_request_ns, 30);
+    }
+
+    #[test]
+    fn dropped_events_are_not_counted_as_time_without_requests() {
+        let arrive = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        let reply = |request| Event::Replied {
+            request,
+            bytes: 0,
+            result: Reply::Data,
+        };
+        // Request 2 arrived somewhere in the dropped part.
+        let records = [
+            at(0, Event::Open { size: 8 }),
+            at(10, arrive(1)),
+            at(20, reply(1)),
+            at(90, Event::Dropped { events: 1 }),
+            at(90, stage_of(2, ReadStage::Read)),
+            at(95, stage_of(2, ReadStage::Read)),
+            at(100, reply(2)),
+            at(110, arrive(3)),
+            at(120, reply(3)),
+        ];
+        let s = Summary::of(&records, 1);
+        assert_eq!(s.no_request_ns, 10, "only 100 to 110 is known");
+        assert_eq!(s.requests_unmatched, 1, "counted once");
+        assert_eq!(s.events, records.len() - 1, "the marker is no event");
+
+        // A request open across the cut keeps its total but loses its stage split.
+        let records = [
+            at(10, arrive(1)),
+            at(20, stage_of(1, ReadStage::Read)),
+            at(50, Event::Dropped { events: 3 }),
+            at(80, reply(1)),
+        ];
+        let s = Summary::of(&records, 3);
+        assert_eq!(
+            s.request_read_ns, 0,
+            "its stage events may be the dropped ones"
+        );
+        assert_eq!(s.longest_request_ns, 70);
+    }
+
+    fn stage_of(request: u64, stage: ReadStage) -> Event {
+        Event::RequestStage { request, stage }
     }
 
     #[test]

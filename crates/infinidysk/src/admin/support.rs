@@ -398,9 +398,10 @@ fn mask(value: &mut String) {
     }
 }
 
-/// Slow FUSE metadata calls noted while tracing, by inode; paths stay out.
+/// Slow and unfinished FUSE metadata calls noted while tracing, by inode; paths stay out.
 fn fuse_ops(admin: &Admin) -> Value {
-    let ops = admin.vfs.sessions().fuse_ops();
+    let sessions = admin.vfs.sessions();
+    let ops = sessions.fuse_ops();
     let listed: Vec<Value> = ops
         .listed
         .iter()
@@ -409,9 +410,23 @@ fn fuse_ops(admin: &Admin) -> Value {
                 "op": op.op,
                 "request": op.request,
                 "inode": op.inode,
+                "child_inode": op.child,
                 "arrived_unix_ns": infinidysk_core::trace::unix_ns(op.arrived),
                 "took_us": u64::try_from(op.took.as_micros()).unwrap_or(u64::MAX),
                 "errno": op.errno,
+            })
+        })
+        .collect();
+    let pending: Vec<Value> = sessions
+        .pending_ops()
+        .iter()
+        .map(|op| {
+            json!({
+                "op": op.op,
+                "request": op.request,
+                "inode": op.inode,
+                "arrived_unix_ns": infinidysk_core::trace::unix_ns(op.arrived),
+                "age_us": u64::try_from(op.age.as_micros()).unwrap_or(u64::MAX),
             })
         })
         .collect();
@@ -419,13 +434,17 @@ fn fuse_ops(admin: &Admin) -> Value {
         "note": "Only while tracing was on, since the server started. Calls under \
                  min_took_us are counted in fast, not listed; the oldest listed calls \
                  go first (dropped). Times are the daemon's: from the call's arrival to \
-                 its reply. open's inode matches the trace's opened event.",
+                 its reply. open's inode matches the trace's opened event; lookup's \
+                 inode is the parent directory and its child_inode is the one an open \
+                 names. pending lists lookup, getattr, readlink and open calls with no \
+                 reply at export, oldest first, with their age at export.",
         "min_took_us": u64::try_from(infinidysk_vfs::FuseOps::MIN.as_micros()).unwrap_or(u64::MAX),
         "max_listed": infinidysk_vfs::FuseOps::KEPT,
         "seen": ops.seen,
         "fast": ops.fast,
         "dropped": ops.dropped,
         "ops": listed,
+        "pending": pending,
     })
 }
 

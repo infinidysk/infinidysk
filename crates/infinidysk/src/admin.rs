@@ -1952,7 +1952,11 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
     }
     header["read"] = json!(read);
     header["providers"] = json!(providers);
-    header["summary"] = json!(Summary::of(&records, dropped));
+    header["summary"] = json!(Summary::until(
+        &records,
+        dropped,
+        Some(trace.at_ns(exported))
+    ));
     header["dropped"] = json!(dropped);
     header["clock"] = json!({
         "started_unix_ns": trace.started_unix_ns(),
@@ -2001,9 +2005,9 @@ fn trace_coverage(session: &Session, dropped: u64) -> Vec<&'static str> {
     }
     if dropped > 0 {
         notes.push(
-            "Events between the kept start and the kept end were dropped: request counts, \
-             gaps and stage totals cover the kept events only, and a gap can span the \
-             dropped part.",
+            "Events between the kept start and the kept end were dropped, marked by a \
+             dropped event: request counts, gaps and stage totals cover the kept events \
+             only. Time across the dropped part counts as neither a gap nor a stage.",
         );
     }
     if session.closed_at().is_none() {

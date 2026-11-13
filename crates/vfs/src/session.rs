@@ -1,6 +1,6 @@
 //! Open reads of item files, for the dashboard, and their optional traces.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, SeekFrom};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -313,12 +313,39 @@ pub struct FuseOp {
     pub op: &'static str,
     /// The FUSE request id (`unique`).
     pub request: u64,
+    /// For lookup, the parent directory.
     pub inode: u64,
+    /// For lookup, the inode found: the one a later open names.
+    pub child: Option<u64>,
     /// Wall clock when it reached the daemon.
     pub arrived: SystemTime,
     pub took: Duration,
     /// `0` for success.
     pub errno: i32,
+}
+
+/// A FUSE metadata call in the daemon without a reply yet, while tracing.
+#[derive(Clone, Copy, Debug)]
+pub struct PendingOp {
+    pub op: &'static str,
+    pub request: u64,
+    pub inode: u64,
+    /// Wall clock when it reached the daemon.
+    pub arrived: SystemTime,
+    pub age: Duration,
+}
+
+/// Lists a metadata call as pending until dropped; see [`Sessions::begin_op`].
+#[must_use]
+pub struct OpInFlight<'a> {
+    sessions: &'a Sessions,
+    request: u64,
+}
+
+impl Drop for OpInFlight<'_> {
+    fn drop(&mut self) {
+        self.sessions.lock().pending.remove(&self.request);
+    }
 }
 
 /// Slow FUSE metadata calls while tracing, with counts of what was not listed.
@@ -360,6 +387,8 @@ struct Inner {
     ended: VecDeque<Arc<Session>>,
     tracing: Option<Tracing>,
     ops: FuseOps,
+    /// Metadata calls without a reply, by request id: op, inode, arrival.
+    pending: HashMap<u64, (&'static str, u64, Instant)>,
 }
 
 impl Sessions {
@@ -383,12 +412,61 @@ impl Sessions {
         self.lock().tracing.filter(|t| t.until > Instant::now())
     }
 
+    /// Lists FUSE metadata call `op` as pending while tracing, until the guard drops, so
+    /// a pack exported during a hang shows calls that never finished.
+    pub fn begin_op(
+        &self,
+        op: &'static str,
+        request: u64,
+        inode: u64,
+        arrived: Instant,
+    ) -> Option<OpInFlight<'_>> {
+        if !self.traced.load(Ordering::Relaxed) {
+            return None;
+        }
+        let mut inner = self.lock();
+        if inner.tracing.is_none_or(|t| t.until <= Instant::now()) {
+            return None;
+        }
+        // The kernel bounds the requests in flight, so this map stays small.
+        inner.pending.insert(request, (op, inode, arrived));
+        drop(inner);
+        Some(OpInFlight {
+            sessions: self,
+            request,
+        })
+    }
+
+    /// Metadata calls without a reply, oldest first.
+    pub fn pending_ops(&self) -> Vec<PendingOp> {
+        let now = Instant::now();
+        let wall = SystemTime::now();
+        let mut pending: Vec<_> = self
+            .lock()
+            .pending
+            .iter()
+            .map(|(&request, &(op, inode, arrived))| {
+                let age = now.saturating_duration_since(arrived);
+                PendingOp {
+                    op,
+                    request,
+                    inode,
+                    arrived: wall.checked_sub(age).unwrap_or(SystemTime::UNIX_EPOCH),
+                    age,
+                }
+            })
+            .collect();
+        pending.sort_by_key(|p| std::cmp::Reverse(p.age));
+        pending
+    }
+
     /// Notes FUSE metadata call `op` that reached the daemon at `arrived`, while tracing.
     pub fn fuse_op(
         &self,
         op: &'static str,
         request: u64,
         inode: u64,
+        child: Option<u64>,
         arrived: Instant,
         errno: i32,
     ) {
@@ -401,6 +479,7 @@ impl Sessions {
             op,
             request,
             inode,
+            child,
             arrived: SystemTime::now()
                 .checked_sub(took)
                 .unwrap_or(SystemTime::UNIX_EPOCH),
@@ -752,19 +831,38 @@ mod tests {
         let slow = Instant::now()
             .checked_sub(Duration::from_millis(5))
             .unwrap();
-        sessions.fuse_op("lookup", 1, 1, slow, 0);
+        sessions.fuse_op("lookup", 1, 1, None, slow, 0);
         assert_eq!(sessions.fuse_ops().seen, 0, "not tracing");
+        assert!(sessions.begin_op("lookup", 1, 1, slow).is_none());
 
         let _guard = traced_session(&sessions);
-        sessions.fuse_op("lookup", 2, 1, Instant::now(), 0);
-        sessions.fuse_op("getattr", 3, 5, slow, 2);
+        sessions.fuse_op("lookup", 2, 1, Some(7), Instant::now(), 0);
+        sessions.fuse_op("lookup", 3, 5, Some(8), slow, 2);
         let ops = sessions.fuse_ops();
         assert_eq!((ops.seen, ops.fast), (2, 1));
         let op = ops.listed.front().unwrap();
         assert_eq!(
-            (op.op, op.request, op.inode, op.errno),
-            ("getattr", 3, 5, 2)
+            (op.op, op.request, op.inode, op.child, op.errno),
+            ("lookup", 3, 5, Some(8), 2)
         );
         assert!(op.took >= Duration::from_millis(5));
+    }
+
+    #[test]
+    fn metadata_calls_without_a_reply_are_pending_until_they_finish() {
+        let sessions = Arc::new(Sessions::default());
+        let _guard = traced_session(&sessions);
+        let slow = Instant::now()
+            .checked_sub(Duration::from_millis(5))
+            .unwrap();
+        let stuck = sessions.begin_op("open", 4, 9, slow).unwrap();
+        let fresh = sessions.begin_op("getattr", 5, 9, Instant::now()).unwrap();
+        let pending = sessions.pending_ops();
+        let listed: Vec<_> = pending.iter().map(|p| (p.op, p.request, p.inode)).collect();
+        assert_eq!(listed, [("open", 4, 9), ("getattr", 5, 9)], "oldest first");
+        assert!(pending[0].age >= Duration::from_millis(5));
+        drop(fresh);
+        drop(stuck);
+        assert!(sessions.pending_ops().is_empty());
     }
 }

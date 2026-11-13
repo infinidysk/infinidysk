@@ -84,6 +84,7 @@ type TraceEvent = { at_ns: number } & (
       idle_connections: number;
     }
   | { type: "end"; bytes: number }
+  | { type: "dropped"; events: number }
 );
 type Header = {
   read: Schemas["ReadView"];
