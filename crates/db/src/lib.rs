@@ -3286,19 +3286,28 @@ impl Db {
             .unwrap_or_default())
     }
 
-    /// Asks for an analysis of `id`; a pending request keeps its place.
-    pub async fn request_media_probe(&self, id: ItemId, now: i64) -> Result<(), Error> {
-        let sql = "INSERT INTO media_probes (item_id, requested_at) VALUES ($1, $2) \
+    /// Asks for an analysis of `id`; a pending request keeps its place. `false` if the
+    /// item is gone.
+    pub async fn request_media_probe(&self, id: ItemId, now: i64) -> Result<bool, Error> {
+        let sql = "INSERT INTO media_probes (item_id, requested_at) \
+                   SELECT $1, $2 WHERE EXISTS (SELECT 1 FROM items WHERE id = $1) \
                    ON CONFLICT (item_id) DO UPDATE \
                    SET requested_at = COALESCE(media_probes.requested_at, excluded.requested_at)";
-        on!(self, pool => sqlx::query(sql)
+        let result = on!(self, pool => sqlx::query(sql)
             .bind(id.0)
             .bind(now)
             .execute(pool)
-            .await?
-            .rows_affected());
-        self.notify(Change::Health);
-        Ok(())
+            .await
+            .map(|r| r.rows_affected()));
+        let accepted = match result {
+            Ok(rows) => rows > 0,
+            Err(e) if probe_item_gone(&e) => false,
+            Err(e) => return Err(e.into()),
+        };
+        if accepted {
+            self.notify(Change::Health);
+        }
+        Ok(accepted)
     }
 
     /// The oldest pending analysis of a file that is not being repaired or replaced, with
@@ -3365,7 +3374,7 @@ impl Db {
                    defect_size = excluded.defect_size, defect_seen_at = excluded.defect_seen_at, \
                    defect_source = excluded.defect_source, \
                    structural_hold = excluded.structural_hold";
-        on!(self, pool => sqlx::query(sql)
+        let result = on!(self, pool => sqlx::query(sql)
             .bind(id.0)
             .bind(defect.map(|d| d.offset.cast_signed()))
             .bind(defect.map(|d| d.size.cast_signed()))
@@ -3373,10 +3382,25 @@ impl Db {
             .bind(defect.map(|d| d.source))
             .bind(i16::from(hold))
             .execute(pool)
-            .await?
-            .rows_affected());
-        Ok(())
+            .await
+            .map(|r| r.rows_affected()));
+        match result {
+            Err(e) if !probe_item_gone(&e) => Err(e.into()),
+            _ => Ok(()),
+        }
     }
+}
+
+/// PostgreSQL READ COMMITTED can pass the `EXISTS` guard while a concurrent delete of the
+/// item commits; the FK check then fails, which means the item is gone.
+fn probe_item_gone(e: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(e) = e else {
+        return false;
+    };
+    e.try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+        .is_some_and(|pg| {
+            pg.code() == "23503" && pg.constraint() == Some("media_probes_item_id_fkey")
+        })
 }
 
 /// Unix milliseconds now.
