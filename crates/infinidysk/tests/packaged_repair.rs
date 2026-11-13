@@ -3,19 +3,44 @@
 #![allow(clippy::unwrap_used)] // Test setup and behavioral assertions.
 
 use std::fmt::Write as _;
+use std::fs::OpenOptions;
 use std::path::Path;
+use std::process::Stdio;
 use std::time::Duration;
 
-use infinidysk_core::{ItemId, JobId};
-use infinidysk_db::{Db, JobStatus, repair::Owner};
+use infinidysk_core::{
+    BlobId, FileMeta, ItemId, ItemKind, JobId, NzbFile, Segment, Segments, blob,
+};
+use infinidysk_db::{Db, Item, JobStatus, repair::Owner, repair_jobs::Job};
 use infinidysk_testkit::{Article, LoopbackServer, post};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use tokio::{net::TcpListener, process::Command, time};
+use tokio::{
+    net::TcpListener,
+    process::{Child, Command},
+    time,
+};
 
 const ARTICLE: usize = 512;
 const PLAIN: &[u8] = include_bytes!("../../archive/tests/fixtures/Rar5.none.rar");
 const ENCRYPTED: &[u8] = include_bytes!("../../archive/tests/fixtures/aes-5hp.rar");
+
+fn headers() -> [(&'static str, &'static [u8], Vec<Article>); 4] {
+    // par2 create -s512 -c2 -n1 headers.par2 plain.rar encrypted.rar
+    [
+        ("plain.rar", PLAIN),
+        ("encrypted.rar", ENCRYPTED),
+        (
+            "headers.par2",
+            include_bytes!("fixtures/headers.par2").as_slice(),
+        ),
+        (
+            "headers.vol0+2.par2",
+            include_bytes!("fixtures/headers.vol0+2.par2").as_slice(),
+        ),
+    ]
+    .map(|(name, data)| (name, data, post(name, name, data, ARTICLE)))
+}
 
 fn nzb(files: &[(&str, &[u8], Vec<Article>)]) -> String {
     let mut xml = "<nzb>".to_owned();
@@ -40,20 +65,7 @@ fn nzb(files: &[(&str, &[u8], Vec<Article>)]) -> String {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs the packaged binary, /dev/fuse, and permission to mount"]
 async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() {
-    // par2 create -s512 -c2 -n1 headers.par2 plain.rar encrypted.rar
-    let files = [
-        ("plain.rar", PLAIN),
-        ("encrypted.rar", ENCRYPTED),
-        (
-            "headers.par2",
-            include_bytes!("fixtures/headers.par2").as_slice(),
-        ),
-        (
-            "headers.vol0+2.par2",
-            include_bytes!("fixtures/headers.vol0+2.par2").as_slice(),
-        ),
-    ]
-    .map(|(name, data)| (name, data, post(name, name, data, ARTICLE)));
+    let files = headers();
     let provider =
         LoopbackServer::start(files.iter().enumerate().flat_map(|(i, (_, _, articles))| {
             // Both archive headers are unavailable from the provider throughout the test.
@@ -282,5 +294,343 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
             .unwrap()
             .success()
     );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+async fn wait_ready(app: &mut Child, http: &reqwest::Client, base: &str) {
+    time::timeout(Duration::from_secs(15), async {
+        loop {
+            assert!(app.try_wait().unwrap().is_none(), "packaged server exited");
+            if let Ok(response) = http.get(format!("{base}/healthz")).send().await
+                && response.status().is_success()
+            {
+                break;
+            }
+            time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+async fn wait_repair_result(db: &Db, item: ItemId, state: i16) -> Job {
+    time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Some(job) = db.par2_result(Owner::Item(item), false).await.unwrap() {
+                if job.state == state {
+                    break job;
+                }
+                assert!(
+                    !matches!(job.state, 2 | 3 | 5 | 6),
+                    "unexpected repair result {}: {}",
+                    job.state,
+                    job.reason
+                );
+            }
+            time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+async fn terminate(app: &mut Child) -> Duration {
+    let started = time::Instant::now();
+    let pid = app.id().unwrap().to_string();
+    assert!(
+        Command::new("sh")
+            .args(["-c", "kill -TERM \"$1\"", "sh", &pid])
+            .status()
+            .await
+            .unwrap()
+            .success()
+    );
+    assert!(
+        time::timeout(Duration::from_secs(10), app.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+    started.elapsed()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the packaged binary inside a disposable image"]
+async fn packaged_worker_reports_memory_limits_and_resumes_after_shutdown() {
+    let files = headers();
+    let missing = [
+        files[0].2[0].message_id.clone(),
+        files[1].2[0].message_id.clone(),
+    ];
+    let stalled = files[0].2[1].message_id.clone();
+    let provider = LoopbackServer::start(
+        files
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (_, _, articles))| articles.iter().skip(usize::from(i < 2)).cloned()),
+    )
+    .await
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let base = format!("http://{addr}");
+    let root = std::env::temp_dir().join(format!("infinidysk-repair-faults-{}", ItemId::new()));
+    std::fs::create_dir(&root).unwrap();
+    let database = format!("sqlite:{}", root.join("data.sqlite").display());
+    let db = Db::connect(&database).await.unwrap();
+    let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut item = Item::child(&parent, "fault-source.rar", ItemKind::NzbFile).unwrap();
+    let meta = BlobId::new();
+    let source = BlobId::new();
+    item.meta_blob = Some(meta);
+    item.nzb_blob = Some(source);
+    item.size = Some(u64::try_from(PLAIN.len()).unwrap());
+    let metadata = blob::encode_meta(&FileMeta::Nzb(NzbFile {
+        segments: Segments {
+            items: files[0]
+                .2
+                .iter()
+                .enumerate()
+                .map(|(i, article)| Segment {
+                    id: article.message_id.clone(),
+                    size: u32::try_from((PLAIN.len() - i * ARTICLE).min(ARTICLE)).unwrap(),
+                    fallbacks: vec![],
+                })
+                .collect(),
+            sizes_trusted: true,
+            missing: vec![0],
+            corrupt: vec![],
+        },
+        proof: None,
+    }))
+    .unwrap();
+    db.insert(
+        &[item.clone()],
+        &[
+            (meta, &metadata),
+            (source, &blob::encode_nzb(nzb(&files).as_bytes()).unwrap()),
+        ],
+    )
+    .await
+    .unwrap();
+    let output = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("output.log"))
+        .unwrap();
+    let providers = json!([{"name":"fixture", "hostname":"127.0.0.1", "port":provider.addr().port(), "tls":false}]).to_string();
+    let start = || {
+        Command::new("/usr/local/bin/infinidysk")
+            .env("INFINIDYSK_CONFIG_DIR", &root)
+            .env("INFINIDYSK_LISTEN", addr.to_string())
+            .env("INFINIDYSK_DATABASE_URL", &database)
+            .env("INFINIDYSK_EXPERIMENTS", "par2-repair")
+            .env("INFINIDYSK__MOUNT__FUSE", "false")
+            .env("INFINIDYSK__MOUNT__DIR", root.join("mount"))
+            .env("INFINIDYSK__HEALTH__ENABLED", "false")
+            .env("INFINIDYSK__PROVIDERS", &providers)
+            .env("INFINIDYSK__AUTH__API_KEY", "fixture-admin")
+            .env("INFINIDYSK__WEBDAV__PASSWORD", "fixture-dav")
+            .stdout(Stdio::from(output.try_clone().unwrap()))
+            .stderr(Stdio::from(output.try_clone().unwrap()))
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    };
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let mut app = start();
+    wait_ready(&mut app, &http, &base).await;
+    let status: Value = http
+        .get(format!("{base}/api/v1/status"))
+        .header("X-Api-Key", "fixture-admin")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    println!("Packaged revision: {}", status["commit"]);
+    let settings: Value = http
+        .get(format!("{base}/api/v1/settings"))
+        .header("X-Api-Key", "fixture-admin")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let mut settings = settings["settings"].clone();
+    settings["repair"]["memory_mb"] = json!(128);
+    http.put(format!("{base}/api/v1/settings"))
+        .header("X-Api-Key", "fixture-admin")
+        .json(&settings)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let action = format!("{base}/api/v1/files/{}/par2", item.id);
+    assert_eq!(
+        http.post(&action)
+            .header("X-Api-Key", "fixture-admin")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::ACCEPTED
+    );
+    let failed = wait_repair_result(&db, item.id, 5).await;
+    let memory =
+        regex::Regex::new(r"needs another (\d+) working-memory bytes; (\d+) bytes available")
+            .unwrap();
+    let numbers = memory.captures(&failed.reason).unwrap();
+    assert!(numbers[1].parse::<u64>().unwrap() > numbers[2].parse::<u64>().unwrap());
+    assert!(
+        failed.reason.contains("Discovering PAR2 files")
+            || failed
+                .reason
+                .contains("Verifying source files and reconstructing damage")
+    );
+    assert!(
+        failed
+            .reason
+            .contains("Increase working memory in Settings > PAR2 repair and retry.")
+    );
+    assert_eq!(
+        (failed.attempts, failed.stored_bytes, failed.verified_bytes),
+        (1, 0, 0)
+    );
+    for article in &missing {
+        assert_eq!(db.article_repairs(article).await.unwrap(), []);
+    }
+    wait_ready(&mut app, &http, &base).await;
+    let failed_view: Value = http
+        .get(&action)
+        .header("X-Api-Key", "fixture-admin")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(failed_view["repair"]["state"], "unavailable");
+    assert_eq!(failed_view["repair"]["reason"], failed.reason);
+    println!("128 MB refusal: {}; saved bytes: 0", failed.reason);
+
+    settings["repair"]["memory_mb"] = json!(256);
+    let saved: Value = http
+        .put(format!("{base}/api/v1/settings"))
+        .header("X-Api-Key", "fixture-admin")
+        .json(&settings)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(saved["restart_required"], false);
+    provider.stall_article(&stalled, 1, Duration::from_secs(30));
+    assert_eq!(
+        http.post(&action)
+            .header("X-Api-Key", "fixture-admin")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::ACCEPTED
+    );
+    time::timeout(Duration::from_secs(15), async {
+        loop {
+            if provider.stalled(&stalled) > 0
+                && db
+                    .par2_result(Owner::Item(item.id), false)
+                    .await
+                    .unwrap()
+                    .is_some_and(|job| job.state == 1 && job.completed_requests > 0)
+            {
+                break;
+            }
+            time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let elapsed = terminate(&mut app).await;
+    let interrupted = db
+        .par2_result(Owner::Item(item.id), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(interrupted.id, failed.id);
+    assert_eq!(
+        (
+            interrupted.state,
+            interrupted.attempts,
+            interrupted.started_at
+        ),
+        (4, 0, None)
+    );
+    assert_eq!(interrupted.reason, "interrupted; retrying");
+    for article in &missing {
+        assert_eq!(db.article_repairs(article).await.unwrap(), []);
+    }
+    println!(
+        "SIGTERM exit: {} ms; persisted state: deferred; attempts used: 0",
+        elapsed.as_millis()
+    );
+
+    provider.stall_article(&stalled, 0, Duration::ZERO);
+    app = start();
+    wait_ready(&mut app, &http, &base).await;
+    let repaired = wait_repair_result(&db, item.id, 3).await;
+    assert_eq!(repaired.id, failed.id);
+    assert_eq!(repaired.attempts, 1);
+    assert_eq!(repaired.stored_bytes, i64::try_from(2 * ARTICLE).unwrap());
+    assert_eq!(
+        repaired.verified_bytes,
+        i64::try_from(PLAIN.len() + ENCRYPTED.len()).unwrap()
+    );
+    for article in &missing {
+        assert_eq!(db.article_repairs(article).await.unwrap().len(), 1);
+    }
+    let served = http
+        .get(format!("{base}{}", item.path))
+        .basic_auth("admin", Some("fixture-dav"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(served.as_ref(), PLAIN);
+    println!(
+        "Automatic resume: repaired; attempts used: 1; stored bytes: {}; complete WebDAV bytes match",
+        repaired.stored_bytes
+    );
+    terminate(&mut app).await;
+    let logs = std::fs::read_to_string(root.join("output.log")).unwrap();
+    assert_eq!(logs.matches("repair did not finish").count(), 1);
+    assert!(!logs.contains("panicked at") && !logs.contains("stack backtrace"));
+    assert!(
+        !logs.contains("ERROR"),
+        "unexpected error logged by packaged server"
+    );
+    db.close().await;
+    drop(output);
     std::fs::remove_dir_all(root).unwrap();
 }
