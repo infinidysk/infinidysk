@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.0.0-beta.9](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.8...v2.0.0-beta.9) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **health:** health.check_percent no longer controls imports. health.import_check_percent defaults to 5; set it to your previous percentage to retain the same import depth, or to 100 to retain full import checks and the first-check handoff.
+
+### Features
+
+* **api:** inspect what an NZB contains without importing it ([#1904](https://github.com/infinidysk/infinidysk/issues/1904)) ([5a88f28](https://github.com/infinidysk/infinidysk/commit/5a88f28ac26fbee8659e20fd3af1e8fbcf21db2d))
+* **api:** report memory.stat kinds, swap, /proc/self/status and raw segment-cache size in live resources ([#1902](https://github.com/infinidysk/infinidysk/issues/1902)) ([d300178](https://github.com/infinidysk/infinidysk/commit/d3001788c30b7b37c088c63a58fde21d6b88a73e))
+* **health:** separate the import sample from the health sample ([#1901](https://github.com/infinidysk/infinidysk/issues/1901)) ([27b3a20](https://github.com/infinidysk/infinidysk/commit/27b3a206616b54dafea487b9739170ba5ae8522a)), closes [#1864](https://github.com/infinidysk/infinidysk/issues/1864)
+
+
+### Bug Fixes
+
+* **health:** forget the streaks of deleted files ([#1905](https://github.com/infinidysk/infinidysk/issues/1905)) ([4e1b17a](https://github.com/infinidysk/infinidysk/commit/4e1b17a50a2325beca21439b8f62af52b7c1564c))
+* **mount:** the FUSE mount keeps serving after kernel errors and cleans up when it stops ([#1913](https://github.com/infinidysk/infinidysk/issues/1913)) ([2d28588](https://github.com/infinidysk/infinidysk/commit/2d2858837d778cd524c380cd2f8d964f4d9d8550))
+* **nntp:** look up a provider's address once when opening many connections ([#1899](https://github.com/infinidysk/infinidysk/issues/1899)) ([f71df83](https://github.com/infinidysk/infinidysk/commit/f71df8362eb8481acee36d2598e769aeb0c3c1c2))
+* **stream:** turning off the memory cache always empties it ([#1906](https://github.com/infinidysk/infinidysk/issues/1906)) ([419024b](https://github.com/infinidysk/infinidysk/commit/419024bc6b9817301c31bbb4cc044d48374dd5ad))
+
+
+### Performance Improvements
+
+* **health:** probe segments without cloning the file's list ([#1908](https://github.com/infinidysk/infinidysk/issues/1908)) ([72b2118](https://github.com/infinidysk/infinidysk/commit/72b211860c8f76ba4886d22f191c44b83fdbc46e))
+* **queue:** take an uploaded NZB without copying it ([#1910](https://github.com/infinidysk/infinidysk/issues/1910)) ([1ebecc8](https://github.com/infinidysk/infinidysk/commit/1ebecc81ec59b44c2e1d3a311cf54ba3ddb3c66e))
+* **queue:** use less memory while an NZB with many files imports ([#1907](https://github.com/infinidysk/infinidysk/issues/1907)) ([8833c5d](https://github.com/infinidysk/infinidysk/commit/8833c5dbbb7810b84d38fec349402e71c569dddc))
+* **stream:** skip the progress channel of strict reads ([#1909](https://github.com/infinidysk/infinidysk/issues/1909)) ([73258be](https://github.com/infinidysk/infinidysk/commit/73258beec3360e96d76ba476f73d2a68524ffbd2))
+
 ## [2.0.0-beta.8](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.7...v2.0.0-beta.8) (2026-11-11)
 
 
