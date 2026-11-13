@@ -10,7 +10,7 @@ description: How to address CodeRabbit reviews and GitHub Code Quality / code sc
 1. Reply to every comment with what you fixed (with the commit) or why you skipped or declined it.
 2. Resolve **every** CodeRabbit thread, including skipped or declined ones, so CodeRabbit can review again.
 3. Check that no CodeRabbit thread is still open, e.g. the `reviewThreads { isResolved }` GraphQL query and `resolveReviewThread`.
-4. Check the PR review state. Resolving threads does not dismiss a changes-requested review. If it still blocks the PR, request another review or report the blocker for an authorized maintainer. Never dismiss a review just to bypass protection.
+4. Check the PR review state. Resolving threads does not dismiss a changes-requested review. If it still blocks the PR, request another review by commenting `@coderabbitai full review` (CodeRabbit rejects `@coderabbitai review`), or report the blocker for an authorized maintainer. Never dismiss a review just to bypass protection.
 
 ## Code Quality and code scanning
 
