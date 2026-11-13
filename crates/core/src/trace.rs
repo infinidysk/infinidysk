@@ -355,9 +355,16 @@ impl Trace {
         let buf = self.lock();
         let mut records: Vec<Record> = buf.head.clone();
         let dropped = buf.dropped;
-        if let Some(first) = buf.tail.front().filter(|_| dropped > 0) {
+        // The tail is in insertion order; the cut goes before its earliest stamp.
+        if let Some(first) = buf
+            .tail
+            .iter()
+            .map(|r| r.at_ns)
+            .min()
+            .filter(|_| dropped > 0)
+        {
             records.push(Record {
-                at_ns: first.at_ns,
+                at_ns: first,
                 event: Event::Dropped { events: dropped },
             });
         }
@@ -538,6 +545,8 @@ struct Requests {
     first: Option<u64>,
     /// Requests seen without their arrival, counted once.
     unmatched: HashSet<u64>,
+    /// Unmatched requests seen in a stage and not replied yet: still in the daemon.
+    unmatched_open: HashSet<u64>,
 }
 
 impl Requests {
@@ -557,10 +566,9 @@ impl Requests {
     fn stage(&mut self, summary: &mut Summary, request: u64, stage: ReadStage, at: u64) {
         let Some((_, current, since)) = self.open.get_mut(&request) else {
             self.unmatched(summary, request);
-            // The daemon held a request: the time since the last reply was no gap.
-            if self.open.is_empty() {
-                self.emptied = None;
-            }
+            // The daemon holds a request: no gap until it replies.
+            self.unmatched_open.insert(request);
+            self.emptied = None;
             return;
         };
         Self::spent(summary, *current, at.saturating_sub(*since));
@@ -591,7 +599,8 @@ impl Requests {
         }
         let Some((arrived, stage, since)) = self.open.remove(&request) else {
             self.unmatched(summary, request);
-            if self.open.is_empty() {
+            self.unmatched_open.remove(&request);
+            if self.open.is_empty() && self.unmatched_open.is_empty() {
                 self.emptied = Some(at);
             }
             return;
@@ -606,7 +615,7 @@ impl Requests {
             summary.in_request_ns = summary
                 .in_request_ns
                 .saturating_add(at.saturating_sub(self.busy_since));
-            self.emptied = Some(at);
+            self.emptied = self.unmatched_open.is_empty().then_some(at);
         }
     }
 
@@ -859,7 +868,8 @@ impl Summary {
         if let Some(now) = now_ns.filter(|_| !ended) {
             requests.snapshot(&mut summary, now);
         }
-        summary.requests_pending = u32::try_from(requests.open.len()).unwrap_or(u32::MAX);
+        summary.requests_pending =
+            u32::try_from(requests.open.len() + requests.unmatched_open.len()).unwrap_or(u32::MAX);
         for (segment, start, end) in stalls {
             // The reader samples as a stall begins; later samples see it half over.
             let began = samples.partition_point(|&(at, _)| at <= start);
@@ -889,6 +899,8 @@ impl Summary {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::wait::Supplied;
 
@@ -1243,6 +1255,59 @@ mod tests {
             "its stage events may be the dropped ones"
         );
         assert_eq!(s.longest_request_ns, 70);
+
+        // Request 1 is still in the daemon when request 2 replies: no gap after it.
+        let records = [
+            at(50, Event::Dropped { events: 2 }),
+            at(50, stage_of(1, ReadStage::Read)),
+            at(60, arrive(2)),
+            at(70, reply(2)),
+        ];
+        let s = requests_until(&records, 2, 1070);
+        assert_eq!(s.no_request_ns, 0);
+        assert_eq!(s.requests_pending, 1);
+        let mut replied = records.to_vec();
+        replied.push(at(80, reply(1)));
+        assert_eq!(requests_until(&replied, 2, 1080).no_request_ns, 1000);
+    }
+
+    #[test]
+    fn the_cut_goes_before_the_earliest_kept_tail_event() {
+        let trace = Trace::new(4);
+        let start = trace.started();
+        let request = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        trace.record_at(start + Duration::from_nanos(10), request(1));
+        trace.record_at(start + Duration::from_nanos(15), request(2));
+        trace.record_at(
+            start + Duration::from_nanos(20),
+            stage_of(1, ReadStage::Lock),
+        );
+        trace.record_at(
+            start + Duration::from_nanos(100),
+            Event::Window { segment: 0 },
+        );
+        // Stamped before the sample, recorded after it.
+        trace.record_at(
+            start + Duration::from_nanos(90),
+            stage_of(1, ReadStage::Read),
+        );
+        let (records, dropped) = trace.records();
+        assert_eq!(dropped, 1, "the lock stage");
+        let cut = records
+            .iter()
+            .position(|r| matches!(r.event, Event::Dropped { .. }))
+            .unwrap();
+        assert_eq!(records[cut].at_ns, 90);
+        assert!(records[cut + 1..].iter().all(|r| r.at_ns >= 90));
+        let s = Summary::of(&records, dropped);
+        assert_eq!(
+            s.request_order_ns, 0,
+            "order time across the cut is unknown"
+        );
     }
 
     fn stage_of(request: u64, stage: ReadStage) -> Event {
