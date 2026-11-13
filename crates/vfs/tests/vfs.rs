@@ -14,7 +14,7 @@ use infinidysk_db::{
     Db, HealthState, HealthStatus, HistoryEntry, Item, JobStatus, QueueEntry, Recheck,
 };
 use infinidysk_nntp::{Client, Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
-use infinidysk_stream::{Budget, Fault};
+use infinidysk_stream::{Budget, Cache, Fault};
 use infinidysk_testkit::{Article, Corpus, LoopbackServer, post};
 use infinidysk_vfs::{Delivery, Kind, Node, Origin, Tracing, Vfs};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -267,6 +267,7 @@ async fn serves_content_links_ids_and_queued_nzbs() {
         1 << 20,
         "/mnt/dysk/",
     )
+    .with_cache(Arc::new(Cache::new(true, 1 << 20)))
     .with_report({
         let faults = Arc::clone(&faults);
         Arc::new(move |id, index, fault| faults.lock().unwrap().push((id, index, fault)))
@@ -280,7 +281,37 @@ async fn serves_content_links_ids_and_queued_nzbs() {
 
     let node = vfs.lookup("/content/tv/job/a.mkv").await.unwrap().unwrap();
     assert_eq!((node.kind(), node.size()), (Kind::File, plain.len() as u64));
+    let mut analysis = vfs.open_analysis(&a).await.unwrap();
+    let mut analyzed = vec![0; 1];
+    analysis.read_exact(&mut analyzed).await.unwrap();
+    assert!(
+        server.body_commands() <= 2,
+        "analysis keeps the minimum window"
+    );
+    assert!(vfs.sessions().open().is_empty(), "analysis has no session");
+    analysis.read_to_end(&mut analyzed).await.unwrap();
+    assert!(analyzed == plain, "strict analysis bytes");
+    drop(analysis);
+    let fetched = server.body_commands();
     assert!(read_all(&vfs, &node).await == plain, "plain sequential");
+    assert_eq!(
+        server.body_commands(),
+        fetched,
+        "analysis warms shared cache"
+    );
+    let mut analyzed_again = Vec::new();
+    vfs.open_analysis(&a)
+        .await
+        .unwrap()
+        .read_to_end(&mut analyzed_again)
+        .await
+        .unwrap();
+    assert!(analyzed_again == plain, "cached analysis bytes");
+    assert_eq!(
+        server.body_commands(),
+        fetched,
+        "analysis reuses shared cache"
+    );
 
     let node = vfs
         .lookup("content/tv/job/sub/b.mkv")
@@ -416,6 +447,20 @@ async fn serves_content_links_ids_and_queued_nzbs() {
     // A second open fills the hole it found without asking providers again.
     assert!(read_all(&vfs, &node).await == expected, "known hole");
     assert_eq!(faults.lock().unwrap().len(), 1);
+    assert!(
+        vfs.open_analysis(&c)
+            .await
+            .unwrap()
+            .read_to_end(&mut Vec::new())
+            .await
+            .is_err(),
+        "analysis never accepts playback filler"
+    );
+    assert_eq!(
+        faults.lock().unwrap().len(),
+        1,
+        "analysis reports no faults"
+    );
     // Updated metadata replaces what earlier opens of the file cached.
     let a_node = vfs.lookup("/content/tv/job/a.mkv").await.unwrap().unwrap();
     let mut moved = segments(&a_plain, plain.len());
