@@ -440,7 +440,7 @@ mod tests {
         };
         assert!(!logged(None, "fuse session: unset"));
         assert!(!logged(
-            Some("info,infinidysk_fuse=debug"),
+            Some("info,infinidysk_mount=debug"),
             "fuse session: app only"
         ));
         assert!(logged(Some("info,fuse3=warn"), "fuse session: named"));

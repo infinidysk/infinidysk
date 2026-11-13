@@ -75,9 +75,9 @@ infinidysk-archive = { path = "crates/archive" }
 infinidysk-arr = { path = "crates/arr" }
 infinidysk-core = { path = "crates/core" }
 infinidysk-db = { path = "crates/db" }
-infinidysk-fuse = { path = "crates/fuse" }
 infinidysk-health = { path = "crates/health" }
 infinidysk-import = { path = "crates/import" }
+infinidysk-mount = { path = "crates/mount" }
 infinidysk-nntp = { path = "crates/nntp" }
 infinidysk-par2 = { path = "crates/par2" }
 infinidysk-queue = { path = "crates/queue" }

@@ -35,9 +35,9 @@ use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
-/// Per-request log target: `RUST_LOG=infinidysk_fuse::ops=debug` logs every kernel request
+/// Per-request log target: `RUST_LOG=infinidysk_mount::ops=debug` logs every kernel request
 /// but reads, `=trace` adds reads.
-const OPS: &str = "infinidysk_fuse::ops";
+const OPS: &str = "infinidysk_mount::ops";
 
 /// New and removed names show within this.
 const ENTRY_TTL: Duration = Duration::from_secs(1);

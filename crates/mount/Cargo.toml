@@ -1,5 +1,5 @@
 [package]
-name = "infinidysk-fuse"
+name = "infinidysk-mount"
 description = "Read-only FUSE mount of the virtual tree (Linux only)"
 version.workspace = true
 edition.workspace = true

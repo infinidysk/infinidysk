@@ -1,5 +1,5 @@
 //! Mounts the tree and reads it through the kernel. Needs Linux, `/dev/fuse` and root (the
-//! test switches filesystem UID for cross-UID checks): `cargo test -p infinidysk-fuse -- --ignored`.
+//! test switches filesystem UID for cross-UID checks): `cargo test -p infinidysk-mount -- --ignored`.
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)] // Test helpers outside `#[test]` fns; panics are the assertions.
 
@@ -11,7 +11,7 @@ use infinidysk_core::{
     BlobId, FileMeta, ItemId, ItemKind, JobId, NzbFile, Segment, Segments, blob,
 };
 use infinidysk_db::{Db, HistoryEntry, Item, JobStatus};
-use infinidysk_fuse::{Config, run};
+use infinidysk_mount::{Config, run};
 use infinidysk_nntp::{Client, Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
 use infinidysk_stream::Budget;
 use infinidysk_testkit::{LoopbackServer, post};
@@ -145,11 +145,11 @@ async fn reads_the_tree_through_the_kernel() {
             root,
             [".ids", "README", "completed-symlinks", "content", "nzbs"]
         );
-        infinidysk_fuse::answers(&mount).unwrap();
+        infinidysk_mount::answers(&mount).unwrap();
         let plain = mount.parent().unwrap().join("plain");
         std::fs::create_dir_all(&plain).unwrap();
         assert!(
-            infinidysk_fuse::answers(&plain).is_err(),
+            infinidysk_mount::answers(&plain).is_err(),
             "not a FUSE mount"
         );
 

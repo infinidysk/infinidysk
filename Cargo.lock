@@ -1418,9 +1418,9 @@ dependencies = [
  "infinidysk-arr",
  "infinidysk-core",
  "infinidysk-db",
- "infinidysk-fuse",
  "infinidysk-health",
  "infinidysk-import",
+ "infinidysk-mount",
  "infinidysk-nntp",
  "infinidysk-queue",
  "infinidysk-stream",
@@ -1531,25 +1531,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "infinidysk-fuse"
-version = "0.0.0"
-dependencies = [
- "bytes",
- "fuse3",
- "futures-util",
- "infinidysk-core",
- "infinidysk-db",
- "infinidysk-nntp",
- "infinidysk-stream",
- "infinidysk-testkit",
- "infinidysk-vfs",
- "nix",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "infinidysk-health"
 version = "0.0.0"
 dependencies = [
@@ -1594,6 +1575,25 @@ dependencies = [
  "tracing",
  "uuid",
  "zstd",
+]
+
+[[package]]
+name = "infinidysk-mount"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "fuse3",
+ "futures-util",
+ "infinidysk-core",
+ "infinidysk-db",
+ "infinidysk-nntp",
+ "infinidysk-stream",
+ "infinidysk-testkit",
+ "infinidysk-vfs",
+ "nix",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
