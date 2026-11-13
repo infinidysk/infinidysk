@@ -5,7 +5,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use infinidysk_core::{
     BlobId, FileMeta, ItemId, ItemKind, JobId, NzbFile, Segment, Segments, blob,
@@ -15,7 +15,7 @@ use infinidysk_mount::{Config, run};
 use infinidysk_nntp::{Client, Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
 use infinidysk_stream::Budget;
 use infinidysk_testkit::{LoopbackServer, post};
-use infinidysk_vfs::Vfs;
+use infinidysk_vfs::{Tracing, Vfs};
 use tokio_util::sync::CancellationToken;
 
 const ARTICLE: usize = 4096;
@@ -106,14 +106,19 @@ async fn reads_the_tree_through_the_kernel() {
     let mount_str = mount.to_str().unwrap().to_owned();
     let cancel = CancellationToken::new();
     let (state, mut kernel) = tokio::sync::watch::channel(Err(String::new()));
+    let vfs = Arc::new(Vfs::new(
+        db.clone(),
+        client,
+        Budget::new(1 << 20),
+        1 << 20,
+        &mount_str,
+    ));
+    vfs.sessions().set_tracing(Some(Tracing {
+        until: Instant::now() + Duration::from_secs(600),
+        capacity: 10_000,
+    }));
     let task = tokio::spawn(run(
-        Arc::new(Vfs::new(
-            db.clone(),
-            client,
-            Budget::new(1 << 20),
-            1 << 20,
-            &mount_str,
-        )),
+        Arc::clone(&vfs),
         Config {
             mount_dir: mount.clone(),
             uid: 1234,
@@ -282,4 +287,28 @@ async fn reads_the_tree_through_the_kernel() {
     assert_eq!(reported.max_background, Some(64));
     assert_eq!(reported.congestion_threshold, Some(48));
     assert_eq!(waiting, Some(0));
+
+    // Every traced FUSE read is timed from its arrival to its reply, and the open's own
+    // work before the stream started is kept.
+    let traced = vfs.sessions().traced();
+    assert!(!traced.is_empty(), "reads were traced");
+    let mut requests = 0;
+    for session in &traced {
+        let summary = session.trace.as_ref().unwrap().summary();
+        assert_eq!(summary.requests_pending, 0, "no request left behind");
+        assert_eq!(summary.requests_unmatched, 0);
+        assert_eq!(summary.requests_failed, 0);
+        assert!(summary.open_before_ns.is_some(), "the open replied");
+        assert_eq!(session.handle().is_some(), summary.open_reply_ns.is_some());
+        if summary.requests > 0 {
+            assert!(summary.first_request_ns.is_some());
+            assert!(summary.first_reply_ns.is_some());
+            assert!(summary.in_request_ns > 0);
+        }
+        requests += summary.requests;
+    }
+    assert!(requests > 0, "reads reached the daemon");
+    let ops = vfs.sessions().fuse_ops();
+    assert!(ops.seen > 0, "metadata calls were counted while tracing");
+    assert_eq!(ops.seen, ops.fast + ops.listed.len() as u64 + ops.dropped);
 }

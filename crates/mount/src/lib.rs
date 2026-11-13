@@ -472,10 +472,34 @@ impl Drop for Turn<'_> {
 }
 
 impl<R: AsyncRead + AsyncSeek + Unpin> OpenFile<R> {
-    async fn read(&self, id: u64, offset: u64, size: u32) -> std::io::Result<BytesMut> {
-        let listed = self.session.as_ref().map(|s| s.request(id, offset, size));
+    /// Reads `size` bytes at `offset` for FUSE request `id`, which reached the daemon at
+    /// `arrived`; a traced session records each stage and the reply.
+    async fn read(
+        &self,
+        id: u64,
+        offset: u64,
+        size: u32,
+        arrived: Instant,
+    ) -> std::io::Result<BytesMut> {
+        let listed = self
+            .session
+            .as_ref()
+            .map(|s| s.request(id, offset, size, arrived));
+        let result = self.read_listed(listed.as_ref(), offset, size).await;
+        if let Some(listed) = listed {
+            listed.end(result.as_ref().ok().map(BytesMut::len));
+        }
+        result
+    }
+
+    async fn read_listed(
+        &self,
+        listed: Option<&infinidysk_vfs::Request>,
+        offset: u64,
+        size: u32,
+    ) -> std::io::Result<BytesMut> {
         let stage = |stage| {
-            if let Some(listed) = &listed {
+            if let Some(listed) = listed {
                 listed.stage(stage);
             }
         };
@@ -873,13 +897,19 @@ impl Fs {
         started: Instant,
         result: Result<T>,
     ) -> Result<T> {
+        let errno = result.as_ref().err().map_or(0, |e| -libc::c_int::from(*e));
+        // Only while a trace window is open, without paths: correlates slow lookups
+        // before an open with the read traces.
+        self.vfs
+            .sessions()
+            .fuse_op(op, req.unique, ino, started, errno);
         debug!(
             target: OPS,
             op,
             path = %self.describe(ino, name),
             // procfs reads never wait on a disk.
             caller = %caller_label(process(req.pid), req.pid, req.uid, req.gid),
-            errno = result.as_ref().err().map_or(0, |e| -libc::c_int::from(*e)),
+            errno,
             us = started.elapsed().as_micros(),
         );
         result
@@ -1173,7 +1203,14 @@ impl Filesystem for Fs {
                 }
             };
             Ok(ReplyOpen {
-                fh: self.insert(Handle::File(Arc::new(file), attr)),
+                fh: {
+                    let session = file.session.clone();
+                    let fh = self.insert(Handle::File(Arc::new(file), attr));
+                    if let Some(session) = session {
+                        session.opened(req.unique, fh, inode, started);
+                    }
+                    fh
+                },
                 flags: FOPEN_KEEP_CACHE,
             })
         };
@@ -1194,10 +1231,12 @@ impl Filesystem for Fs {
             return Err(Errno::new_is_dir());
         };
         let read = async {
-            file.read(req.unique, offset, size).await.map_err(|error| {
-                warn!(path = &*file.path, offset, reason = %error, "FUSE read failed");
-                Errno::from(libc::EIO)
-            })
+            file.read(req.unique, offset, size, started)
+                .await
+                .map_err(|error| {
+                    warn!(path = &*file.path, offset, reason = %error, "FUSE read failed");
+                    Errno::from(libc::EIO)
+                })
         };
         let result = guarded("read", self.interruptible(&req, read)).await;
         // Reads waiting their turn recheck however this one ended.
@@ -1702,7 +1741,7 @@ mod tests {
         let probe = file.reader.lock().await;
         let read = tokio::spawn({
             let file = Arc::clone(&file);
-            async move { file.read(1, 4096, 4096).await }
+            async move { file.read(1, 4096, 4096, Instant::now()).await }
         });
         tokio::time::sleep(ORDER_WAIT * 3).await;
         drop(probe);

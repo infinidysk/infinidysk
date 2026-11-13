@@ -25,7 +25,8 @@ use uuid::Uuid;
 
 pub use reader::{PartsReader, Reader};
 pub use session::{
-    Delivery, Handle, Origin, PendingRead, ReadStage, Request, Session, Sessions, Tracing,
+    Delivery, FuseOp, FuseOps, Handle, Origin, PendingRead, ReadStage, Request, Session, Sessions,
+    Tracing,
 };
 
 /// What the kernel applied to the FUSE mount, read back after tuning; `None` where

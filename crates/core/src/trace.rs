@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -112,11 +112,71 @@ pub enum Step {
     },
 }
 
+/// Where a read request is inside the daemon; each stage ends the one before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadStage {
+    /// Waiting for earlier reads of the same handle, so reads reach the stream in order.
+    Order,
+    /// Waiting for the handle's reader, held by another request.
+    #[serde(rename = "handle_lock")]
+    Lock,
+    /// In the stream reader: seeking and reading, including any wait for segments.
+    Read,
+}
+
+impl ReadStage {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Order => "order",
+            Self::Lock => "handle_lock",
+            Self::Read => "read",
+        }
+    }
+}
+
+/// How the daemon answered a read request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reply {
+    Data,
+    Error,
+    /// The kernel interrupted the request, or the daemon dropped it, before a reply.
+    Cancelled,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     Open {
         size: u64,
+    },
+    /// The FUSE open that created this stream replied with `handle`, now. It spent
+    /// `before_ns` before the trace started (path, caller and metadata lookups); the time
+    /// from the trace start to now is the rest of the open.
+    Opened {
+        request: u64,
+        handle: u64,
+        inode: u64,
+        before_ns: u64,
+    },
+    /// FUSE read `request` reached the daemon. It first waits in [`ReadStage::Order`].
+    Request {
+        request: u64,
+        offset: u64,
+        size: u32,
+    },
+    /// `request` entered `stage`.
+    RequestStage {
+        request: u64,
+        stage: ReadStage,
+    },
+    /// The daemon finished `request` with `bytes`.
+    Replied {
+        request: u64,
+        bytes: u32,
+        result: Reply,
     },
     Seek {
         from: u64,
@@ -156,7 +216,9 @@ pub enum Event {
         segment: u32,
         ns: u64,
     },
-    /// The reader paused `ns` between reads, ending now: time the client, not we, spent.
+    /// `ns` passed between two stream reads, ending now (kept from 50 ms). Not proof
+    /// the client paused: for FUSE it includes request ordering and handle-lock waits,
+    /// kernel and player time. Request events split the daemon's part out.
     Idle {
         ns: u64,
     },
@@ -207,6 +269,8 @@ pub struct Record {
 /// so both a slow start and a late stall survive a long playback.
 pub struct Trace {
     started: Instant,
+    /// Wall clock when `started` was taken, in ns since the Unix epoch.
+    started_unix_ns: u64,
     head_cap: usize,
     tail_cap: usize,
     buf: Mutex<Buf>,
@@ -225,6 +289,7 @@ impl Trace {
         let capacity = capacity.max(2);
         Self {
             started: Instant::now(),
+            started_unix_ns: unix_ns(SystemTime::now()),
             head_cap: capacity / 2,
             tail_cap: capacity - capacity / 2,
             buf: Mutex::default(),
@@ -235,11 +300,38 @@ impl Trace {
         self.record_at(Instant::now(), event);
     }
 
+    /// The monotonic instant every `at_ns` counts from.
+    #[must_use]
+    pub const fn started(&self) -> Instant {
+        self.started
+    }
+
+    /// The wall clock at [`started`](Self::started), in ns since the Unix epoch. A record's
+    /// wall time is this plus its `at_ns`; durations come from the monotonic clock, so a
+    /// wall-clock step after the start does not bend them.
+    #[must_use]
+    pub const fn started_unix_ns(&self) -> u64 {
+        self.started_unix_ns
+    }
+
+    /// Events kept at most: the first half, then the newest.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.head_cap + self.tail_cap
+    }
+
+    /// `at` in this trace's `at_ns`.
+    #[must_use]
+    pub fn at_ns(&self, at: Instant) -> u64 {
+        u64::try_from(at.saturating_duration_since(self.started).as_nanos()).unwrap_or(u64::MAX)
+    }
+
     /// Records `event` as having happened at `at`.
     pub fn record_at(&self, at: Instant, event: Event) {
-        let at_ns = u64::try_from(at.saturating_duration_since(self.started).as_nanos())
-            .unwrap_or(u64::MAX);
-        let record = Record { at_ns, event };
+        let record = Record {
+            at_ns: self.at_ns(at),
+            event,
+        };
         let mut buf = self.lock();
         if buf.head.len() < self.head_cap {
             buf.head.push(record);
@@ -273,6 +365,13 @@ impl Trace {
     fn lock(&self) -> MutexGuard<'_, Buf> {
         self.buf.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// `at` in ns since the Unix epoch; `0` before it.
+#[must_use]
+pub fn unix_ns(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
 }
 
 /// A playback segment fetch's size, trace and live wait, passed down to the provider client.
@@ -411,6 +510,90 @@ impl Causes {
     }
 }
 
+/// Read requests in the daemon while a [`Summary`] walks the records.
+#[derive(Default)]
+struct Requests {
+    /// Request id to its arrival, current stage and when that stage began.
+    open: HashMap<u64, (u64, ReadStage, u64)>,
+    /// When the last request left the daemon with none left in it.
+    emptied: Option<u64>,
+    /// When requests were last counted into `in_request_ns`.
+    busy_since: u64,
+    first: Option<u64>,
+}
+
+impl Requests {
+    fn arrive(&mut self, summary: &mut Summary, request: u64, at: u64) {
+        summary.requests += 1;
+        summary.first_request_ns.get_or_insert(at);
+        self.first.get_or_insert(request);
+        if self.open.is_empty() {
+            if let Some(emptied) = self.emptied {
+                Self::gap(summary, at.saturating_sub(emptied));
+            }
+            self.busy_since = at;
+        }
+        self.open.insert(request, (at, ReadStage::Order, at));
+    }
+
+    fn stage(&mut self, summary: &mut Summary, request: u64, stage: ReadStage, at: u64) {
+        let Some((_, current, since)) = self.open.get_mut(&request) else {
+            summary.requests_unmatched += 1;
+            return;
+        };
+        Self::spent(summary, *current, at.saturating_sub(*since));
+        (*current, *since) = (stage, at);
+    }
+
+    fn reply(&mut self, summary: &mut Summary, request: u64, result: Reply, at: u64) {
+        match result {
+            Reply::Data => {}
+            Reply::Error => summary.requests_failed += 1,
+            Reply::Cancelled => summary.requests_cancelled += 1,
+        }
+        let Some((arrived, stage, since)) = self.open.remove(&request) else {
+            summary.requests_unmatched += 1;
+            return;
+        };
+        Self::spent(summary, stage, at.saturating_sub(since));
+        let took = at.saturating_sub(arrived);
+        summary.longest_request_ns = summary.longest_request_ns.max(took);
+        if self.first == Some(request) {
+            summary.first_reply_ns = Some(took);
+        }
+        if self.open.is_empty() {
+            summary.in_request_ns = summary
+                .in_request_ns
+                .saturating_add(at.saturating_sub(self.busy_since));
+            self.emptied = Some(at);
+        }
+    }
+
+    /// The stream ended: a gap since the last reply runs to here.
+    fn end(&mut self, summary: &mut Summary, at: u64) {
+        if self.open.is_empty()
+            && let Some(emptied) = self.emptied.take()
+        {
+            Self::gap(summary, at.saturating_sub(emptied));
+        }
+    }
+
+    fn gap(summary: &mut Summary, ns: u64) {
+        summary.no_request_ns = summary.no_request_ns.saturating_add(ns);
+        summary.longest_no_request_ns = summary.longest_no_request_ns.max(ns);
+    }
+
+    fn spent(summary: &mut Summary, stage: ReadStage, ns: u64) {
+        let (total, longest) = match stage {
+            ReadStage::Order => (&mut summary.request_order_ns, &mut summary.longest_order_ns),
+            ReadStage::Lock => (&mut summary.request_lock_ns, &mut summary.longest_lock_ns),
+            ReadStage::Read => (&mut summary.request_read_ns, &mut summary.longest_read_ns),
+        };
+        *total = total.saturating_add(ns);
+        *longest = (*longest).max(ns);
+    }
+}
+
 /// The wait that starts with `step`.
 const fn waiting_after(step: Step) -> Cause {
     match step {
@@ -429,9 +612,12 @@ const fn waiting_after(step: Step) -> Cause {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Summary {
     pub events: usize,
+    /// Events lost between the kept head and tail. When not zero, request counts and
+    /// gap totals cover only the kept events.
     pub dropped: u64,
-    /// From the first read (its window) to its first byte; the client's pause after
-    /// open is not ours.
+    /// Stream fetch latency: from the reader's first prefetch window to the first bytes
+    /// it got from it. Not the daemon's request latency ([`first_reply_ns`](Self::first_reply_ns))
+    /// and not click-to-play time.
     pub first_byte_ns: Option<u64>,
     pub stalls: u32,
     pub stall_ns: u64,
@@ -454,8 +640,42 @@ pub struct Summary {
     /// Segments from the cache or another reader's fetch.
     pub cached: u32,
     pub seeks: u32,
-    /// Time the client paused between reads.
+    /// Time between stream reads, summed from [`Event::Idle`]. Includes the daemon's
+    /// ordering and handle-lock waits; not proof the client paused.
     pub client_ns: u64,
+    /// Open work before the trace started (path, caller and metadata lookups).
+    pub open_before_ns: Option<u64>,
+    /// From the trace start to the open's reply.
+    pub open_reply_ns: Option<u64>,
+    /// FUSE read requests that reached the daemon. Reads over HTTP are not timed per request.
+    pub requests: u32,
+    pub requests_failed: u32,
+    pub requests_cancelled: u32,
+    /// Requests with no reply in the kept events: still in the daemon, or (with dropped
+    /// events) a reply that was not kept.
+    pub requests_pending: u32,
+    /// Replies or stages whose request arrival was not kept.
+    pub requests_unmatched: u32,
+    /// From the trace start to the first read request reaching the daemon.
+    pub first_request_ns: Option<u64>,
+    /// From the first read request reaching the daemon to the daemon's reply to it.
+    pub first_reply_ns: Option<u64>,
+    /// Request time per stage, summed over requests (concurrent requests overlap).
+    pub request_order_ns: u64,
+    pub request_lock_ns: u64,
+    pub request_read_ns: u64,
+    pub longest_order_ns: u64,
+    pub longest_lock_ns: u64,
+    pub longest_read_ns: u64,
+    /// Longest arrival-to-reply of one request.
+    pub longest_request_ns: u64,
+    /// From the first request on, time with at least one read request in the daemon.
+    pub in_request_ns: u64,
+    /// From the first request to the last reply (or the end), time with no read request
+    /// in the daemon. The kernel, its page cache or the player had the time; the trace
+    /// cannot tell which.
+    pub no_request_ns: u64,
+    pub longest_no_request_ns: u64,
 }
 
 impl Summary {
@@ -473,8 +693,23 @@ impl Summary {
         // When each sample was taken, and whether it saw idle connections.
         let mut samples: Vec<(u64, bool)> = Vec::new();
         let mut asked = None;
+        let mut requests = Requests::default();
         for record in records {
             match record.event {
+                Event::Opened { before_ns, .. } => {
+                    summary.open_before_ns = Some(before_ns);
+                    summary.open_reply_ns = Some(record.at_ns);
+                }
+                Event::Request { request, .. } => {
+                    requests.arrive(&mut summary, request, record.at_ns);
+                }
+                Event::RequestStage { request, stage } => {
+                    requests.stage(&mut summary, request, stage, record.at_ns);
+                }
+                Event::Replied {
+                    request, result, ..
+                } => requests.reply(&mut summary, request, result, record.at_ns),
+                Event::End { .. } => requests.end(&mut summary, record.at_ns),
                 Event::Segment {
                     segment,
                     hedge,
@@ -543,9 +778,10 @@ impl Summary {
                 Event::Window { .. } => {
                     asked.get_or_insert(record.at_ns);
                 }
-                Event::Open { .. } | Event::End { .. } => {}
+                Event::Open { .. } => {}
             }
         }
+        summary.requests_pending = u32::try_from(requests.open.len()).unwrap_or(u32::MAX);
         for (segment, start, end) in stalls {
             // The reader samples as a stall begins; later samples see it half over.
             let began = samples.partition_point(|&(at, _)| at <= start);
@@ -771,5 +1007,88 @@ mod tests {
             .collect();
         assert_eq!(kept, [0, 1, 8, 9]);
         assert_eq!(dropped, 6);
+    }
+
+    #[test]
+    fn request_time_splits_into_order_lock_and_read_and_gaps_without_requests() {
+        let arrive = |request| Event::Request {
+            request,
+            offset: 0,
+            size: 4096,
+        };
+        let stage = |request, stage| Event::RequestStage { request, stage };
+        let reply = |request, result| Event::Replied {
+            request,
+            bytes: 0,
+            result,
+        };
+        let records = [
+            at(0, Event::Open { size: 8 }),
+            at(
+                30,
+                Event::Opened {
+                    request: 1,
+                    handle: 3,
+                    inode: 9,
+                    before_ns: 20,
+                },
+            ),
+            at(100, arrive(2)),
+            at(110, stage(2, ReadStage::Lock)),
+            at(130, stage(2, ReadStage::Read)),
+            // Overlaps request 2: both in the daemon at once count once.
+            at(150, arrive(3)),
+            at(200, reply(2, Reply::Data)),
+            at(250, reply(3, Reply::Cancelled)),
+            // No request in the daemon from 250 to 1250.
+            at(1250, arrive(4)),
+            at(1260, stage(4, ReadStage::Lock)),
+            at(1270, stage(4, ReadStage::Read)),
+            at(1300, reply(4, Reply::Error)),
+            // A reply whose arrival was dropped, and a request still in the daemon.
+            at(1400, reply(5, Reply::Data)),
+            at(1500, arrive(6)),
+        ];
+        let s = Summary::of(&records, 0);
+        assert_eq!((s.open_before_ns, s.open_reply_ns), (Some(20), Some(30)));
+        assert_eq!(s.requests, 4);
+        assert_eq!((s.requests_failed, s.requests_cancelled), (1, 1));
+        assert_eq!((s.requests_pending, s.requests_unmatched), (1, 1));
+        assert_eq!(
+            (s.first_request_ns, s.first_reply_ns),
+            (Some(100), Some(100))
+        );
+        // Request 3 never left the order stage: 100 ns.
+        assert_eq!(s.request_order_ns, 10 + 100 + 10);
+        assert_eq!(s.request_lock_ns, 20 + 10);
+        assert_eq!(s.request_read_ns, 70 + 30);
+        assert_eq!(s.longest_order_ns, 100);
+        assert_eq!(s.longest_request_ns, 100);
+        assert_eq!(s.in_request_ns, 150 + 50);
+        // From the reply at 1300 to the arrival at 1500, too.
+        assert_eq!(s.no_request_ns, 1000 + 200);
+        assert_eq!(s.longest_no_request_ns, 1000);
+    }
+
+    #[test]
+    fn a_stream_without_requests_has_no_request_timing() {
+        let records = [
+            at(0, Event::Open { size: 8 }),
+            at(9, Event::End { bytes: 0 }),
+        ];
+        let s = Summary::of(&records, 0);
+        assert_eq!(s.requests, 0);
+        assert_eq!((s.first_request_ns, s.first_reply_ns), (None, None));
+        assert_eq!((s.in_request_ns, s.no_request_ns), (0, 0));
+    }
+
+    #[test]
+    fn the_wall_clock_anchor_is_taken_at_the_start() {
+        let before = unix_ns(SystemTime::now());
+        let trace = Trace::new(4);
+        let after = unix_ns(SystemTime::now());
+        assert!((before..=after).contains(&trace.started_unix_ns()));
+        assert_eq!(trace.capacity(), 4);
+        assert_eq!(trace.at_ns(trace.started()), 0);
     }
 }

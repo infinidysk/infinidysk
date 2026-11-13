@@ -3,13 +3,14 @@
 use std::collections::VecDeque;
 use std::io::{self, SeekFrom};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant, SystemTime};
 
 use infinidysk_core::ItemId;
-use infinidysk_core::trace::{Event, Trace};
+pub use infinidysk_core::trace::ReadStage;
+use infinidysk_core::trace::{Event, Reply, Trace};
 use infinidysk_core::wait::{Watch, age, now_ns};
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
@@ -23,6 +24,10 @@ const KEPT_ENDED: usize = 10_000;
 const MIN_STALL: Duration = Duration::from_secs(1);
 /// Shorter pauses between a reader's requests are not traced as idle.
 const MIN_IDLE: Duration = Duration::from_millis(50);
+/// Faster FUSE metadata calls are only counted, not listed, while tracing.
+const MIN_OP: Duration = Duration::from_millis(1);
+/// Slow FUSE metadata calls listed while tracing; the oldest go first.
+const KEPT_OPS: usize = 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Delivery {
@@ -72,7 +77,8 @@ pub struct Session {
     pub trace: Option<Arc<Trace>>,
     served: AtomicU64,
     pos: AtomicU64,
-    /// Nanoseconds from the first read request to its first byte; `u64::MAX` before it.
+    /// Nanoseconds the first read that returned bytes waited in the stream: from its
+    /// first pending poll to its bytes. `u64::MAX` before it.
     first_byte_ns: AtomicU64,
     stall_ns: AtomicU64,
     stalls: AtomicU64,
@@ -84,46 +90,32 @@ pub struct Session {
     last_read: AtomicU64,
     /// FUSE reads not answered yet.
     requests: Mutex<Vec<Listed>>,
+    /// The FUSE file handle, once the open replied.
+    handle: OnceLock<u64>,
 }
 
 struct Listed {
     id: u64,
     offset: u64,
     size: u32,
-    /// [`now_ns`] stamp.
-    arrived: u64,
+    arrived: Instant,
     stage: ReadStage,
-}
-
-/// Where a FUSE read waits before the reader serves it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadStage {
-    /// For reads of earlier offsets on the same handle.
-    Order,
-    /// For the handle's reader, busy with another read.
-    Lock,
-    /// In the reader.
-    Read,
-}
-
-impl ReadStage {
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Order => "order",
-            Self::Lock => "handle_lock",
-            Self::Read => "read",
-        }
-    }
+    /// When `stage` began.
+    since: Instant,
 }
 
 /// A read not answered yet.
 #[derive(Clone, Copy, Debug)]
 pub struct PendingRead {
+    /// The FUSE request id (`unique`).
+    pub request: u64,
     pub offset: u64,
     pub size: u32,
+    /// Since the request reached the daemon.
     pub age: Duration,
     pub stage: ReadStage,
+    /// Since it entered `stage`.
+    pub stage_age: Duration,
 }
 
 impl Session {
@@ -141,8 +133,10 @@ impl Session {
         self.closed_at.get().copied()
     }
 
-    /// Time from the first read request to its first byte; a client's pause after open
-    /// is not counted.
+    /// Stream wait of the first read that returned bytes: from its first pending poll to
+    /// its bytes, zero when they were ready. Excludes time before that read reached the
+    /// stream (FUSE ordering and handle-lock waits, the kernel, the player): not
+    /// click-to-play time.
     pub fn first_byte(&self) -> Option<Duration> {
         match self.first_byte_ns.load(Ordering::Relaxed) {
             u64::MAX => None,
@@ -180,14 +174,17 @@ impl Session {
 
     /// FUSE reads not answered yet, oldest first.
     pub fn requests(&self) -> Vec<PendingRead> {
+        let now = Instant::now();
         let requests = self.lock_requests();
         let mut pending: Vec<_> = requests
             .iter()
             .map(|r| PendingRead {
+                request: r.id,
                 offset: r.offset,
                 size: r.size,
-                age: age(r.arrived).unwrap_or_default(),
+                age: now.saturating_duration_since(r.arrived),
                 stage: r.stage,
+                stage_age: now.saturating_duration_since(r.since),
             })
             .collect();
         drop(requests);
@@ -195,18 +192,50 @@ impl Session {
         pending
     }
 
-    /// Lists FUSE read `id` until the returned guard drops.
-    pub fn request(self: &Arc<Self>, id: u64, offset: u64, size: u32) -> Request {
+    /// The FUSE file handle, once the open replied.
+    pub fn handle(&self) -> Option<u64> {
+        self.handle.get().copied()
+    }
+
+    /// FUSE open `request`, which reached the daemon at `arrived`, replied with `handle`.
+    pub fn opened(&self, request: u64, handle: u64, inode: u64, arrived: Instant) {
+        let _ = self.handle.set(handle);
+        if let Some(trace) = &self.trace {
+            let before = trace.started().saturating_duration_since(arrived);
+            trace.record(Event::Opened {
+                request,
+                handle,
+                inode,
+                before_ns: u64::try_from(before.as_nanos()).unwrap_or(u64::MAX),
+            });
+        }
+    }
+
+    /// Lists FUSE read `id`, which reached the daemon at `arrived`, until the returned
+    /// guard ends or drops.
+    pub fn request(self: &Arc<Self>, id: u64, offset: u64, size: u32, arrived: Instant) -> Request {
+        if let Some(trace) = &self.trace {
+            trace.record_at(
+                arrived,
+                Event::Request {
+                    request: id,
+                    offset,
+                    size,
+                },
+            );
+        }
         self.lock_requests().push(Listed {
             id,
             offset,
             size,
-            arrived: now_ns(),
+            arrived,
             stage: ReadStage::Order,
+            since: arrived,
         });
         Request {
             session: Arc::clone(self),
             id,
+            ended: false,
         }
     }
 
@@ -215,10 +244,12 @@ impl Session {
     }
 }
 
-/// A FUSE read listed on its session until dropped.
+/// A FUSE read listed on its session until it ends or drops. Dropped without
+/// [`end`](Self::end), it was cancelled (or failed, when dropped by a panic).
 pub struct Request {
     session: Arc<Session>,
     id: u64,
+    ended: bool,
 }
 
 impl Request {
@@ -230,14 +261,84 @@ impl Request {
             .find(|r| r.id == self.id)
         {
             request.stage = stage;
+            request.since = Instant::now();
         }
+        if let Some(trace) = &self.session.trace {
+            trace.record(Event::RequestStage {
+                request: self.id,
+                stage,
+            });
+        }
+    }
+
+    /// The daemon answers with `bytes`, or an error.
+    pub fn end(mut self, bytes: Option<usize>) {
+        self.ended = true;
+        let result = if bytes.is_some() {
+            Reply::Data
+        } else {
+            Reply::Error
+        };
+        self.close(result, bytes.unwrap_or(0));
+    }
+
+    fn close(&self, result: Reply, bytes: usize) {
+        if let Some(trace) = &self.session.trace {
+            trace.record(Event::Replied {
+                request: self.id,
+                bytes: u32::try_from(bytes).unwrap_or(u32::MAX),
+                result,
+            });
+        }
+        self.session.lock_requests().retain(|r| r.id != self.id);
     }
 }
 
 impl Drop for Request {
     fn drop(&mut self) {
-        self.session.lock_requests().retain(|r| r.id != self.id);
+        if !self.ended {
+            let result = if std::thread::panicking() {
+                Reply::Error
+            } else {
+                Reply::Cancelled
+            };
+            self.close(result, 0);
+        }
     }
+}
+
+/// A FUSE metadata call listed while tracing.
+#[derive(Clone, Copy, Debug)]
+pub struct FuseOp {
+    pub op: &'static str,
+    /// The FUSE request id (`unique`).
+    pub request: u64,
+    pub inode: u64,
+    /// Wall clock when it reached the daemon.
+    pub arrived: SystemTime,
+    pub took: Duration,
+    /// `0` for success.
+    pub errno: i32,
+}
+
+/// Slow FUSE metadata calls while tracing, with counts of what was not listed.
+#[derive(Clone, Debug, Default)]
+pub struct FuseOps {
+    /// Oldest first.
+    pub listed: VecDeque<FuseOp>,
+    /// Calls seen while tracing, listed or not.
+    pub seen: u64,
+    /// Calls faster than the listing threshold.
+    pub fast: u64,
+    /// Listed calls pushed out by newer ones.
+    pub dropped: u64,
+}
+
+impl FuseOps {
+    /// Calls from this long are listed.
+    pub const MIN: Duration = MIN_OP;
+    /// Listed calls kept at most.
+    pub const KEPT: usize = KEPT_OPS;
 }
 
 #[derive(Default)]
@@ -245,6 +346,8 @@ pub struct Sessions {
     next: AtomicU64,
     /// Bytes served since start, indexed like [`Delivery::ALL`].
     served: [AtomicU64; 2],
+    /// A tracing window was set, so metadata calls take the lock to be noted.
+    traced: AtomicBool,
     inner: Mutex<Inner>,
 }
 
@@ -256,6 +359,7 @@ struct Inner {
     /// Every finished read since the last [`Sessions::take_ended`].
     ended: VecDeque<Arc<Session>>,
     tracing: Option<Tracing>,
+    ops: FuseOps,
 }
 
 impl Sessions {
@@ -270,12 +374,60 @@ impl Sessions {
     }
 
     pub fn set_tracing(&self, tracing: Option<Tracing>) {
+        self.traced.store(tracing.is_some(), Ordering::Relaxed);
         self.lock().tracing = tracing;
     }
 
     /// The tracing window, if still running.
     pub fn tracing(&self) -> Option<Tracing> {
         self.lock().tracing.filter(|t| t.until > Instant::now())
+    }
+
+    /// Notes FUSE metadata call `op` that reached the daemon at `arrived`, while tracing.
+    pub fn fuse_op(
+        &self,
+        op: &'static str,
+        request: u64,
+        inode: u64,
+        arrived: Instant,
+        errno: i32,
+    ) {
+        if !self.traced.load(Ordering::Relaxed) {
+            return;
+        }
+        let now = Instant::now();
+        let took = now.saturating_duration_since(arrived);
+        let op = (took >= MIN_OP).then(|| FuseOp {
+            op,
+            request,
+            inode,
+            arrived: SystemTime::now()
+                .checked_sub(took)
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+            took,
+            errno,
+        });
+        let mut inner = self.lock();
+        if inner.tracing.is_none_or(|t| t.until <= now) {
+            return;
+        }
+        let ops = &mut inner.ops;
+        ops.seen += 1;
+        let Some(op) = op else {
+            ops.fast += 1;
+            return;
+        };
+        if ops.listed.len() == KEPT_OPS {
+            ops.listed.pop_front();
+            ops.dropped += 1;
+        }
+        ops.listed.push_back(op);
+        drop(inner);
+    }
+
+    /// Slow FUSE metadata calls noted while tracing.
+    pub fn fuse_ops(&self) -> FuseOps {
+        self.lock().ops.clone()
     }
 
     pub fn open(&self) -> Vec<Arc<Session>> {
@@ -338,6 +490,7 @@ impl Sessions {
             waiting_since: AtomicU64::new(0),
             last_read: AtomicU64::new(0),
             requests: Mutex::default(),
+            handle: OnceLock::new(),
         });
         self.lock().open.push(Arc::clone(&session));
         Guard {
@@ -546,5 +699,72 @@ mod tests {
 
         read_after_wait(&mut handle).await;
         assert_eq!(session.stalls().0, 1, "bytes clear the seek");
+    }
+
+    fn traced_session(sessions: &Arc<Sessions>) -> Guard {
+        sessions.set_tracing(Some(Tracing {
+            until: Instant::now() + Duration::from_secs(60),
+            capacity: 100,
+        }));
+        let origin = Origin {
+            delivery: Delivery::Fuse,
+            client: "test".into(),
+            player: None,
+        };
+        sessions.start(ItemId::new(), "/f".into(), 8, origin)
+    }
+
+    #[test]
+    fn requests_trace_their_stages_and_a_drop_is_a_cancellation() {
+        let sessions = Arc::new(Sessions::default());
+        let guard = traced_session(&sessions);
+        let session = &guard.session;
+        let arrived = Instant::now();
+        session.opened(7, 3, 42, arrived);
+        assert_eq!(session.handle(), Some(3));
+
+        let done = session.request(8, 0, 4096, Instant::now());
+        let dropped = session.request(9, 4096, 4096, Instant::now());
+        done.stage(ReadStage::Lock);
+        let pending = session.requests();
+        assert_eq!(pending.len(), 2);
+        let first = pending.iter().find(|p| p.request == 8).unwrap();
+        assert_eq!(first.stage, ReadStage::Lock);
+        assert!(first.stage_age <= first.age);
+
+        done.stage(ReadStage::Read);
+        done.end(Some(4096));
+        drop(dropped);
+        assert!(session.requests().is_empty());
+
+        let summary = session.trace.as_ref().unwrap().summary();
+        assert_eq!(summary.requests, 2);
+        assert_eq!(summary.requests_cancelled, 1);
+        assert_eq!(summary.requests_failed, 0);
+        assert_eq!(summary.requests_pending, 0);
+        assert!(summary.first_reply_ns.is_some());
+        assert!(summary.open_before_ns.is_some());
+    }
+
+    #[test]
+    fn metadata_calls_are_listed_only_while_tracing_and_when_slow() {
+        let sessions = Arc::new(Sessions::default());
+        let slow = Instant::now()
+            .checked_sub(Duration::from_millis(5))
+            .unwrap();
+        sessions.fuse_op("lookup", 1, 1, slow, 0);
+        assert_eq!(sessions.fuse_ops().seen, 0, "not tracing");
+
+        let _guard = traced_session(&sessions);
+        sessions.fuse_op("lookup", 2, 1, Instant::now(), 0);
+        sessions.fuse_op("getattr", 3, 5, slow, 2);
+        let ops = sessions.fuse_ops();
+        assert_eq!((ops.seen, ops.fast), (2, 1));
+        let op = ops.listed.front().unwrap();
+        assert_eq!(
+            (op.op, op.request, op.inode, op.errno),
+            ("getattr", 3, 5, 2)
+        );
+        assert!(op.took >= Duration::from_millis(5));
     }
 }
