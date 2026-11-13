@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Empty, Failure, IconButton, Loading, PageHeader, Panel, Status } from "../ui";
+import { Empty, Failure, IconButton, InfoTip, Loading, PageHeader, Panel, Status } from "../ui";
 
 // The server sends these untyped (`summary`, JSON lines); they mirror `infinidysk_core::trace`.
 type Cause = "budget" | "permit" | "connection" | "pipeline" | "latency" | "transfer" | "decode" | "disk" | "shared" | "other";
@@ -205,8 +205,8 @@ export function Tracing() {
                 <TableHead>File</TableHead>
                 <TableHead className="hidden w-28 sm:table-cell">Opened</TableHead>
                 <TableHead className="hidden w-24 text-right md:table-cell">Read</TableHead>
-                <TableHead className="hidden w-24 text-right md:table-cell" title="From the first prefetch window to its first bytes">
-                  Stream first byte
+                <TableHead className="hidden w-24 text-right md:table-cell">
+                  Stream first byte <InfoTip label="About stream first byte">From the first prefetch window to its first bytes.</InfoTip>
                 </TableHead>
                 <TableHead className="w-24 text-right">Stalls</TableHead>
                 <TableHead className="hidden w-24 text-right lg:table-cell">Longest</TableHead>
@@ -458,8 +458,11 @@ export function TraceBody({ header, events }: { header: Header; events: TraceEve
       )}
       <dl className="bg-card mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4">
         {stats.map(([label, value, warn, hint]) => (
-          <div key={label} className="bg-card p-3 outline outline-border" title={hint}>
-            <dt className="text-muted-foreground text-xs">{label}</dt>
+          <div key={label} className="bg-card p-3 outline outline-border">
+            <dt className="text-muted-foreground flex items-center gap-1 text-xs">
+              {label}
+              {hint && <InfoTip label={`About ${label.toLowerCase()}`}>{hint}</InfoTip>}
+            </dt>
             <dd className={cn("mt-0.5 truncate font-medium tabular-nums", warn && "text-warning-text")}>{value}</dd>
           </div>
         ))}

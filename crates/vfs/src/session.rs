@@ -174,10 +174,15 @@ impl Session {
 
     /// FUSE reads not answered yet, oldest first.
     pub fn requests(&self) -> Vec<PendingRead> {
-        let now = Instant::now();
+        self.requests_at(Instant::now())
+    }
+
+    /// FUSE reads that arrived by `now` and were not answered yet, with ages at `now`.
+    pub fn requests_at(&self, now: Instant) -> Vec<PendingRead> {
         let requests = self.lock_requests();
         let mut pending: Vec<_> = requests
             .iter()
+            .filter(|r| r.arrived <= now)
             .map(|r| PendingRead {
                 request: r.id,
                 offset: r.offset,

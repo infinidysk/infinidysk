@@ -1732,7 +1732,7 @@ struct PendingView {
     stage_ms: u64,
 }
 
-fn read_view(session: &Session) -> ReadView {
+fn read_view(session: &Session, now: Instant) -> ReadView {
     let (stalls, stalled) = session.stalls();
     let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
     ReadView {
@@ -1757,7 +1757,7 @@ fn read_view(session: &Session) -> ReadView {
         seeks: session.seeks(),
         handle: session.handle(),
         pending: session
-            .requests()
+            .requests_at(now)
             .into_iter()
             .map(|r| PendingView {
                 request: r.request,
@@ -1792,7 +1792,7 @@ async fn get_reads(
             .open()
             .iter()
             .filter(|s| query.player.is_none() || s.player == query.player)
-            .map(|s| read_view(s))
+            .map(|s| read_view(s, Instant::now()))
             .collect(),
     )
 }
@@ -1876,7 +1876,7 @@ async fn get_traces(State(admin): State<Arc<Admin>>) -> Json<Vec<TraceView>> {
             .filter_map(|s| {
                 Some(TraceView {
                     summary: s.trace.as_ref()?.summary(),
-                    read: read_view(s),
+                    read: read_view(s, Instant::now()),
                 })
             })
             .collect(),
@@ -1920,10 +1920,11 @@ async fn export_trace(
 async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail> {
     let session = admin.vfs.sessions().get(id).ok_or(Fail::NotFound)?;
     let trace = session.trace.as_ref().ok_or(Fail::NotFound)?;
+    let (records, dropped) = trace.records();
+    // Taken after the records, so no exported event or pending arrival is past it.
     let exported = Instant::now();
     let exported_unix_ns = infinidysk_core::trace::unix_ns(SystemTime::now());
-    let (records, dropped) = trace.records();
-    let mut read = read_view(&session);
+    let mut read = read_view(&session, exported);
     let mut providers = admin.client.provider_names();
     let mut header = json!({});
     if redact {
@@ -1952,11 +1953,9 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
     }
     header["read"] = json!(read);
     header["providers"] = json!(providers);
-    header["summary"] = json!(Summary::until(
-        &records,
-        dropped,
-        Some(trace.at_ns(exported))
-    ));
+    let summary = Summary::until(&records, dropped, Some(trace.at_ns(exported)));
+    let events = summary.events;
+    header["summary"] = json!(summary);
     header["dropped"] = json!(dropped);
     header["clock"] = json!({
         "started_unix_ns": trace.started_unix_ns(),
@@ -1966,7 +1965,7 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
     });
     header["limits"] = json!({
         "capacity": trace.capacity(),
-        "events": records.len(),
+        "events": events,
         "dropped": dropped,
         "min_idle_ms": 50,
     });
