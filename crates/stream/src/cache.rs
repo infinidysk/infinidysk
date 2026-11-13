@@ -264,6 +264,7 @@ impl Cache {
         self: &Arc<Self>,
         client: &Arc<Client>,
         message_id: &str,
+        workload: Workload,
         begin: Option<u64>,
         probe: Option<&Probe>,
         progress: Option<Progress>,
@@ -277,7 +278,7 @@ impl Cache {
             self.served(&self.memory_hits, &data, Tier::Memory, probe);
             return Ok(data);
         }
-        let (flight, joined) = self.flight(client, message_id, begin, probe, progress);
+        let (flight, joined) = self.flight(client, message_id, workload, begin, probe, progress);
         let (data, from_disk) = flight.await?;
         if joined {
             self.served(&self.joined, &data, Tier::Shared, probe);
@@ -292,13 +293,14 @@ impl Cache {
         &self,
         client: &Client,
         message_id: &str,
+        workload: Workload,
         begin: Option<u64>,
         probe: Option<&Probe>,
         progress: Option<&Progress>,
     ) -> Body {
         self.misses.fetch_add(1, Ordering::Relaxed);
         let body = client
-            .body_with(message_id, Workload::Stream, probe, progress, begin)
+            .body_with(message_id, workload, probe, progress, begin)
             .await;
         let data = body.map_err(Arc::new)?.data;
         self.insert(message_id, data.clone());
@@ -337,6 +339,7 @@ impl Cache {
         self: &Arc<Self>,
         client: &Arc<Client>,
         message_id: &str,
+        workload: Workload,
         begin: Option<u64>,
         probe: Option<&Probe>,
         progress: Option<Progress>,
@@ -382,6 +385,7 @@ impl Cache {
                 .direct(
                     &client,
                     &landing.key,
+                    workload,
                     begin,
                     probe.as_ref(),
                     progress.as_ref(),
