@@ -1,0 +1,32 @@
+[package]
+name = "infinidysk-mount"
+description = "Read-only FUSE mount of the virtual tree (Linux only)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bytes.workspace = true
+infinidysk-core.workspace = true
+futures-util = { workspace = true, features = ["std"] }
+infinidysk-fuse.workspace = true
+infinidysk-vfs.workspace = true
+nix = { workspace = true, features = ["feature", "fs"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "sync", "time"] }
+tokio-util.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+infinidysk-core.workspace = true
+infinidysk-db.workspace = true
+infinidysk-nntp.workspace = true
+infinidysk-stream.workspace = true
+infinidysk-testkit.workspace = true
+nix = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+
+[lints]
+workspace = true

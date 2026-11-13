@@ -13,6 +13,9 @@ ignore = [
     # rsa, through openidconnect: the Marvin timing attack needs private-key operations.
     # We only verify ID-token signatures with the provider's public keys. No patch exists.
     { id = "RUSTSEC-2023-0071", reason = "only public-key signature verification of OIDC ID tokens" },
+    # libsqlite3-sys < 0.39: needs a planted -wal file with a mismatched page size in our data dir.
+    # Remove once a sqlx release allows libsqlite3-sys >= 0.39 (sqlx 0.9.0 caps it below 0.38).
+    { id = "RUSTSEC-2026-0459", reason = "exploit needs write access to the database directory; no sqlx release allows the fix yet" },
 ]
 
 [licenses]

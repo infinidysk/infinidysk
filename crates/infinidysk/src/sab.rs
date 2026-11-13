@@ -140,7 +140,7 @@ impl Params {
                     Some(file_name) if is_nzb_file || name.eq_ignore_ascii_case("name") => {
                         let data = field.bytes().await.map_err(|_| bad("Invalid nzbFile"))?;
                         if is_nzb_file || params.nzb.is_none() {
-                            params.nzb = Some((file_name, data.to_vec()));
+                            params.nzb = Some((file_name, Vec::from(data)));
                         }
                     }
                     _ => {
@@ -438,7 +438,7 @@ async fn add_file(state: &Sab, ctx: &Ctx, mut p: Params) -> Result<Value, Fail> 
         post_processing,
     };
     let _writing = state.queue.db().write_permit().await;
-    match state.queue.enqueue(&job, &raw).await {
+    match state.queue.enqueue_owned(&job, raw).await {
         Ok(id) => Ok(json!({ "status": true, "error": null, "nzo_ids": [id.to_string()] })),
         Err(error) => Err(queue_failed(error)),
     }
@@ -469,7 +469,7 @@ async fn add_url(state: &Sab, ctx: &Ctx, p: &Params) -> Result<Value, Fail> {
     };
     let writing = state.queue.db().write_permit().await;
     let queued = match fetched {
-        Ok(fetched) => state.queue.enqueue(&job, &fetched.body).await,
+        Ok(fetched) => state.queue.enqueue_owned(&job, fetched.body).await,
         Err(reason) => state.queue.refuse(&job, 0, reason).await,
     };
     drop(writing);

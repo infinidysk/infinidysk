@@ -10,6 +10,7 @@ use rustls::crypto::aws_lc_rs;
 use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, sleep_until};
 use tokio_rustls::TlsAcceptor;
@@ -71,6 +72,13 @@ pub struct LoopbackServer {
 /// Per message-id: BODY replies still to stall, for how long, and how many were.
 type Stalls = Arc<Mutex<HashMap<String, (usize, Duration, usize)>>>;
 
+struct HeldBody {
+    arrived: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
+}
+
+type Holds = Arc<Mutex<HashMap<String, HeldBody>>>;
+
 #[derive(Clone)]
 struct Acceptor {
     articles: Arc<HashMap<String, Vec<u8>>>,
@@ -81,6 +89,7 @@ struct Acceptor {
     bodies: Arc<AtomicUsize>,
     stats: Arc<AtomicUsize>,
     stalls: Stalls,
+    holds: Holds,
 }
 
 impl Acceptor {
@@ -98,6 +107,7 @@ impl Acceptor {
                     bodies: Arc::clone(&self.bodies),
                     stats: Arc::clone(&self.stats),
                     stalls: Arc::clone(&self.stalls),
+                    holds: Arc::clone(&self.holds),
                 };
                 // A failed connection only affects the test that owns it.
                 tokio::spawn(async move {
@@ -246,6 +256,7 @@ impl LoopbackServer {
             bodies: Arc::default(),
             stats: Arc::default(),
             stalls: Arc::default(),
+            holds: Arc::default(),
         };
         Ok(Self {
             addr,
@@ -294,6 +305,24 @@ impl LoopbackServer {
 
     pub fn stat_commands(&self) -> usize {
         self.stats.load(Ordering::SeqCst)
+    }
+
+    /// Holds the next BODY reply until released; returns its arrival and release signals.
+    pub fn hold_article(&self, message_id: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (arrived, arrival) = oneshot::channel();
+        let (release, released) = oneshot::channel();
+        self.acceptor
+            .holds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                message_id.to_owned(),
+                HeldBody {
+                    arrived,
+                    release: released,
+                },
+            );
+        (arrival, release)
     }
 
     /// Holds the next `times` BODY replies for `message_id` for `delay` each.
@@ -353,6 +382,7 @@ struct Limit {
     bodies: Arc<AtomicUsize>,
     stats: Arc<AtomicUsize>,
     stalls: Stalls,
+    holds: Holds,
 }
 
 async fn delay(duration: Duration) {
@@ -401,6 +431,15 @@ async fn serve<S: AsyncRead + AsyncWrite>(
                 }
                 delay(impairment.response_delay).await;
                 let id = arg.trim().trim_start_matches('<').trim_end_matches('>');
+                let hold = limit
+                    .holds
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(id);
+                if let Some(hold) = hold {
+                    let _ = hold.arrived.send(());
+                    let _ = hold.release.await;
+                }
                 let held = limit
                     .stalls
                     .lock()

@@ -4,4 +4,6 @@ pub mod nzb;
 pub mod repair;
 pub mod service;
 
-pub use service::{HandoffFile, HandoffJob, HandoffWriter, Queue, Stats, Submission, Written};
+pub use service::{
+    HandoffFile, HandoffJob, HandoffWriter, InspectionSlot, Queue, Stats, Submission, Written,
+};

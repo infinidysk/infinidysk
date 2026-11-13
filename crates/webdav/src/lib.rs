@@ -722,7 +722,7 @@ async fn put(queue: &Queue, path: &str, body: Body) -> Result<Response, infinidy
         priority: 0,
         post_processing: 3,
     };
-    Ok(match queue.enqueue(&job, &raw).await {
+    Ok(match queue.enqueue_owned(&job, Vec::from(raw)).await {
         Ok(_) => StatusCode::CREATED.into_response(),
         Err(error @ (service::Error::Nzb(_) | service::Error::Invalid { .. })) => {
             (StatusCode::BAD_REQUEST, error.to_string()).into_response()

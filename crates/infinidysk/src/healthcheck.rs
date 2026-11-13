@@ -192,7 +192,7 @@ impl Healthcheck {
             return outcome;
         }
         match bounded(&self.asking, CHECK_TIMEOUT, move || {
-            infinidysk_fuse::answers(&dir)
+            infinidysk_mount::answers(&dir)
         })
         .await
         {

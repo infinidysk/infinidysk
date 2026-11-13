@@ -119,16 +119,16 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
         1_000_000,
         mount.to_str().unwrap(),
     ));
-    let native = Arc::new(infinidysk_fuse::Invalidator::default());
+    let native = Arc::new(infinidysk_mount::Invalidator::default());
     let publisher = infinidysk::repair::Publisher::new(Arc::clone(&repairs), Arc::clone(&vfs))
         .unwrap()
         .with_mount(Arc::clone(&native));
     let cancel = CancellationToken::new();
     let (state, mut ready) = tokio::sync::watch::channel(Err(String::new()));
-    let task = tokio::spawn(infinidysk_fuse::run(
+    let task = tokio::spawn(infinidysk_mount::run(
         vfs,
         native,
-        infinidysk_fuse::Config {
+        infinidysk_mount::Config {
             mount_dir: mount.clone(),
             uid: nix::unistd::geteuid().as_raw(),
             gid: nix::unistd::getegid().as_raw(),

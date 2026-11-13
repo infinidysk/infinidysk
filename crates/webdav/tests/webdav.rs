@@ -499,7 +499,7 @@ async fn unreachable_providers_answer_retryable_503_before_the_body() {
 }
 
 #[tokio::test]
-async fn primed_webdav_stream_preserves_first_bytes_and_ranges() {
+async fn webdav_stream_preserves_first_bytes_and_ranges() {
     // Larger than several response chunks, ending mid-article.
     let data: Vec<u8> = (0..150 * ARTICLE + 123)
         .map(|i| u8::try_from(i * 13 % 251).unwrap())

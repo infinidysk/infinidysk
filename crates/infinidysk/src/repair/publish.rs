@@ -16,7 +16,7 @@ pub struct Publisher {
     repairs: Arc<Repairs>,
     vfs: Arc<Vfs>,
     #[cfg(target_os = "linux")]
-    mount: Option<Arc<infinidysk_fuse::Invalidator>>,
+    mount: Option<Arc<infinidysk_mount::Invalidator>>,
 }
 
 impl Publisher {
@@ -42,7 +42,7 @@ impl Publisher {
 
     #[cfg(target_os = "linux")]
     #[must_use]
-    pub fn with_mount(mut self, mount: Arc<infinidysk_fuse::Invalidator>) -> Self {
+    pub fn with_mount(mut self, mount: Arc<infinidysk_mount::Invalidator>) -> Self {
         self.mount = Some(mount);
         self
     }

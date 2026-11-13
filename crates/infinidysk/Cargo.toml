@@ -47,7 +47,7 @@ uuid.workspace = true
 zip.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-infinidysk-fuse.workspace = true
+infinidysk-mount.workspace = true
 
 [dev-dependencies]
 infinidysk-par2.workspace = true

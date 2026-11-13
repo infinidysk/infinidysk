@@ -27,7 +27,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM rust AS build
 COPY --from=plan /src/recipe.json ./
 # cargo-chef omits excluded path dependencies from its generated skeleton.
-COPY vendor/fuse3 vendor/fuse3
+COPY vendor/infinidysk-fuse vendor/infinidysk-fuse
 RUN cargo chef cook --release --locked -p infinidysk --recipe-path recipe.json
 COPY . .
 COPY --from=ui /ui/dist ui/dist

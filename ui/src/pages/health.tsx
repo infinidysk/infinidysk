@@ -317,7 +317,7 @@ function Disabled() {
       <TriangleAlert className="text-warning-text" />
       <AlertTitle>Routine health checks are off</AlertTitle>
       <AlertDescription>
-        Files are not checked on a schedule. New files stay unchecked and are not analyzed, unless the sample size is
+        Files are not checked on a schedule. New files stay unchecked and are not analyzed, unless the import sample size is
         100%: then each import is a file's first check. Re-checks you start and problems found during playback are
         still handled.{" "}
         {locked && (
