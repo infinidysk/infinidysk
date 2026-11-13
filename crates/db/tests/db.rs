@@ -915,9 +915,12 @@ async fn history_ids(db: &Db, q: HistoryQuery<'_>) -> (Vec<JobId>, u64) {
 
 /// Requests coalesce, hidden files wait, completion keeps newer requests and metadata.
 async fn media_probes(db: &Db, open: &Item, hidden: &Item) {
-    db.request_media_probe(hidden.id, 5).await.expect("request");
-    db.request_media_probe(open.id, 10).await.expect("request");
-    db.request_media_probe(open.id, 20).await.expect("request");
+    assert!(db.request_media_probe(hidden.id, 5).await.expect("request"));
+    assert!(db.request_media_probe(open.id, 10).await.expect("request"));
+    assert!(
+        db.request_media_probe(open.id, 20).await.expect("request"),
+        "a coalesced request is accepted"
+    );
     let (item, at) = db
         .next_media_probe()
         .await
@@ -962,6 +965,31 @@ async fn media_probes(db: &Db, open: &Item, hidden: &Item) {
     db.set_structural(ItemId::new(), Some(&defect), true)
         .await
         .expect("gone items are skipped");
+    let dir = db
+        .item(open.parent.expect("has a parent"))
+        .await
+        .expect("query")
+        .expect("exists");
+    let gone = Item::child(&dir, "gone.mkv", ItemKind::NzbFile).expect("valid");
+    db.insert(std::slice::from_ref(&gone), &[])
+        .await
+        .expect("insert");
+    db.delete_item(gone.id).await.expect("delete");
+    assert!(
+        !db.request_media_probe(gone.id, 1)
+            .await
+            .expect("a deleted item is skipped")
+    );
+    assert_eq!(
+        db.media_probe(gone.id).await.expect("query"),
+        MediaProbe::default()
+    );
+    assert!(
+        !db.request_media_probe(ItemId::new(), 1)
+            .await
+            .expect("query"),
+        "unknown items are skipped"
+    );
     assert_eq!(
         db.media_probe(open.id).await.expect("query"),
         MediaProbe {
@@ -1332,6 +1360,131 @@ async fn postgres_storage_round_trips() {
     let db = Db::connect(&url).await.expect("connect");
     exercise(&db).await;
     adoption_during_cleanup_keeps_the_item(&db, &url).await;
+    db.close().await;
+    let drop = sqlx::AssertSqlSafe(format!("DROP DATABASE {name}"));
+    sqlx::query(drop).execute(&admin).await.expect("drop");
+}
+
+/// A probe write that waits on an uncommitted delete of its item is a no-op once the
+/// delete commits and lands once it rolls back. Needs `INFINIDYSK_TEST_POSTGRES_URL`.
+#[tokio::test]
+async fn postgres_probe_writes_race_item_deletes() {
+    use std::time::Duration;
+    let Ok(admin_url) = std::env::var("INFINIDYSK_TEST_POSTGRES_URL") else {
+        eprintln!("skipped: INFINIDYSK_TEST_POSTGRES_URL is not set");
+        return;
+    };
+    let name = format!("infinidysk_test_{}", ItemId::new().0.simple());
+    let admin = sqlx::PgPool::connect(&admin_url)
+        .await
+        .expect("connect admin");
+    let create = sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}"));
+    sqlx::query(create).execute(&admin).await.expect("create");
+    let (base, _) = admin_url.rsplit_once('/').expect("url has a database path");
+    let url = format!("{base}/{name}");
+    let db = Db::connect(&url).await.expect("connect");
+    let raw = sqlx::PgPool::connect(&url).await.expect("connect raw");
+    let content = db
+        .item_by_path("/content")
+        .await
+        .expect("query")
+        .expect("seeded");
+    let dir = Item::child(&content, "race", ItemKind::Directory).expect("valid");
+    let keep = Item::child(&dir, "keep.mkv", ItemKind::NzbFile).expect("valid");
+    db.insert(&[dir.clone(), keep], &[]).await.expect("insert");
+    let defect = Defect {
+        offset: 8,
+        size: 4,
+        seen_at: 9,
+        source: -1,
+    };
+
+    for (n, (structural, commit)) in [(false, true), (false, false), (true, true), (true, false)]
+        .into_iter()
+        .enumerate()
+    {
+        let case = format!("structural={structural} commit={commit}");
+        let file = Item::child(&dir, &format!("{n}.mkv"), ItemKind::NzbFile).expect("valid");
+        db.insert(std::slice::from_ref(&file), &[])
+            .await
+            .expect("insert");
+
+        let mut a = raw.begin().await.expect("begin");
+        let a_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *a)
+            .await
+            .expect("pid");
+        sqlx::query("DELETE FROM items WHERE id = $1")
+            .bind(file.id.0)
+            .execute(&mut *a)
+            .await
+            .expect("delete");
+
+        let b_db = db.clone();
+        let id = file.id;
+        let b = tokio::spawn(async move {
+            if structural {
+                b_db.set_structural(id, Some(&defect), true)
+                    .await
+                    .map(|()| true)
+            } else {
+                b_db.request_media_probe(id, 7).await
+            }
+        });
+
+        let blocked = "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                       WHERE datname = current_database() \
+                       AND query LIKE 'INSERT INTO media_probes%' \
+                       AND pg_blocking_pids(pid) @> ARRAY[$1::int])";
+        let waited = tokio::time::timeout(Duration::from_secs(10), async {
+            while !sqlx::query_scalar::<_, bool>(blocked)
+                .bind(a_pid)
+                .fetch_one(&raw)
+                .await
+                .expect("observe")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "{case}: the write waits on the delete");
+
+        if commit {
+            a.commit().await.expect("commit");
+        } else {
+            a.rollback().await.expect("rollback");
+        }
+        let accepted = tokio::time::timeout(Duration::from_secs(10), b)
+            .await
+            .expect("the write finishes")
+            .expect("join")
+            .unwrap_or_else(|e| panic!("{case}: {e}"));
+
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_probes WHERE item_id = $1")
+            .bind(file.id.0)
+            .fetch_one(&raw)
+            .await
+            .expect("count");
+        let probe = db.media_probe(file.id).await.expect("query");
+        if commit {
+            assert!(db.item(file.id).await.expect("query").is_none(), "{case}");
+            assert_eq!(rows, 0, "{case}: nothing is left behind");
+            if !structural {
+                assert!(!accepted, "{case}");
+            }
+        } else if structural {
+            assert_eq!(
+                (probe.defect, probe.structural_hold),
+                (Some(defect), true),
+                "{case}"
+            );
+        } else {
+            assert!(accepted, "{case}");
+            assert_eq!(probe.requested_at, Some(7), "{case}");
+        }
+    }
+
+    raw.close().await;
     db.close().await;
     let drop = sqlx::AssertSqlSafe(format!("DROP DATABASE {name}"));
     sqlx::query(drop).execute(&admin).await.expect("drop");
