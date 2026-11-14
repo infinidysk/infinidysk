@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, body, HttpError, type Schemas } from "../api/client";
 import { authKey } from "../auth";
-import { bytes } from "../format";
+import { bytes, count } from "../format";
 import { useSettings } from "../settings";
 import { Empty, Failure, Loading, PAGE, PageHeader, Pager, Panel, ReleaseName, Status } from "../ui";
 
@@ -284,7 +284,7 @@ export function SearchPage() {
           <section aria-label="Indexer status">
             <h2 className="mb-3 text-sm font-medium">Indexer status</h2>
             {search.data.indexers.length === 0 ? (
-              <Alert><TriangleAlert className="text-warning-text" /><AlertDescription>No enabled indexers. <Link to="/settings/indexers" className="text-primary underline underline-offset-2">Manage indexers</Link> to start searching.</AlertDescription></Alert>
+              <Alert><TriangleAlert className="text-warning-text" /><AlertDescription>No enabled indexers. <Link to="/settings/indexers" className="text-primary underline underline-offset-2">Add an indexer in settings</Link> to start searching.</AlertDescription></Alert>
             ) : (
               <Panel>
                 <ul className="divide-y">
@@ -293,7 +293,7 @@ export function SearchPage() {
                       <span className="min-w-0 font-medium break-words">{indexer.indexer_name}</span>
                       <div className="flex min-w-0 flex-col items-start gap-1 sm:items-end">
                         <Status tone={indexer.ok ? (indexer.error ? "warning" : "success") : "destructive"}>
-                          {indexer.ok ? indexer.result_count + " results" : "Failed"}
+                          {indexer.ok ? count(indexer.result_count, "result") : "Failed"}
                         </Status>
                         {indexer.error && <span className={indexer.ok ? "text-warning-text text-xs" : "text-destructive text-xs"}>{indexer.error}</span>}
                       </div>
@@ -307,7 +307,7 @@ export function SearchPage() {
           <section aria-label="Search results">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="text-sm font-medium">Results</h2>
-              <span role="status" className="text-muted-foreground text-xs tabular-nums wrap-anywhere">{results.length.toLocaleString()} results for “{search.term}”</span>
+              <span role="status" className="text-muted-foreground text-xs tabular-nums wrap-anywhere">{count(results.length, "result")} for “{search.term}”</span>
             </div>
             {results.length === 0 ? (
               <Empty title="No results found">Try another search term, or check the indexer status above.</Empty>

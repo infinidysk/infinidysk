@@ -96,7 +96,7 @@ export function Indexers({ title, description }: { title: string; description: s
       {!indexers.isPending && !indexers.isError && (
         list.length === 0 ? (
           <Empty title="No indexers" action={!locked && addButton("outline")}>
-            Add a Newznab-compatible indexer to manage its connection.
+            Add a Newznab-compatible indexer to search it and queue its NZBs.
           </Empty>
         ) : (
           <ul className="bg-card divide-y rounded-lg border">
@@ -119,7 +119,11 @@ export function Indexers({ title, description }: { title: string; description: s
                 <div className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:justify-between">
                   <Toggle
                     id={`indexer-enabled-${item.id}`}
-                    label="Enabled"
+                    label={
+                      <>
+                        Enabled<span className="sr-only"> {item.name}</span>
+                      </>
+                    }
                     checked={item.enabled}
                     disabled={locked || toggle.isPending}
                     onChange={(enabled) => toggle.mutate({ id: item.id, enabled })}
@@ -128,6 +132,7 @@ export function Indexers({ title, description }: { title: string; description: s
                     type="button"
                     variant="outline"
                     size="sm"
+                    aria-label={`Test ${item.name}`}
                     disabled={test.isPending}
                     onClick={() => {
                       setChecked(null);
@@ -183,7 +188,12 @@ export function Indexers({ title, description }: { title: string; description: s
             <Field id="indexer-url" label="Newznab URL" layout="horizontal">
               <Input id="indexer-url" type="url" className="font-mono" required placeholder="https://indexer.example/api" value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })} />
             </Field>
-            <Field id="indexer-key" label="API key" layout="horizontal">
+            <Field
+              id="indexer-key"
+              label="API key"
+              layout="horizontal"
+              error={keyRequired && draft.api_key === MASK ? "Enter the API key again when changing the indexer origin." : undefined}
+            >
               <Input
                 id="indexer-key"
                 type="password"
@@ -194,9 +204,6 @@ export function Indexers({ title, description }: { title: string; description: s
                 value={draft.api_key === MASK ? "" : draft.api_key}
                 onChange={(e) => setDraft({ ...draft, api_key: e.target.value || (editing?.api_key === MASK ? MASK : "") })}
               />
-              {keyRequired && draft.api_key === MASK && (
-                <p className="text-destructive text-xs">Enter the API key again when changing the indexer origin.</p>
-              )}
             </Field>
             <Toggle
               id="indexer-form-enabled"

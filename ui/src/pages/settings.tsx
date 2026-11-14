@@ -113,7 +113,7 @@ const categories = [
     group: "Automation",
     slug: "indexers",
     title: "Indexers",
-    description: "Manage Newznab indexers and test their connections",
+    description: "Add, edit and test the Newznab indexers that search uses",
   },
   {
     group: "Automation",
