@@ -596,7 +596,7 @@ async fn put_settings(
         || (has_indexers && settings.indexers != store.settings().masked().indexers)
     {
         return Err(Fail::Conflict(
-            "Indexer settings changed; reload and use the indexer API.".to_owned(),
+            "Indexer settings changed in another session. Save again.".to_owned(),
         ));
     }
     settings.indexers.clone_from(&store.settings().indexers);
