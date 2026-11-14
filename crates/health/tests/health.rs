@@ -1100,6 +1100,153 @@ async fn resumed_repair(grabbed: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_hidden_file_is_searched_again_when_its_replacement_fails() {
+    failed_replacement(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hidden_file_waits_while_another_replacement_is_queued() {
+    failed_replacement(true).await;
+}
+
+async fn failed_replacement(queued: bool) {
+    // Phase 0 is before the blocklist, phase 1 has the replacement grabbed, phase 2 failed.
+    async fn arr(
+        State((log, phase, queued, grabbed_at)): State<(Log, Arc<AtomicU8>, bool, String)>,
+        req: Request,
+    ) -> Json<Value> {
+        let call = format!("{} {}", req.method(), req.uri());
+        if call == "POST /api/v3/command" {
+            let body = axum::body::to_bytes(req.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            let command: Value = serde_json::from_slice(&body).unwrap();
+            log.0.lock().unwrap().push(format!("{call} {command}"));
+            return Json(json!({}));
+        }
+        if call.starts_with("POST /api/v3/history/failed/") {
+            phase.store(1, Ordering::Relaxed);
+        }
+        let phase = phase.load(Ordering::Relaxed);
+        let answer = match call.as_str() {
+            "GET /api/v3/command" => json!([]),
+            c if c.ends_with("&episodeId=5") && phase > 0 => json!({ "records": [{
+                "id": 40, "downloadId": "new", "date": grabbed_at, "data": {},
+            }]}),
+            "GET /api/v3/history?downloadId=new&eventType=4&pageSize=1" if phase == 2 => {
+                json!({ "records": [{ "id": 41, "downloadId": "new", "data": {} }] })
+            }
+            "GET /api/v3/history?downloadId=new&eventType=4&pageSize=1" => json!({ "records": [] }),
+            c if c.starts_with("GET /api/v3/queue/details") && phase == 2 && queued => {
+                json!([{ "downloadId": "other" }])
+            }
+            _ => return sonarr(State(log), req).await,
+        };
+        log.0.lock().unwrap().push(call);
+        Json(answer)
+    }
+
+    let (articles, len) = mkv("h");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, job) = import(&server, &articles, len).await;
+    db.record_owner(
+        uuid::Uuid::nil(),
+        item.id,
+        Some(7),
+        "/tv/Show/S01E01.strm",
+        Some(job),
+    )
+    .await
+    .unwrap();
+    let log: Log = Arc::default();
+    let phase: Arc<AtomicU8> = Arc::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let grabbed_at = jiff::Timestamp::now().to_string();
+    let app = axum::Router::new().fallback(arr).with_state((
+        Arc::clone(&log),
+        Arc::clone(&phase),
+        queued,
+        grabbed_at,
+    ));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let (_arr_tx, arr) = watch::channel(vec![Arr {
+        id: uuid::Uuid::nil(),
+        name: "sonarr".to_owned(),
+        profile: Profile::Sonarr,
+        url,
+        api_key: "k".to_owned(),
+    }]);
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_arr_wait(Duration::from_secs(1));
+
+    let count = |f: &dyn Fn(&str) -> bool| log.0.lock().unwrap().iter().filter(|c| f(c)).count();
+    let blocklist = |c: &str| c.starts_with("POST /api/v3/history/failed/");
+    let delete = |c: &str| c == "DELETE /api/v3/episodefile/7";
+    let search = |c: &str| c.starts_with("POST /api/v3/command ");
+    let reconcile = || async {
+        let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+        status.next_check = Some(0);
+        db.set_health(item.id, &status, Recheck::None)
+            .await
+            .unwrap();
+        assert!(health.step().await.unwrap());
+        db.health(item.id).await.unwrap().unwrap().1
+    };
+
+    // The Arr's own search grabs a replacement, so nothing is deleted.
+    assert!(health.request_repair(item.id).await.unwrap());
+    assert!(health.step().await.unwrap());
+    let hidden = db.health(item.id).await.unwrap().unwrap().1;
+    assert_eq!(
+        (hidden.state, hidden.repair_attempts),
+        (HealthState::Hidden, 1)
+    );
+    assert_eq!(
+        (count(&blocklist), count(&delete), count(&search)),
+        (1, 0, 0)
+    );
+
+    // While the grab downloads, the file stays hidden.
+    let status = reconcile().await;
+    assert_eq!(status.hidden_until, hidden.hidden_until);
+    assert_eq!((count(&delete), count(&search)), (0, 0));
+
+    phase.store(2, Ordering::Relaxed);
+    let status = reconcile().await;
+    let calls = log.0.lock().unwrap().clone();
+    assert_eq!(count(&blocklist), 1, "never blocklisted twice: {calls:?}");
+    assert_eq!(
+        (status.state, status.repair_attempts),
+        (HealthState::Hidden, 1),
+        "the same attempt"
+    );
+    if queued {
+        assert_eq!((count(&delete), count(&search)), (0, 0), "{calls:?}");
+        assert_eq!(status.hidden_until, hidden.hidden_until);
+        return;
+    }
+    assert_eq!(count(&delete), 1, "{calls:?}");
+    let command = json!({ "name": "EpisodeSearch", "episodeIds": [5] });
+    assert!(
+        calls.contains(&format!("POST /api/v3/command {command}")),
+        "{calls:?}"
+    );
+    assert!(status.hidden_until >= hidden.hidden_until);
+    let checks = db.item_checks(item.id, 5).await.unwrap();
+    assert_eq!(checks[0].repair, Repair::ReplacementRequested);
+    assert!(
+        checks[0]
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("replacement failed")),
+        "{checks:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn carried_over_file_waits_for_the_owner_backfill_before_deletion() {
     let (articles, len) = mkv("g");
     let server = LoopbackServer::start(articles.clone()).await.unwrap();

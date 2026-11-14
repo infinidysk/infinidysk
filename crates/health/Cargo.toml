@@ -27,6 +27,7 @@ uuid.workspace = true
 axum = { workspace = true, features = ["http1", "json", "query", "tokio"] }
 infinidysk-queue.workspace = true
 infinidysk-testkit.workspace = true
+jiff.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 
 [lints]
