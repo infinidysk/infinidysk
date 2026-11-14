@@ -1,0 +1,8 @@
+schema = 1
+name = "Prepaid-Usenet"
+website = "https://www.prepaid-usenet.de"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.ssl.nl.prepaid-usenet.de"

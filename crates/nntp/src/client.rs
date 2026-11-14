@@ -127,7 +127,7 @@ impl Client {
             let mut known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
             providers
                 .into_iter()
-                .map(|provider| {
+                .map(|mut provider| {
                     let index = known
                         .iter()
                         .position(|k| k.key == provider.key)
@@ -140,6 +140,7 @@ impl Client {
                             known.len() - 1
                         });
                     known[index].name.clone_from(&provider.name);
+                    provider.pool.set_stats(Arc::clone(&known[index].stats));
                     Entry {
                         stats: Arc::clone(&known[index].stats),
                         id: u16::try_from(index).unwrap_or(u16::MAX),
@@ -363,6 +364,26 @@ impl Client {
         self.body_tagged(message_id, tag).await
     }
 
+    /// [`body_with`](Self::body_with) for a dry run: a provider's miss is not remembered,
+    /// so later requests still ask that provider. Misses remembered earlier are skipped
+    /// as usual.
+    pub async fn body_unremembered(
+        &self,
+        message_id: &str,
+        workload: Workload,
+        probe: Option<&Probe>,
+        begin: Option<u64>,
+    ) -> Result<Body, Error> {
+        let tag = Tag {
+            workload,
+            probe: probe.cloned(),
+            begin,
+            remember: false,
+            ..Tag::UNTRACKED
+        };
+        self.body_tagged(message_id, tag).await
+    }
+
     /// A playback body racing a slow fetch of the same article: waits for an idle
     /// connection rather than pipeline behind another request.
     pub async fn hedge(
@@ -522,9 +543,6 @@ impl Client {
                     skipped = true;
                     continue;
                 }
-                if matches!(result, Err(Failure::Connect(_))) {
-                    entry.stats.connect_failed();
-                }
                 if let Err(Failure::Request(error @ (Error::Status { .. } | Error::Protocol))) =
                     &result
                 {
@@ -572,7 +590,7 @@ impl Client {
                 failed |= matches!(outcome, Outcome::Failure | Outcome::Fatal);
                 if matches!(outcome, Outcome::Miss) {
                     missed.extend(backbone);
-                    if error.is_none() {
+                    if error.is_none() && base.remember {
                         self.missing.insert(group, message_id);
                     }
                 }
@@ -616,7 +634,7 @@ impl Client {
 mod tests {
     use super::*;
     use crate::{Downloads, Endpoint, PoolConfig, TlsMode};
-    use infinidysk_testkit::{Corpus, LoopbackServer};
+    use infinidysk_testkit::{Corpus, Impairment, LoopbackServer};
 
     #[allow(clippy::unwrap_used)] // Test helper; panics are the assertions.
     fn provider(server: &LoopbackServer, downloads: &Arc<Downloads>) -> Provider {
@@ -752,5 +770,89 @@ mod tests {
             "the probe recorded nothing and freed its slot"
         );
         drop(held);
+    }
+
+    #[allow(clippy::unwrap_used)] // Test helper; panics are the assertions.
+    fn timed(
+        server: &LoopbackServer,
+        downloads: &Arc<Downloads>,
+        timeout: Duration,
+        wait: Duration,
+    ) -> Provider {
+        let mut provider = provider(server, downloads);
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            TlsMode::Plain,
+            None,
+            timeout,
+        )
+        .unwrap();
+        let config = PoolConfig {
+            max_connections: 2,
+            pipeline_depth: 1,
+            idle_timeout: Duration::from_secs(5),
+            min_connections: 0,
+        };
+        provider.pool = Pool::new(endpoint, config, Arc::clone(downloads))
+            .unwrap()
+            .with_stream_wait(wait);
+        provider
+    }
+
+    #[tokio::test]
+    async fn a_cold_hung_handshake_counts_against_the_provider_for_playback() {
+        let corpus = Corpus::generate(1025, 1, 1024);
+        let id = &corpus.articles[0].message_id;
+        // Accepts and never greets.
+        let hung =
+            LoopbackServer::start_hanging(corpus.articles.clone(), 0, usize::MAX, Duration::ZERO)
+                .await
+                .unwrap();
+        let downloads = Downloads::new(4);
+        let client = Client::new([timed(
+            &hung,
+            &downloads,
+            Duration::from_millis(300),
+            Duration::from_millis(100),
+        )]);
+
+        let started = Instant::now();
+        let result = client.body(id, Workload::Stream, None).await;
+        assert!(matches!(result, Err(Error::Timeout)), "{:?}", result.err());
+        // Its own connect ran to the endpoint timeout, past the 100 ms admission wait.
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        let stats = &client.stats()[0];
+        assert_eq!((stats.connect_failures, stats.connecting), (1, 0));
+        assert!(client.snapshot()[0].breaker.is_open());
+        assert_eq!(downloads.available_permits(), 4);
+
+        // A connect admitted just before the deadline may finish after it.
+        let slow = LoopbackServer::start_impaired(
+            corpus.articles.clone(),
+            Impairment {
+                handshake_delay: Duration::from_millis(800),
+                ..Impairment::default()
+            },
+        )
+        .await
+        .unwrap();
+        let downloads = Downloads::new(1);
+        let held = downloads.acquire(false, 1).await;
+        let client = Client::new([timed(
+            &slow,
+            &downloads,
+            Duration::from_secs(5),
+            Duration::from_millis(500),
+        )]);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(held);
+        });
+        let body = client.body(id, Workload::Stream, None).await.unwrap();
+        assert_eq!(body.data, corpus.data);
+        let stats = &client.stats()[0];
+        assert_eq!(stats.connect_failures, 0);
+        assert!(!client.snapshot()[0].breaker.is_open());
     }
 }

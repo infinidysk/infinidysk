@@ -1,0 +1,22 @@
+schema = 1
+name = "UsenetNews"
+website = "https://usenetnews.net"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "green.usenetnews.net"
+region = "US"
+
+[[servers]]
+hostname = "green-eu.usenetnews.net"
+
+[[servers]]
+hostname = "blue.usenetnews.net"
+region = "NL"
+backbone = "usenetfarm"
+
+[[servers]]
+hostname = "gold.usenetnews.net"
+region = "NL"
+backbone = "vipernews"

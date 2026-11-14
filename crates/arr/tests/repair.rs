@@ -512,6 +512,45 @@ async fn an_unreadable_failure_history_keeps_the_file_and_resume() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_connection_dropped_by_the_arr_is_transient() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Each connection reads the request, then sends `reply` and closes.
+    async fn answer(reply: &'static [u8]) -> Error {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = [0; 4096];
+                let _ = stream.read(&mut request).await;
+                let _ = stream.write_all(reply).await;
+            }
+        });
+        let arr = Arr {
+            id: uuid::Uuid::nil(),
+            name: "radarr".to_owned(),
+            profile: Profile::Radarr,
+            url,
+            api_key: "k".to_owned(),
+        };
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap();
+        infinidysk_arr::version(&http, &arr).await.unwrap_err()
+    }
+
+    assert!(answer(b"").await.is_transient(), "closed before a response");
+    let short = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{\"appName\":";
+    assert!(answer(short).await.is_transient(), "body cut short");
+    let malformed = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\n\r\n{\"appName\":";
+    assert!(
+        !answer(malformed).await.is_transient(),
+        "malformed JSON that arrived whole"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_grab_without_a_download_id_keeps_the_file() {
     let (result, resume, calls, _) = repair(
         Grab::Blocklists(Search::MissingDownloadId),

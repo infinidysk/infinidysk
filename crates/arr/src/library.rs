@@ -52,7 +52,7 @@ pub async fn media_files(http: &reqwest::Client, arr: &Arr) -> Result<Vec<MediaF
     };
     let s = Session::open(http, arr).await?;
     let mut files = Vec::new();
-    for media in fetch::<Vec<Value>>(s.call(Method::GET, list)).await? {
+    for media in fetch::<Vec<Value>>(s.library_list(list)).await? {
         let id = media["id"]
             .as_i64()
             .ok_or(Error::Unexpected("library entry without id"))?;

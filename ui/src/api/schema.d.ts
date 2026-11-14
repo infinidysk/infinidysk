@@ -1099,6 +1099,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nzb/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports what an import of an NZB would publish, without queueing or publishing it.
+         * @description Reads first articles, the PAR2 index and archive headers through the providers, so
+         *     it shows in provider statistics. It does not check that every article exists. When the
+         *     NZB's download holds only an NZB file, it reports the release that NZB names, as an
+         *     import would. One inspection runs at a time. It stops after 1,000 NZB files, 200
+         *     archive sets, 5,000 reported files, 3,000 article requests, 2 GB of decoded articles
+         *     or two minutes; the report then has the `limit_exceeded` warning.
+         */
+        post: operations["post_nzb_inspect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/overview": {
         parameters: {
             query?: never;
@@ -1492,8 +1517,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One trace as JSON lines: a header (`read`, `providers` by id, `summary`, `dropped`),
-         *     then one event per line in time order.
+         * One trace as JSON lines: a header (`read`, `providers` by id, `summary`, `dropped`,
+         *     `clock`, `limits`, `coverage`), then one event per line in time order.
          */
         get: operations["get_trace"];
         put?: never;
@@ -1965,9 +1990,15 @@ export interface components {
         BreakerView: {
             /** Format: int64 */
             at: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description How long it stayed open; up to now while it still is.
+             */
             open_ms: number;
+            /** @description Display name when it opened. */
             provider: string;
+            /** @description The provider's key; none on outages stored before keys were. */
+            provider_key?: string | null;
         };
         /** @description Counters since start; sizes are bytes. */
         CacheView: {
@@ -2299,7 +2330,7 @@ export interface components {
             auto_repair: boolean;
             /**
              * Format: int32
-             * @description Share of segments each check probes, 5 to 100; at least 5 segments.
+             * @description Share of segments each health check probes, 5 to 100; at least 5 segments.
              * @default 5
              */
             check_percent: number;
@@ -2313,6 +2344,12 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /**
+             * Format: int32
+             * @description Share of segments an import probes, 5 to 100; at least 5 segments.
+             * @default 5
+             */
+            import_check_percent: number;
             /**
              * @description Analyze each good media file once with ffprobe, when it is installed.
              * @default true
@@ -2471,6 +2508,119 @@ export interface components {
             id: string;
             name: string;
             revision: string;
+        };
+        /** @enum {string} */
+        InspectAccess: "plain" | "password_required" | "password_validated" | "unsupported" | "unknown";
+        /** @enum {string} */
+        InspectArchiveType: "rar4" | "rar5" | "7z" | "split";
+        InspectDiagnostics: {
+            /**
+             * Format: int64
+             * @description Article requests issued, for every NZB read. Failover inside the provider client
+             *     is not counted.
+             */
+            article_requests: number;
+            failure: components["schemas"]["InspectFailure"] | null;
+            /**
+             * @description NZB files followed to reach the release, as an import follows a download that
+             *     holds only an NZB file; 0 when the uploaded NZB names the release.
+             */
+            inner_nzbs: number;
+            /**
+             * @description Names of the NZB files whose first article every provider reported missing; observed,
+             *     not inferred. A corrupt copy or an article for another part of the file is not listed.
+             */
+            missing_first_segments: string[];
+            /** @description Time each stage took, for the NZB the report describes. */
+            stages: components["schemas"]["InspectStages"];
+            warnings: components["schemas"]["InspectWarning"][];
+        };
+        /** @enum {string} */
+        InspectEncryption: "none" | "data" | "headers" | "unknown";
+        InspectFailure: {
+            kind: components["schemas"]["InspectFailureKind"];
+            message: string;
+            stage: components["schemas"]["InspectStage"];
+        };
+        /** @enum {string} */
+        InspectFailureKind: "rejected" | "providers_unavailable" | "missing_articles" | "password" | "unsupported" | "limit" | "other";
+        /** @enum {string} */
+        InspectNameSource: "par2" | "subject" | "archive_header";
+        /** @enum {string} */
+        InspectStage: "submission" | "first_segments" | "par2" | "layouts" | "archives";
+        /** @description Time each stage took; null for a stage that did not finish. */
+        InspectStages: {
+            /** Format: int64 */
+            archives_ms: number | null;
+            /** Format: int64 */
+            first_segments_ms: number | null;
+            /** Format: int64 */
+            layouts_ms: number | null;
+            /** Format: int64 */
+            par2_ms: number | null;
+        };
+        /** @description One NZB to inspect. */
+        InspectUpload: {
+            /**
+             * @description The NZB file name an import would get, such as `Release{{password}}.nzb`: the
+             *     release name and a password come from it. Like `password`, that password opens
+             *     only what this NZB posts. The uploaded file's name when absent.
+             */
+            name?: string | null;
+            /**
+             * Format: binary
+             * @description Plain or gzip, with the size limit of a queue upload.
+             */
+            nzb: string;
+            /**
+             * @description Archive password for the files this NZB posts. It wins over one in `name` and over
+             *     the NZB's own. An NZB file inside them opens its files with its own password.
+             */
+            password?: string | null;
+        };
+        /** @enum {string} */
+        InspectWarning: "password_not_validated" | "limit_exceeded" | "nested_archive_opaque";
+        /** @description Volumes an import reads as one set. RAR volumes whose names name no set form one set. */
+        InspectedArchive: {
+            archive_set_id: number;
+            archive_type: components["schemas"]["InspectArchiveType"];
+            content_access: components["schemas"]["InspectAccess"];
+            encryption: components["schemas"]["InspectEncryption"];
+            /**
+             * @description 0 when the volumes are posted files; one more for each archive opened to reach
+             *     them.
+             */
+            nesting_depth: number;
+            /**
+             * @description Whether this kind of content can be streamed at all, given the right password.
+             *     Null until every member was checked, such as for encrypted headers without the
+             *     password.
+             */
+            stream_supported: boolean | null;
+        };
+        InspectedFile: {
+            /** @description The entry of `archives` the file is a member of; null for a posted file. */
+            archive_set_id: number | null;
+            /** @description Lowercase extension when the file is video, audio or a book; null otherwise. */
+            media_extension: string | null;
+            name_source: components["schemas"]["InspectNameSource"];
+            /** @description `nesting_depth` of that archive; 0 for a posted file. */
+            nesting_depth: number;
+            /**
+             * @description The path an import publishes below the job folder: obfuscated videos take the
+             *     release name and duplicates get a number. Equals `raw_path` for an unreadable member.
+             */
+            planned_name: string;
+            /**
+             * @description The path as posted or as stored in the archive, made safe for a file system.
+             *     Match on this.
+             */
+            raw_path: string;
+            /**
+             * Format: int64
+             * @description Null when the file cannot be read and its archive does not record a size.
+             */
+            size_bytes: number | null;
         };
         /**
          * @description Where a file is in the health state machine.
@@ -2736,14 +2886,27 @@ export interface components {
             trigger: components["schemas"]["RunTrigger"];
         };
         LivePending: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Since the request reached the daemon.
+             */
             age_ms: number;
             /** Format: int64 */
             offset: number;
+            /**
+             * Format: int64
+             * @description FUSE request id, as in trace `request` events.
+             */
+            request: number;
             /** Format: int32 */
             size: number;
             /** @description `order` (behind earlier reads of the handle), `handle_lock` or `read`. */
             stage: string;
+            /**
+             * Format: int64
+             * @description Time in `stage`.
+             */
+            stage_ms: number;
         };
         LiveProvider: {
             /** @description Connections with at least one request on them; at most `max_connections`. */
@@ -2785,8 +2948,17 @@ export interface components {
             client: string;
             /** @description `fuse` or `webdav`. */
             delivery: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Stream wait of the first read that returned bytes. Excludes FUSE ordering and
+             *     handle-lock waits and time before that read; not click-to-play time.
+             */
             first_byte_ms?: number | null;
+            /**
+             * Format: int64
+             * @description FUSE file handle, once the open replied.
+             */
+            handle?: number | null;
             head?: components["schemas"]["LiveHead"] | null;
             /** Format: int64 */
             id: number;
@@ -3131,6 +3303,28 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * @description The cgroup's `memory.events`: cumulative counts since the cgroup was created, so
+         *     compare two samples. `high` and `max` count throttling and reclaim at those limits,
+         *     `oom_kill` processes killed. None for a key this kernel does not report.
+         */
+        MemoryEvents: {
+            /** Format: int64 */
+            high?: number | null;
+            /** Format: int64 */
+            low?: number | null;
+            /** Format: int64 */
+            max?: number | null;
+            /** Format: int64 */
+            oom?: number | null;
+            /** Format: int64 */
+            oom_kill?: number | null;
+        };
+        /** @description The cgroup's `memory.pressure` (pressure stall information). */
+        MemoryPressure: {
+            full?: components["schemas"]["Psi"] | null;
+            some?: components["schemas"]["Psi"] | null;
+        };
+        /**
          * @description How a session was started.
          * @enum {string}
          */
@@ -3236,6 +3430,17 @@ export interface components {
             /** @description Keeps the current username when absent. */
             username?: string | null;
         };
+        NzbInspection: {
+            archives: components["schemas"]["InspectedArchive"][];
+            diagnostics: components["schemas"]["InspectDiagnostics"];
+            files: components["schemas"]["InspectedFile"][];
+            /**
+             * @description Whether the inner file list is complete. An archive left as a file is listed in
+             *     `files` without its members. Such an archive, a reached limit or an unfinished
+             *     plan makes this false. It says nothing about passwords or article availability.
+             */
+            manifest_complete: boolean;
+        };
         /** @description SSO through one OIDC provider; on while `issuer` is set. */
         Oidc: {
             /** @default  */
@@ -3305,6 +3510,30 @@ export interface components {
         };
         Paused: {
             paused: boolean;
+        };
+        /** @description A FUSE read request in the daemon, as of the response. */
+        PendingView: {
+            /**
+             * Format: int64
+             * @description Since it reached the daemon.
+             */
+            age_ms: number;
+            /** Format: int64 */
+            offset: number;
+            /**
+             * Format: int64
+             * @description FUSE request id, as in trace `request` events.
+             */
+            request: number;
+            /** Format: int32 */
+            size: number;
+            /** @description `order` (behind earlier reads of the handle), `handle_lock` or `read`. */
+            stage: string;
+            /**
+             * Format: int64
+             * @description Time in `stage`.
+             */
+            stage_ms: number;
         };
         /** @description Streaming and cache tuning: a preset, plus overrides (`None` takes the preset's value). */
         Performance: {
@@ -3497,6 +3726,52 @@ export interface components {
             path: string;
             reason: string;
         };
+        /**
+         * @description This process alone, from `/proc/self/status` once a minute; none for a line this kernel
+         *     does not report.
+         */
+        ProcessMemory: {
+            /**
+             * Format: int64
+             * @description When it was read, Unix milliseconds.
+             */
+            at: number;
+            /**
+             * Format: int64
+             * @description `RssAnon`: the heap and other anonymous memory.
+             */
+            rss_anon_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `VmRSS`.
+             */
+            rss_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `RssFile`: mapped files such as the binary.
+             */
+            rss_file_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `VmHWM`: the most `rss_bytes` has been since the process last started.
+             */
+            rss_peak_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `VmSwap`.
+             */
+            swap_bytes?: number | null;
+            /**
+             * Format: int32
+             * @description `Threads`.
+             */
+            threads?: number | null;
+            /**
+             * Format: int64
+             * @description Since the process last started; a restart from the UI resets it.
+             */
+            uptime_ms: number;
+        };
         Progress: {
             /** Format: int64 */
             converted: number;
@@ -3598,6 +3873,11 @@ export interface components {
             missing: number;
             /** Format: int64 */
             requests: number;
+            /**
+             * Format: int64
+             * @description Circuit breaker openings.
+             */
+            trips: number;
         };
         ProviderScore: {
             /**
@@ -3684,6 +3964,20 @@ export interface components {
              */
             used: number;
         };
+        /**
+         * @description One pressure line: percent of wall time stalled, averaged by the kernel over 10, 60 and
+         *     300 s, and `total_us` stalled since the cgroup was created (cumulative).
+         */
+        Psi: {
+            /** Format: double */
+            avg10: number;
+            /** Format: double */
+            avg300: number;
+            /** Format: double */
+            avg60: number;
+            /** Format: int64 */
+            total_us: number;
+        };
         /** @description Import queue choices; everything else is fixed by `infinidysk-lab:docs/import-policy.md`. */
         Queue: {
             /**
@@ -3767,9 +4061,16 @@ export interface components {
             delivery: components["schemas"]["DeliveryView"];
             /**
              * Format: int64
-             * @description From open to the first byte served.
+             * @description Stream wait of the first read that returned bytes: from its first pending poll to
+             *     its bytes, 0 when they were ready. Excludes FUSE ordering and handle-lock waits
+             *     and time before that read; not click-to-play time.
              */
             first_byte_ms?: number | null;
+            /**
+             * Format: int64
+             * @description FUSE file handle, once the open replied.
+             */
+            handle?: number | null;
             /** Format: int64 */
             id: number;
             /** Format: uuid */
@@ -3780,6 +4081,8 @@ export interface components {
              */
             opened_at: number;
             path: string;
+            /** @description FUSE read requests in the daemon and not answered yet, oldest first. */
+            pending: components["schemas"]["PendingView"][];
             /** @description Player id from a signed `/view` link. */
             player?: string | null;
             /** Format: int64 */
@@ -3918,8 +4221,38 @@ export interface components {
              */
             used_bytes?: number;
         };
-        /** @description CPU and memory of infinidysk's cgroup: the whole container under Docker. */
+        /**
+         * @description CPU and memory of infinidysk's cgroup (the whole container under Docker), and of this
+         *     process alone in `process_memory`. Apart from `cgroup_swap_bytes`, `cgroup_<kind>_bytes`
+         *     are the kinds in the cgroup's `memory.stat`, none when this kernel does not report one.
+         *     They overlap, so never add them to each other or to the `memory_*` fields: `kernel`
+         *     includes `slab`, `slab` includes `slab_reclaimable`, `anon_thp` is part of `anon` and
+         *     `file` includes `shmem`.
+         */
         Resources: {
+            /** Format: int64 */
+            cgroup_anon_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_anon_thp_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_file_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_kernel_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_shmem_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_slab_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_slab_reclaimable_bytes?: number | null;
+            /** Format: int64 */
+            cgroup_sock_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description `memory.swap.current`, read once a minute with `process_memory` (at its `at`); none
+             *     without swap accounting. Swap in use shows what was swapped out at some point, not
+             *     that anything waits on it now; `memory_pressure` shows stalls.
+             */
+            cgroup_swap_bytes?: number | null;
             /**
              * Format: double
              * @description Cores busy on average since the previous sample; none on the first.
@@ -3930,6 +4263,7 @@ export interface components {
              * @description The CPU quota, else the CPUs this process may run on.
              */
             cpu_limit_cores: number;
+            memory_events?: components["schemas"]["MemoryEvents"] | null;
             /**
              * Format: int64
              * @description Page cache and reclaimable slab (dentries, inodes); the kernel may free it under
@@ -3943,6 +4277,7 @@ export interface components {
             memory_limit_bytes: number;
             /** @description Whether `memory_limit_bytes` is a cgroup limit rather than the host's memory. */
             memory_limited: boolean;
+            memory_pressure?: components["schemas"]["MemoryPressure"] | null;
             /**
              * Format: int64
              * @description Memory in use apart from the kernel cache: the process, kernel and socket buffers.
@@ -3958,6 +4293,18 @@ export interface components {
              * @description Configured size of the in-memory segment cache; 0 when it is off.
              */
             memory_segment_cache_limit_bytes: number;
+            process_memory: components["schemas"]["ProcessMemory"];
+            /**
+             * Format: int64
+             * @description Configured size of the in-memory segment cache, also while it is off.
+             */
+            segment_cache_capacity_bytes: number;
+            /**
+             * Format: int64
+             * @description Sum of the segment lengths the in-memory cache holds, not capped like
+             *     `memory_segment_cache_bytes`. Logical bytes, not resident memory.
+             */
+            segment_cache_logical_bytes: number;
         };
         RevealedKey: {
             value: string;
@@ -4122,6 +4469,7 @@ export interface components {
              *       "check_percent": 5,
              *       "degraded_tolerance": true,
              *       "enabled": true,
+             *       "import_check_percent": 5,
              *       "media_probe": true,
              *       "unowned_action": "delete"
              *     }
@@ -6660,6 +7008,47 @@ export interface operations {
                 };
             };
             /** @description a job is running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_nzb_inspect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["InspectUpload"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NzbInspection"];
+                };
+            };
+            /** @description No NZB, or one that does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description An inspection is already running */
             409: {
                 headers: {
                     [name: string]: unknown;

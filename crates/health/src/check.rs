@@ -154,10 +154,10 @@ pub fn mark(meta: &mut FileMeta, missing: &[usize], corrupt: &[usize]) -> bool {
 }
 
 /// A segment with its expected `=ypart` offset when sizes are trusted.
-type Placed = (Segment, Option<u64>);
+type Placed<'a> = (&'a Segment, Option<u64>);
 
 /// Every segment in file order, with the recorded missing and corrupt flat indices.
-fn flatten(meta: &FileMeta) -> (Vec<Placed>, BTreeSet<usize>, BTreeSet<usize>) {
+fn flatten(meta: &FileMeta) -> (Vec<Placed<'_>>, BTreeSet<usize>, BTreeSet<usize>) {
     let starts: Vec<u64> = match meta {
         FileMeta::Nzb(_) => vec![0],
         FileMeta::Multipart(f) => f.parts.iter().map(|p| p.offset).collect(),
@@ -171,7 +171,7 @@ fn flatten(meta: &FileMeta) -> (Vec<Placed>, BTreeSet<usize>, BTreeSet<usize>) {
         all.extend(part.items.iter().scan(start, |at, s| {
             let begin = part.sizes_trusted.then_some(*at);
             *at += u64::from(s.size);
-            Some((s.clone(), begin))
+            Some((s, begin))
         }));
     }
     (all, missing, corrupt)
@@ -207,15 +207,15 @@ fn store(meta: &mut FileMeta, missing: &BTreeSet<usize>, corrupt: &BTreeSet<usiz
 /// Runs `(index, body?)` probes; returns each result and the decoded first segment.
 async fn probe(
     articles: &dyn Articles,
-    segments: &[Placed],
+    segments: &[Placed<'_>],
     jobs: Vec<(usize, bool)>,
     concurrency: usize,
 ) -> (BTreeMap<usize, Probe>, Option<Vec<u8>>) {
     let mut runs = stream::iter(jobs)
         .map(|(i, body)| async move {
-            let (segment, begin) = &segments[i];
+            let (segment, begin) = segments[i];
             if body {
-                let (probe, data) = fetch(articles, segment, *begin).await;
+                let (probe, data) = fetch(articles, segment, begin).await;
                 (i, probe, data.filter(|_| i == 0))
             } else {
                 (i, stat(articles, segment).await, None)

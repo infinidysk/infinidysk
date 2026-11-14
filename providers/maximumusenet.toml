@@ -1,0 +1,8 @@
+schema = 1
+name = "MaximumUSENET"
+website = "https://www.maximumusenet.com"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "news.maximumusenet.com"

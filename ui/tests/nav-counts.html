@@ -9,6 +9,7 @@
   import { createRoot } from "react-dom/client";
   import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
   import { MemoryRouter } from "react-router";
+  import "/src/index.css";
 
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
@@ -47,11 +48,41 @@
 
     await act(async () => client.setQueryData(["arr-status"], { instances: [], categories: [] }));
     check(queueLink().querySelectorAll("span.rounded-full").length === 0, "No issues must leave no counters");
+
+    const { MaintenanceNow } = await import("/src/maintenance.tsx");
+    document.getElementById("root").style.width = "208px";
+    await document.fonts.ready;
+    for (const [job, step, done, total, amount] of [
+      ["remove-unlinked", "Removing files", 1, 2, "50%"],
+      ["backup-database", "Restoring: copying the backup", 0, null, ""],
+      ["remove-unlinked", "Removing empty folders", 285424, null, (285424).toLocaleString()],
+    ]) {
+      await act(async () => root.render(createElement(MemoryRouter, null,
+        createElement(MaintenanceNow, { live: { job, step, done, total, dry_run: false, trigger: "manual", started_ms: 1 } }),
+      )));
+      const link = document.querySelector("#root a");
+      check(link.getAttribute("href") === `/settings/${job === "backup-database" ? "backups" : "maintenance"}`, "Wrong maintenance link");
+      const counter = link.querySelector(".tabular-nums");
+      check((counter?.textContent ?? "") === amount, `Wrong progress: ${link.textContent}`);
+      const label = [...link.querySelectorAll("span")].find((span) => !span.children.length && span.textContent.includes(step));
+      check(label && getComputedStyle(label).display === "block", "The maintenance step must have its own line");
+      check(getComputedStyle(label).whiteSpace !== "nowrap", "The maintenance step must wrap");
+      const bounds = link.getBoundingClientRect();
+      for (const span of link.querySelectorAll("span")) {
+        if (span.children.length) continue;
+        const range = document.createRange();
+        range.selectNodeContents(span);
+        for (const rect of range.getClientRects()) {
+          check(rect.left >= bounds.left && rect.right <= bounds.right + 1, `Clipped maintenance text: ${span.textContent}`);
+        }
+      }
+      check(link.scrollWidth <= link.clientWidth, "Maintenance progress overflows the sidebar");
+    }
     document.getElementById("result").textContent = "PASS";
   } catch (error) {
     document.getElementById("result").textContent = `FAIL: ${error.message}`;
   } finally {
-    await act(async () => root.unmount());
+    if (!new URLSearchParams(location.search).has("preview")) await act(async () => root.unmount());
     client.clear();
     delete globalThis.IS_REACT_ACT_ENVIRONMENT;
   }

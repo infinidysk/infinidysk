@@ -1,0 +1,8 @@
+schema = 1
+name = "StingyUsenet"
+website = "https://stingyusenet.com"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "news.stingyusenet.com"

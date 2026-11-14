@@ -25,7 +25,8 @@ use uuid::Uuid;
 
 pub use reader::{PartsReader, Reader};
 pub use session::{
-    Delivery, Handle, Origin, PendingRead, ReadStage, Request, Session, Sessions, Tracing,
+    Delivery, FuseOp, FuseOps, Handle, OpInFlight, Origin, PendingOp, PendingRead, ReadStage,
+    Request, Session, Sessions, Tracing,
 };
 
 /// What the kernel applied to the FUSE mount, read back after tuning; `None` where
@@ -615,10 +616,19 @@ impl Vfs {
         }
     }
 
-    /// A reader for media analysis: no session, cache, fault reports or read-ahead, and
-    /// reads fail instead of zero-filling.
+    /// A reader for media analysis: shared cache, minimum read window, no session or
+    /// fault reports, and reads fail instead of zero-filling.
     pub async fn open_analysis(&self, item: &Item) -> Result<Reader, Error> {
-        self.open_meta(&*self.meta(item).await?)
+        Ok(Reader::new(
+            &*self.meta(item).await?,
+            &self.client,
+            &self.budget,
+            self.cache.as_ref(),
+            0,
+            None,
+            None,
+        )?
+        .into_strict())
     }
 
     /// The file's decoded metadata; concurrent first opens fetch it once.
@@ -640,7 +650,7 @@ impl Vfs {
             .await
     }
 
-    /// Like [`open_analysis`](Self::open_analysis), for a file not stored yet.
+    /// Like [`open_analysis`](Self::open_analysis), but uncached, for a file not stored yet.
     pub fn open_meta(&self, meta: &FileMeta) -> Result<Reader, Error> {
         Ok(Reader::new(meta, &self.client, &self.budget, None, 0, None, None)?.into_strict())
     }

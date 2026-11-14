@@ -823,7 +823,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -870,9 +870,9 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "flate2"
-version = "1.1.10"
+version = "1.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
+checksum = "626d4928326b646e70f65ed36fc7cf9f206bdb68a0019ee7c6b4709da4e084c4"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -910,25 +910,6 @@ name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
-
-[[package]]
-name = "fuse3"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09349e068fa9cd4a824467af7c7d482dc4da154fed4689ab867672b87118816"
-dependencies = [
- "async-notify",
- "bytes",
- "futures-util",
- "libc",
- "nix",
- "slab",
- "tokio",
- "tracing",
- "trait-make",
- "which",
- "zerocopy",
-]
 
 [[package]]
 name = "futures-channel"
@@ -1419,9 +1400,9 @@ dependencies = [
  "infinidysk-arr",
  "infinidysk-core",
  "infinidysk-db",
- "infinidysk-fuse",
  "infinidysk-health",
  "infinidysk-import",
+ "infinidysk-mount",
  "infinidysk-nntp",
  "infinidysk-queue",
  "infinidysk-stream",
@@ -1534,21 +1515,21 @@ dependencies = [
 
 [[package]]
 name = "infinidysk-fuse"
-version = "0.0.0"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f074f6f3d1a60238cf914f56a7466bae65d981308f1aa42e8b00b808aac913d"
 dependencies = [
+ "async-notify",
  "bytes",
- "fuse3",
  "futures-util",
- "infinidysk-core",
- "infinidysk-db",
- "infinidysk-nntp",
- "infinidysk-stream",
- "infinidysk-testkit",
- "infinidysk-vfs",
+ "libc",
  "nix",
+ "slab",
  "tokio",
- "tokio-util",
  "tracing",
+ "trait-make",
+ "which",
+ "zerocopy",
 ]
 
 [[package]]
@@ -1596,6 +1577,25 @@ dependencies = [
  "tracing",
  "uuid",
  "zstd",
+]
+
+[[package]]
+name = "infinidysk-mount"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "infinidysk-core",
+ "infinidysk-db",
+ "infinidysk-fuse",
+ "infinidysk-nntp",
+ "infinidysk-stream",
+ "infinidysk-testkit",
+ "infinidysk-vfs",
+ "nix",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -1697,6 +1697,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "futures-util",
  "hmac 0.13.0",
  "http-body-util",
  "httpdate",
@@ -1716,6 +1717,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2531,7 +2533,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2873,7 +2875,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3072,9 +3074,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "1.1.2"
+version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
+checksum = "9c187e0a369471c550af028cba56d4f4fa2a489ad28151ae95a4d340a2a8b782"
 dependencies = [
  "serde_core",
 ]
@@ -3705,9 +3707,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.8+spec-1.1.0"
+version = "1.2.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
+checksum = "d5755c51863cdac711f1956baf8eb9588e060755f7d3c4c979e70ea1e1f32cd7"
 dependencies = [
  "indexmap 2.14.2",
  "serde_core",
@@ -3720,9 +3722,9 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "1.1.2+spec-1.1.0"
+version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
+checksum = "173f25c883cd2176a2d8212155638c0a60d484a9d84546d270866f40f56b6e49"
 dependencies = [
  "serde_core",
 ]
@@ -3738,9 +3740,9 @@ dependencies = [
 
 [[package]]
 name = "toml_writer"
-version = "1.1.3+spec-1.1.0"
+version = "1.2.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
+checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "tower"
@@ -4116,7 +4118,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

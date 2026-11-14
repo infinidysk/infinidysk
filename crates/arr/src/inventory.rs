@@ -31,7 +31,7 @@ pub async fn files(http: &reqwest::Client, arr: &Arr) -> Result<Option<Vec<Libra
     let s = Session::open(http, arr).await?;
     let mut files = Vec::new();
     if movies {
-        let ids = ids(&fetch::<Vec<Value>>(s.call(Method::GET, "movie")).await?)?;
+        let ids = ids(&fetch::<Vec<Value>>(s.library_list("movie")).await?)?;
         for batch in ids.chunks(BATCH) {
             let query: Vec<(&str, i64)> = batch.iter().map(|id| ("movieId", *id)).collect();
             let found = fetch::<Vec<Value>>(s.call(Method::GET, "moviefile").query(&query));
@@ -44,7 +44,7 @@ pub async fn files(http: &reqwest::Client, arr: &Arr) -> Result<Option<Vec<Libra
         Profile::Chaptarr => ("author", "authorId", "bookfile"),
         _ => ("series", "seriesId", "episodefile"),
     };
-    for id in ids(&fetch::<Vec<Value>>(s.call(Method::GET, parents)).await?)? {
+    for id in ids(&fetch::<Vec<Value>>(s.library_list(parents)).await?)? {
         let found = fetch::<Vec<Value>>(s.call(Method::GET, endpoint).query(&[(param, id)]));
         files.extend(parse(&found.await?)?);
     }

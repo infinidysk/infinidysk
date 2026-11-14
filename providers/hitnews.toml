@@ -1,0 +1,8 @@
+schema = 1
+name = "HitNews"
+website = "https://hitnews.com"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "news.hitnews.com"

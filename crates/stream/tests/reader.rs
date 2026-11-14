@@ -280,6 +280,62 @@ async fn an_idle_reader_holding_the_budget_does_not_freeze_another() {
 }
 
 #[tokio::test]
+async fn playback_does_not_join_analysis_waiting_for_a_maintenance_lease() {
+    let corpus = Corpus::generate(1025, 1, ARTICLE_SIZE);
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    let (client, layout) = setup(&corpus, &server);
+    let cache = Arc::new(Cache::new(true, ARTICLE_SIZE as u64 * 64));
+    let lease = client.exclusive("", Duration::from_secs(5)).await.unwrap();
+    let mut analysis = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 1)
+        .with_cache(Arc::clone(&cache))
+        .with_strict();
+    let analyzing = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        analysis.read_to_end(&mut bytes).await.unwrap();
+        bytes
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while cache.stats().misses == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(server.body_commands(), 0, "analysis waits behind the lease");
+
+    let trace = Arc::new(Trace::new(1000));
+    let mut playback = SegmentReader::new(client, layout, 1)
+        .with_cache(cache)
+        .with_trace(Arc::clone(&trace));
+    let mut bytes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), playback.read_to_end(&mut bytes))
+        .await
+        .expect("playback must bypass the blocked analysis fetch")
+        .unwrap();
+    assert_eq!(bytes, corpus.data);
+    drop(lease);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), analyzing)
+            .await
+            .unwrap()
+            .unwrap(),
+        corpus.data
+    );
+    assert!(
+        trace.records().0.iter().all(|record| !matches!(
+            record.event,
+            Event::Segment {
+                step: Step::Joined { .. },
+                ..
+            }
+        )),
+        "playback starts its own priority fetch"
+    );
+}
+
+#[tokio::test]
 async fn readers_share_fetches_and_reread_from_the_cache() {
     let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
     let server = LoopbackServer::start(corpus.articles.clone())
@@ -304,6 +360,47 @@ async fn readers_share_fetches_and_reread_from_the_cache() {
     assert_eq!(server.body_commands(), 12, "reread from memory");
     let stats = cache.stats();
     assert_eq!((stats.misses, stats.memory_hits + stats.joined), (12, 24));
+}
+
+#[tokio::test]
+async fn a_prefetch_that_failed_while_the_reader_paused_is_fetched_again() {
+    let corpus = Corpus::generate(1025, 8, ARTICLE_SIZE);
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    // Shorter than the hedge delay, so the head is fetched again on demand, not hedged.
+    let (client, layout) = setup_timed(&corpus, &[&server], Duration::from_millis(200));
+    let cache = Arc::new(Cache::new(true, 64 * ARTICLE_SIZE as u64));
+    let id = &corpus.articles[2].message_id;
+
+    // The read-ahead stall fails while the reader pauses; the demand fetch works.
+    server.stall_article(id, 1, Duration::from_secs(2));
+    let mut reader = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 8)
+        .with_cache(Arc::clone(&cache));
+    let mut all = vec![0; ARTICLE_SIZE];
+    reader.read_exact(&mut all).await.unwrap();
+    paused_until_failed(&server, id).await;
+    reader.read_to_end(&mut all).await.unwrap();
+    assert!(all == corpus.data, "the paused read continues intact");
+    assert_eq!(server.stalled(id), 1);
+
+    // A demand fetch that fails too is the read's error, not a third request.
+    server.stall_article(id, usize::MAX, Duration::from_secs(2));
+    let cache = Arc::new(Cache::new(true, 64 * ARTICLE_SIZE as u64));
+    let mut reader = SegmentReader::new(client, layout, 8).with_cache(cache);
+    let mut head = vec![0; ARTICLE_SIZE];
+    reader.read_exact(&mut head).await.unwrap();
+    paused_until_failed(&server, id).await;
+    assert!(reader.read_to_end(&mut Vec::new()).await.is_err());
+    assert_eq!(server.stalled(id), 2);
+}
+
+/// Waits until `id`'s stalled request has timed out.
+async fn paused_until_failed(server: &LoopbackServer, id: &str) {
+    while server.stalled(id) == 0 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
 }
 
 #[tokio::test]
@@ -740,6 +837,14 @@ async fn the_watch_counts_the_articles_each_provider_delivered() {
 
 /// [`setup`] with `servers` as providers, tried in order.
 fn setup_on(corpus: &Corpus, servers: &[&LoopbackServer]) -> (Arc<Client>, Arc<Layout>) {
+    setup_timed(corpus, servers, Duration::from_secs(5))
+}
+
+fn setup_timed(
+    corpus: &Corpus,
+    servers: &[&LoopbackServer],
+    timeout: Duration,
+) -> (Arc<Client>, Arc<Layout>) {
     let article_size = corpus.data.len() / corpus.articles.len();
     let config = PoolConfig {
         max_connections: 4,
@@ -764,7 +869,7 @@ fn setup_on(corpus: &Corpus, servers: &[&LoopbackServer]) -> (Arc<Client>, Arc<L
             server.addr().port(),
             TlsMode::Plain,
             None,
-            Duration::from_secs(5),
+            timeout,
         )
         .unwrap();
         Provider {

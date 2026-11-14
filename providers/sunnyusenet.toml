@@ -1,0 +1,8 @@
+schema = 1
+name = "Sunny Usenet"
+website = "https://www.sunnyusenet.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.sunnyusenet.com"

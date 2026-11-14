@@ -1,0 +1,8 @@
+schema = 1
+name = "Spotnews"
+website = "https://www.spotnews.nl"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "reader.spotnews.nl"

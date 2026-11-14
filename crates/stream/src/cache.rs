@@ -47,6 +47,12 @@ type Memory = quick_cache::sync::Cache<
 pub struct Cache {
     memory: Memory,
     enabled: AtomicBool,
+    /// Held for reading across an insert's enabled check and the insert, and for writing
+    /// while the memory tier is switched, so no insert lands after a disable's clear.
+    toggle: RwLock<()>,
+    /// Stops the next `remember` between its enabled check and its insert.
+    #[cfg(test)]
+    pause: Mutex<Option<Pause>>,
     disk: RwLock<Option<Arc<Disk>>>,
     /// The directory and reason the configured disk tier did not start.
     disk_failure: Mutex<Option<(PathBuf, String)>>,
@@ -65,11 +71,12 @@ struct Inflight {
     flights: HashMap<Arc<str>, WeakFlight>,
 }
 
-/// A flight's generation, the flight, and the wait of the reader that started it.
+/// A flight's generation, future, leader wait and starting workload.
 type WeakFlight = (
     u64,
     WeakShared<BoxFuture<'static, Landed>>,
     Option<Arc<Wait>>,
+    Workload,
 );
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +134,9 @@ impl Cache {
                 DefaultLifecycle::default(),
             ),
             enabled: AtomicBool::new(memory_enabled),
+            toggle: RwLock::new(()),
+            #[cfg(test)]
+            pause: Mutex::default(),
             disk: RwLock::default(),
             disk_failure: Mutex::default(),
             inflight: Mutex::default(),
@@ -142,11 +152,7 @@ impl Cache {
     /// in memory. A new disk directory starts empty; one that cannot be written leaves
     /// the disk tier off with a warning.
     pub async fn configure(&self, config: &CacheConfig) {
-        self.enabled.store(config.memory_enabled, Ordering::Relaxed);
-        self.memory.set_capacity(config.memory_bytes);
-        if !config.memory_enabled {
-            self.memory.clear();
-        }
+        self.set_memory(config.memory_enabled, config.memory_bytes);
         let current = self.disk();
         let mut failure = None;
         let next = match (&config.disk, current) {
@@ -187,6 +193,15 @@ impl Cache {
             .unwrap_or_else(PoisonError::into_inner) = failure;
     }
 
+    fn set_memory(&self, enabled: bool, bytes: u64) {
+        let _toggle = self.toggle.write().unwrap_or_else(PoisonError::into_inner);
+        self.enabled.store(enabled, Ordering::Relaxed);
+        self.memory.set_capacity(bytes);
+        if !enabled {
+            self.memory.clear();
+        }
+    }
+
     fn disk(&self) -> Option<Arc<Disk>> {
         self.disk
             .read()
@@ -203,8 +218,24 @@ impl Cache {
     }
 
     fn remember(&self, message_id: &str, data: Bytes) {
+        let _toggle = self.toggle.read().unwrap_or_else(PoisonError::into_inner);
         if self.enabled.load(Ordering::Relaxed) {
+            #[cfg(test)]
+            self.paused();
             self.memory.insert(message_id.into(), data);
+        }
+    }
+
+    #[cfg(test)]
+    fn paused(&self) {
+        let pause = self
+            .pause
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(Pause { entered, release }) = pause {
+            entered.send(()).ok();
+            release.recv().ok();
         }
     }
 
@@ -234,6 +265,7 @@ impl Cache {
         self: &Arc<Self>,
         client: &Arc<Client>,
         message_id: &str,
+        workload: Workload,
         begin: Option<u64>,
         probe: Option<&Probe>,
         progress: Option<Progress>,
@@ -247,7 +279,7 @@ impl Cache {
             self.served(&self.memory_hits, &data, Tier::Memory, probe);
             return Ok(data);
         }
-        let (flight, joined) = self.flight(client, message_id, begin, probe, progress);
+        let (flight, joined) = self.flight(client, message_id, workload, begin, probe, progress);
         let (data, from_disk) = flight.await?;
         if joined {
             self.served(&self.joined, &data, Tier::Shared, probe);
@@ -262,13 +294,14 @@ impl Cache {
         &self,
         client: &Client,
         message_id: &str,
+        workload: Workload,
         begin: Option<u64>,
         probe: Option<&Probe>,
         progress: Option<&Progress>,
     ) -> Body {
         self.misses.fetch_add(1, Ordering::Relaxed);
         let body = client
-            .body_with(message_id, Workload::Stream, probe, progress, begin)
+            .body_with(message_id, workload, probe, progress, begin)
             .await;
         let data = body.map_err(Arc::new)?.data;
         self.insert(message_id, data.clone());
@@ -307,18 +340,21 @@ impl Cache {
         self: &Arc<Self>,
         client: &Arc<Client>,
         message_id: &str,
+        workload: Workload,
         begin: Option<u64>,
         probe: Option<&Probe>,
         progress: Option<Progress>,
     ) -> (Flight, bool) {
         let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((generation, flight, leader)) =
-            inflight
-                .flights
-                .get(message_id)
-                .and_then(|(generation, weak, leader)| {
-                    Some((*generation, weak.upgrade()?, leader.clone()))
-                })
+        if let Some((generation, flight, leader)) = inflight
+            .flights
+            .get(message_id)
+            .filter(|(_, _, _, started)| {
+                workload != Workload::Stream || *started == Workload::Stream
+            })
+            .and_then(|(generation, weak, leader, _)| {
+                Some((*generation, weak.upgrade()?, leader.clone()))
+            })
         {
             drop(inflight);
             if let Some(probe) = probe {
@@ -352,6 +388,7 @@ impl Cache {
                 .direct(
                     &client,
                     &landing.key,
+                    workload,
                     begin,
                     probe.as_ref(),
                     progress.as_ref(),
@@ -365,7 +402,7 @@ impl Cache {
         if let Some(weak) = flight.downgrade() {
             inflight
                 .flights
-                .insert(message_id.into(), (generation, weak, leader));
+                .insert(message_id.into(), (generation, weak, leader, workload));
         }
         drop(inflight);
         (flight, false)
@@ -392,7 +429,7 @@ impl Drop for Landing {
         if inflight
             .flights
             .get(&self.key)
-            .is_some_and(|(generation, _, _)| *generation == self.generation)
+            .is_some_and(|(generation, _, _, _)| *generation == self.generation)
         {
             inflight.flights.remove(&self.key);
         }
@@ -400,8 +437,68 @@ impl Drop for Landing {
 }
 
 #[cfg(test)]
+struct Pause {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
 mod tests {
+    use std::sync::{TryLockError, mpsc};
+
     use super::*;
+
+    #[test]
+    fn replacing_background_flights_preserves_sharing_and_cleanup() {
+        for background in [Workload::Health, Workload::Queue] {
+            let client = Arc::new(Client::new([]));
+            let cache = Arc::new(Cache::new(true, 1 << 20));
+            let flight =
+                |workload| cache.flight(&client, "priority@test", workload, None, None, None);
+            let (original, joined) = flight(background);
+            assert!(!joined);
+            let (follower, joined) = flight(background);
+            assert!(joined, "background readers still share");
+            let (playback, joined) = flight(Workload::Stream);
+            assert!(!joined, "playback replaces the background flight");
+            drop((original, follower));
+            assert!(flight(Workload::Stream).1, "old cleanup preserves playback");
+            assert!(flight(background).1, "background can join playback");
+            drop(playback);
+            assert!(cache.inflight.lock().unwrap().flights.is_empty());
+        }
+    }
+
+    #[test]
+    fn disable_clears_an_insertion_paused_after_its_enabled_check() {
+        let cache = Arc::new(Cache::new(true, 1 << 20));
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        *cache.pause.lock().unwrap() = Some(Pause {
+            entered: entered_tx,
+            release: release_rx,
+        });
+        let inserting = std::thread::spawn({
+            let cache = Arc::clone(&cache);
+            move || cache.remember("<old@test>", Bytes::from_static(b"old"))
+        });
+        entered.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(
+            matches!(cache.toggle.try_write(), Err(TryLockError::WouldBlock)),
+            "disable must wait for the paused insertion"
+        );
+        release.send(()).unwrap();
+        inserting.join().unwrap();
+        cache.set_memory(false, 1 << 20);
+
+        assert_eq!(cache.memory.weight(), 0);
+        assert_eq!(cache.memory.len(), 0);
+
+        cache.set_memory(true, 1 << 20);
+        assert!(cache.memory.get("<old@test>").is_none());
+        cache.remember("<new@test>", Bytes::from_static(b"new"));
+        assert!(cache.memory.get("<new@test>").is_some());
+    }
 
     #[tokio::test]
     async fn switching_the_disk_cache_keeps_live_writes() {

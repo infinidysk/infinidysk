@@ -22,8 +22,10 @@ use crate::logs::{self, Level};
 use crate::update::{COMMIT, VERSION};
 use crate::{metrics, quota};
 
-/// Bumped when entries change meaning, so tooling can tell packs apart.
-const PACK_VERSION: u32 = 1;
+/// Bumped when entries change meaning, so tooling can tell packs apart. 2: trace headers
+/// carry `clock`, `limits` and `coverage`; request events; `status/resources.json`;
+/// `traces/fuse-ops.json`; `generated_unix_ms`.
+const PACK_VERSION: u32 = 2;
 const MAX_NOTE_CHARS: usize = 10_000;
 const HISTORY: usize = 50;
 const WARNINGS: usize = 1000;
@@ -39,19 +41,55 @@ keeps no copy of it.
 
   NOTE.txt               What the user wrote when generating the pack (when given).
   manifest.json          Pack version, what was collected, sections that failed, and how
-                         many values were redacted.
+                         many values were redacted. generated_unix_ms is the wall clock
+                         when the pack was started.
   system.json            Version, OS, architecture, database type, mount state and
                          selected environment variables.
   settings.json          Saved settings with passwords, keys and usernames masked, plus
                          the settings fixed by environment variables.
   status/*.json          Live provider and connection stats, performance and cache, file
                          health, the queue, recent history, Arr discovery, provider usage.
+  status/live.json       The latest 2 s sample. reads[].pending lists FUSE requests in the
+                         daemon with their stage and age when the pack was built.
+  status/resources.json  Memory evidence for the last 10 minutes, one sample per 2 s:
+                         memory.current and limit, swap (read once a minute, at swap_at),
+                         memory.events and memory pressure (PSI).
   logs/recent.jsonl      The last events kept in memory, one JSON object per line.
   logs/warnings.jsonl    The last warnings and errors from the log files on disk.
   import-report.txt      What the upgrade from C# carried over and left behind (on
                          installs imported from C#).
   traces/                Read traces, when included: index.json lists them, one NDJSON
                          file per trace (header line, then one event per line).
+                         fuse-ops.json lists FUSE metadata calls (lookup, getattr,
+                         readlink, open, opendir and more) of 1 ms or more while
+                         tracing was on (inodes, no paths).
+
+Timing terms
+
+  Clock          Trace event times (at_ns) count from the trace start on a monotonic
+                 clock. Wall time = header clock.started_unix_ns + at_ns, to line up with
+                 player logs. The host and player clocks may differ.
+  Open           opened.before_ns: open work before the stream started (path, caller and
+                 metadata lookups). The event's at_ns: the rest, to the open reply.
+  Request        A FUSE read from its arrival in the daemon to the daemon's reply. Stages:
+                 order (waiting for earlier reads of the handle), handle_lock (waiting
+                 for the handle's reader), read (in the stream, including segment waits).
+                 A request ends with data, error, or cancelled (interrupted).
+  first_request_ns  Trace start to the first read request reaching the daemon.
+  first_reply_ns    That first request's time in the daemon.
+  first_byte_ns  Stream fetch latency: the reader's first prefetch window to its first
+                 bytes. Not the daemon's request time, not click-to-play.
+  first_byte_ms  (reads) Stream wait of the first read that returned bytes. Excludes
+                 ordering and lock waits and everything before that read.
+  no_request_ns  After the first request, time with no read request in the daemon. The
+                 kernel, its page cache or the player had it; the pack cannot tell which.
+  client_ns      Time between stream reads (Idle events). Includes ordering and lock
+                 waits; not proof the player paused.
+
+What a pack cannot show: time a request spent in the kernel before the daemon got it,
+reads the kernel answered from its page cache, what the player did, and which thread a
+memory stall hit. Pressure (PSI) shows that tasks in the cgroup stalled on memory, not
+which ones; swap in use alone does not show a stall.
 
 Privacy: passwords, API keys, provider usernames, credentials in URLs and public IP
 addresses are removed. File paths, release names, host names and private network
@@ -91,8 +129,8 @@ pub(super) async fn post_support_pack(
     }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let stamp = Stamp::of(now);
+        .unwrap_or_default();
+    let stamp = Stamp::of(now.as_secs(), now.as_millis());
     let pack = build(&admin, note, request.include_traces, stamp).await?;
     tracing::info!(
         bytes = pack.len(),
@@ -118,10 +156,11 @@ struct Stamp {
     month: i64,
     day: i64,
     secs: u64,
+    unix_ms: u128,
 }
 
 impl Stamp {
-    fn of(unix_secs: u64) -> Self {
+    fn of(unix_secs: u64, unix_ms: u128) -> Self {
         let days = i64::try_from(unix_secs / 86_400).unwrap_or(0);
         let (year, month, day) = quota::civil(days);
         Self {
@@ -129,6 +168,7 @@ impl Stamp {
             month,
             day,
             secs: unix_secs % 86_400,
+            unix_ms,
         }
     }
 
@@ -256,6 +296,10 @@ async fn build(
         Ok(metrics::get_live(state()).await.0)
     })
     .await;
+    pack.json(
+        "status/resources.json",
+        Ok(admin.metrics.resource_history()),
+    );
     pack.section("status/performance.json", async {
         let query = Query(PerformanceQuery { dir: None });
         Ok(super::get_performance(state(), query).await.0)
@@ -320,6 +364,7 @@ async fn build(
             Ok(super::get_traces(state()).await.0)
         })
         .await;
+        pack.json("traces/fuse-ops.json", Ok(fuse_ops(admin)));
         for session in admin.vfs.sessions().traced() {
             let name = format!("traces/{}.ndjson", session.id);
             match pack
@@ -352,6 +397,56 @@ fn mask(value: &mut String) {
     if !value.is_empty() {
         MASK.clone_into(value);
     }
+}
+
+/// Slow and unfinished FUSE metadata calls noted while tracing, by inode; paths stay out.
+fn fuse_ops(admin: &Admin) -> Value {
+    let sessions = admin.vfs.sessions();
+    let ops = sessions.fuse_ops();
+    let listed: Vec<Value> = ops
+        .listed
+        .iter()
+        .map(|op| {
+            json!({
+                "op": op.op,
+                "request": op.request,
+                "inode": op.inode,
+                "child_inode": op.child,
+                "arrived_unix_ns": infinidysk_core::trace::unix_ns(op.arrived),
+                "took_us": u64::try_from(op.took.as_micros()).unwrap_or(u64::MAX),
+                "errno": op.errno,
+            })
+        })
+        .collect();
+    let pending: Vec<Value> = sessions
+        .pending_ops()
+        .iter()
+        .map(|op| {
+            json!({
+                "op": op.op,
+                "request": op.request,
+                "inode": op.inode,
+                "arrived_unix_ns": infinidysk_core::trace::unix_ns(op.arrived),
+                "age_us": u64::try_from(op.age.as_micros()).unwrap_or(u64::MAX),
+            })
+        })
+        .collect();
+    json!({
+        "note": "Only while tracing was on, since the server started. Calls under \
+                 min_took_us are counted in fast, not listed; the oldest listed calls \
+                 go first (dropped). Times are the daemon's: from the call's arrival to \
+                 its reply. open's inode matches the trace's opened event; lookup's \
+                 inode is the parent directory and its child_inode is the one an open \
+                 names. pending lists lookup, getattr, readlink, open and opendir calls \
+                 with no reply at export, oldest first, with their age at export.",
+        "min_took_us": u64::try_from(infinidysk_vfs::FuseOps::MIN.as_micros()).unwrap_or(u64::MAX),
+        "max_listed": infinidysk_vfs::FuseOps::KEPT,
+        "seen": ops.seen,
+        "fast": ops.fast,
+        "dropped": ops.dropped,
+        "ops": listed,
+        "pending": pending,
+    })
 }
 
 fn lines<T: Serialize>(items: &[T]) -> String {
@@ -436,6 +531,7 @@ fn write(
     let manifest = json!({
         "pack_version": PACK_VERSION,
         "generated_at": stamp.rfc3339(),
+        "generated_unix_ms": stamp.unix_ms,
         "version": VERSION,
         "commit": COMMIT,
         "include_traces": include_traces,

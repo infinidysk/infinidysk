@@ -26,6 +26,9 @@ const MAX_UNANSWERED: usize = 16;
 /// After a connect fails with no other connection live or connecting, requests fail
 /// fast for this long instead of each waiting out its own connect.
 const CONNECT_BACKOFF: Duration = Duration::from_secs(1);
+/// A connect that never reached the provider while others are open holds back new
+/// connects for [`CONNECT_BACKOFF`], doubling up to this while they keep failing.
+const MAX_CONNECT_BACKOFF: Duration = Duration::from_secs(30);
 /// A refused connect shrinks the limit to the connections we have; it then regrows by
 /// one per step.
 const THROTTLE_STEP: Duration = Duration::from_secs(5);
@@ -64,6 +67,8 @@ pub struct Pool {
     live: Arc<AtomicUsize>,
     state: Arc<Mutex<State>>,
     changed: Arc<Notify>,
+    /// Counts every failed connect, background ones included.
+    stats: Arc<Stats>,
     stream_wait: Duration,
     /// `weight-large` experiment: articles of [`LARGE_ARTICLE`] or more weigh a full depth.
     weight_large: bool,
@@ -76,13 +81,67 @@ const LARGE_ARTICLE: u32 = 2_097_152;
 struct State {
     workers: Vec<Worker>,
     connecting: usize,
-    /// `(limit, since)` after a connect failed while other connections were up.
+    /// `(limit, since)` after the provider turned a connect away while others were up.
     throttle: Option<(usize, Instant)>,
+    /// Set when a connect could not reach the provider while others were up.
+    backoff: Option<Backoff>,
     /// Last connect failure on a pool with nothing else live.
     failed_at: Option<Instant>,
     /// Why that connect failed; cleared once one succeeds.
     connect_error: Option<Arc<str>>,
     connected: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Backoff {
+    until: Instant,
+    delay: Duration,
+    failures: u32,
+}
+
+impl State {
+    /// Until when new connects wait; never while nothing is open, so an outage still
+    /// gets noticed.
+    fn held(&self, open: usize) -> Option<Instant> {
+        self.backoff
+            .map(|backoff| backoff.until)
+            .filter(|&until| open > 0 && Instant::now() < until)
+    }
+
+    /// Effective connection limit, regrowing one per [`THROTTLE_STEP`] after a throttle.
+    fn limit(&self, max: usize) -> usize {
+        self.throttle.map_or(max, |(limit, since)| {
+            let steps = since.elapsed().as_secs() / THROTTLE_STEP.as_secs();
+            limit
+                .saturating_add(usize::try_from(steps).unwrap_or(usize::MAX))
+                .min(max)
+        })
+    }
+
+    /// Holds back new connects after one that `started` failed to reach the provider;
+    /// `true` when this starts a new run of failures.
+    fn back_off(&mut self, started: Instant, now: Instant) -> bool {
+        match &mut self.backoff {
+            // Judged by start time: a slow failure is still a retry, not a new run.
+            Some(backoff) if started < backoff.until + backoff.delay => {
+                backoff.failures += 1;
+                // A burst started before the hold fails within it; only a retry after it lengthens it.
+                if started >= backoff.until {
+                    backoff.delay = (backoff.delay * 2).min(MAX_CONNECT_BACKOFF);
+                    backoff.until = now + backoff.delay;
+                }
+                false
+            }
+            _ => {
+                self.backoff = Some(Backoff {
+                    until: now + CONNECT_BACKOFF,
+                    delay: CONNECT_BACKOFF,
+                    failures: 1,
+                });
+                true
+            }
+        }
+    }
 }
 
 /// Why [`Pool::fetch`] failed.
@@ -120,6 +179,8 @@ pub(crate) struct Tag {
     /// Waits for a connection with nothing in flight rather than pipeline behind
     /// another request: a hedge queued behind a slow article is as slow as it.
     pub(crate) fresh: bool,
+    /// A provider's miss is remembered, so later requests skip that provider.
+    pub(crate) remember: bool,
 }
 
 impl Tag {
@@ -132,6 +193,7 @@ impl Tag {
         begin: None,
         sink: None,
         fresh: false,
+        remember: true,
     };
 
     fn step(&self, step: Step) {
@@ -260,9 +322,14 @@ impl Pool {
             live: Arc::default(),
             state: Arc::default(),
             changed: Arc::default(),
+            stats: Arc::default(),
             stream_wait: STREAM_WAIT,
             weight_large: false,
         })
+    }
+
+    pub(crate) fn set_stats(&mut self, stats: Arc<Stats>) {
+        self.stats = stats;
     }
 
     #[cfg(test)]
@@ -308,7 +375,7 @@ impl Pool {
                 && state
                     .failed_at
                     .is_some_and(|at| at.elapsed() < CONNECT_BACKOFF);
-            let reserved = if backoff {
+            let reserved = if backoff || state.held(open).is_some() {
                 0
             } else {
                 connections.min(self.limit(&state)).saturating_sub(open)
@@ -317,7 +384,7 @@ impl Pool {
             reserved
         };
         // Dropping a new connection's load leaves it idle in the pool.
-        join_all((0..reserved).map(|_| self.open(self.connecting()))).await;
+        join_all((0..reserved).map(|_| self.open(self.connecting(), None))).await;
     }
 
     /// Ends every connection now, abandoning the requests on them.
@@ -380,7 +447,7 @@ impl Pool {
             && state
                 .failed_at
                 .is_some_and(|at| at.elapsed() < CONNECT_BACKOFF);
-        let spare = open < self.limit(&state) && !backed_off;
+        let spare = open < self.limit(&state) && !backed_off && state.held(open).is_none();
         drop(state);
         idle || spare
     }
@@ -451,28 +518,25 @@ impl Pool {
         let (mut failed, mut unanswered) = (0, 0);
         let provider = tag.provider;
         let stream = tag.workload == Workload::Stream;
-        let deadline = tokio::time::Instant::now() + self.stream_wait;
+        // Shared by retries; only admission waits spend it, not transfers.
+        let mut budget = self.stream_wait;
         loop {
-            let wait = async {
-                let download = self
-                    .downloads
-                    .acquire(
-                        stream,
-                        self.weight(tag.probe.as_ref().map(|probe| probe.size)),
-                    )
+            let admitted = tokio::time::Instant::now();
+            let deadline = stream.then(|| admitted + budget);
+            let acquire = self.downloads.acquire(
+                stream,
+                self.weight(tag.probe.as_ref().map(|probe| probe.size)),
+            );
+            let download = match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, acquire)
                     .await
-                    .ok_or(Failure::Request(Error::Closed))?;
-                tag.step(Step::Permitted { provider });
-                let (tx, load, ahead, connection) = self.worker(stream, tag.fresh).await?;
-                Ok::<_, Failure>((download, tx, load, ahead, connection))
-            };
-            let (download, tx, load, ahead, connection) = if stream {
-                tokio::time::timeout_at(deadline, wait)
-                    .await
-                    .map_err(|_| Failure::Request(Error::Unavailable))??
-            } else {
-                wait.await?
-            };
+                    .map_err(|_| Failure::Request(Error::Unavailable))?,
+                None => acquire.await,
+            }
+            .ok_or(Failure::Request(Error::Closed))?;
+            tag.step(Step::Permitted { provider });
+            let (tx, load, ahead, connection) = self.worker(stream, tag.fresh, deadline).await?;
+            budget = budget.saturating_sub(admitted.elapsed());
             tag.step(Step::Connected {
                 provider,
                 ahead: u16::try_from(ahead).unwrap_or(u16::MAX),
@@ -497,9 +561,10 @@ impl Pool {
                 Some(Err(Error::Timeout)) if stream => {
                     return Err(Failure::Request(Error::Timeout));
                 }
-                Some(Err(Error::Closed | Error::Io(_) | Error::Timeout))
-                    if failed < MAX_RETRIES =>
-                {
+                // A 400 ends the session (RFC 3977 §3.2.1); the server closes after it.
+                Some(Err(
+                    Error::Closed | Error::Io(_) | Error::Timeout | Error::Status { code: 400, .. },
+                )) if failed < MAX_RETRIES => {
                     failed += 1;
                 }
                 Some(result) => return result.map_err(Failure::Request),
@@ -515,20 +580,30 @@ impl Pool {
     /// instead. A `fresh` request never pipelines: it waits for an idle connection instead.
     /// For limits of four or more, background work leaves one idle or unopened slot for
     /// playback and waits for pending connections before pipelining.
+    /// Past the admission `deadline` it fails as [`Error::Unavailable`], except that a
+    /// cold connect it started itself runs on, so a hung provider is blamed for it.
     async fn worker(
         &self,
         stream: bool,
         fresh: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<(mpsc::Sender<Request>, Load, usize, u32), Failure> {
-        let mut impatient = false;
+        let (mut impatient, mut first) = (false, true);
         loop {
+            // A spent budget still takes a connection that is free right away.
+            if !std::mem::take(&mut first)
+                && deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+            {
+                return Err(Failure::Request(Error::Unavailable));
+            }
             let mut changed = pin!(self.changed.notified());
             changed.as_mut().enable();
-            let (reserved, live) = {
+            let (reserved, live, held) = {
                 let mut state = self.lock();
                 state.workers.retain(|w| !w.tx.is_closed());
                 let open = state.workers.len() + state.connecting;
                 let limit = self.limit(&state);
+                let held = state.held(open);
                 let hold_headroom = !stream && limit >= STREAM_HEADROOM_MIN_CONNECTIONS && {
                     let idle = state
                         .workers
@@ -537,7 +612,7 @@ impl Pool {
                         .count();
                     idle + limit.saturating_sub(open) <= 1
                 };
-                let spare = open < limit && !hold_headroom;
+                let spare = open < limit && !hold_headroom && held.is_none();
                 let live = !state.workers.is_empty();
                 let best = state
                     .workers
@@ -559,6 +634,11 @@ impl Pool {
                             w.link.id,
                         ));
                     }
+                    _ if deadline
+                        .is_some_and(|deadline| tokio::time::Instant::now() >= deadline) =>
+                    {
+                        return Err(Failure::Request(Error::Unavailable));
+                    }
                     _ if open == 0
                         && state
                             .failed_at
@@ -574,13 +654,21 @@ impl Pool {
                     _ => false,
                 };
                 drop(state);
-                (reserved, live)
+                (reserved, live, held)
             };
             if reserved {
-                let mut open = Box::pin(self.open(self.connecting()));
+                let now = tokio::time::Instant::now();
+                // A detached connect keeps only the endpoint's own deadline.
+                let until = deadline
+                    .filter(|_| !(stream && live))
+                    .map(|deadline| deadline.max(now + STREAM_CONNECT_WAIT));
+                let mut open = Box::pin(self.open(self.connecting(), until));
                 let opened = if stream && live {
-                    let patience = STREAM_CONNECT_WAIT.min(self.endpoint.timeout() / 2);
-                    if let Ok(opened) = timeout(patience, &mut open).await {
+                    let mut patience = now + STREAM_CONNECT_WAIT.min(self.endpoint.timeout() / 2);
+                    if let Some(deadline) = deadline {
+                        patience = patience.min(deadline);
+                    }
+                    if let Ok(opened) = tokio::time::timeout_at(patience, &mut open).await {
                         opened
                     } else {
                         // Joins the pool idle if it ever connects.
@@ -596,62 +684,122 @@ impl Pool {
                 }
                 continue;
             }
-            changed.await;
+            let wake = match (held.map(tokio::time::Instant::from), deadline) {
+                (Some(held), Some(deadline)) => Some(held.min(deadline)),
+                (held, deadline) => held.or(deadline),
+            };
+            match wake {
+                Some(until) => {
+                    let _ = tokio::time::timeout_at(until, changed).await;
+                }
+                None => changed.await,
+            }
         }
     }
 
     fn limit(&self, state: &State) -> usize {
-        let max = self.config.max_connections;
-        state.throttle.map_or(max, |(limit, since)| {
-            let steps = since.elapsed().as_secs() / THROTTLE_STEP.as_secs();
-            limit
-                .saturating_add(usize::try_from(steps).unwrap_or(usize::MAX))
-                .min(max)
-        })
+        state.limit(self.config.max_connections)
     }
 
     /// `None` when the connect was refused but other connections can take the request.
+    /// The connect ends by `until` or the endpoint timeout, whichever comes first.
     fn open(
         &self,
         connecting: Connecting,
+        until: Option<tokio::time::Instant>,
     ) -> impl Future<Output = Result<Option<(mpsc::Sender<Request>, Load, u32)>, Failure>> + Send + 'static
     {
         let (endpoint, config) = (self.endpoint.clone(), self.config);
         let usage = endpoint.usage().cloned();
         let live = Arc::clone(&self.live);
+        let stats = Arc::clone(&self.stats);
         async move {
-            let conn = match Connection::connect(&endpoint).await {
+            let started = Instant::now();
+            let limit = tokio::time::Instant::now() + endpoint.timeout();
+            let until = until.map_or(limit, |until| until.min(limit));
+            let conn = match Connection::connect_staged_until(&endpoint, until).await {
                 Ok(conn) => conn,
-                Err(error) => {
+                Err((stage, error)) => {
+                    stats.connect_failed();
                     let mut state = connecting.lock();
                     let live = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
                     // Excludes this attempt, whose slot `connecting` still holds.
                     let others = live + state.connecting - 1;
                     let now = Instant::now();
                     let (host, port) = (endpoint.host(), endpoint.port());
+                    let reason = error.connect_problem();
+                    let stage_label = stage.label();
                     let result = if others == 0 {
-                        state.connect_error = Some(error.connect_problem().into());
                         // Warn once per outage; retries while it lasts are debug.
                         if state.failed_at.replace(now).is_none() {
-                            tracing::warn!(host, port, reason = %error, "cannot connect to provider");
+                            tracing::warn!(
+                                host,
+                                port,
+                                stage = stage_label,
+                                reason,
+                                "cannot connect to provider"
+                            );
                         } else {
-                            tracing::debug!(host, port, reason = %error, "provider connect retry failed");
+                            tracing::debug!(
+                                host,
+                                port,
+                                stage = stage_label,
+                                reason,
+                                "provider connect retry failed"
+                            );
                         }
+                        state.connect_error = Some(reason.into());
                         Err(Failure::Connect(error))
                     } else {
-                        // Usually the provider's connection limit (400/502 greeting).
-                        if state
-                            .throttle
-                            .replace((others, now))
-                            .is_none_or(|(limit, _)| limit != others)
-                        {
-                            tracing::warn!(host, port, connections = others, reason = %error, "provider refused more connections; limiting pool");
+                        if stage.reached() {
+                            // Turned away after accepting: likely the provider's connection
+                            // limit, which the connections we hold do not exceed.
+                            let limit = live.max(1);
+                            if state
+                                .throttle
+                                .replace((limit, now))
+                                .is_none_or(|(old, _)| old != limit)
+                            {
+                                tracing::warn!(
+                                    host,
+                                    port,
+                                    connections = limit,
+                                    stage = stage_label,
+                                    reason,
+                                    "provider refused more connections; limiting pool"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    host,
+                                    port,
+                                    connections = limit,
+                                    stage = stage_label,
+                                    reason,
+                                    "provider still refuses more connections"
+                                );
+                            }
+                        } else if state.back_off(started, now) {
+                            tracing::warn!(
+                                host,
+                                port,
+                                connections = live,
+                                stage = stage_label,
+                                reason,
+                                "cannot open more connections to provider; retrying later"
+                            );
                         } else {
-                            tracing::debug!(host, port, connections = others, reason = %error, "provider still refuses more connections");
+                            tracing::debug!(
+                                host,
+                                port,
+                                connections = live,
+                                stage = stage_label,
+                                reason,
+                                "provider connect retry failed"
+                            );
                         }
                         // A hung handshake is a provider fault the breaker must hear of.
                         match error {
-                            Error::Timeout => Err(Failure::Request(error)),
+                            Error::Timeout if stage.reached() => Err(Failure::Request(error)),
                             _ => Ok(None),
                         }
                     };
@@ -674,6 +822,14 @@ impl Pool {
                 endpoint.host().to_owned(),
             ));
             let mut state = connecting.lock();
+            if let Some(backoff) = state.backoff.take() {
+                tracing::info!(
+                    host = endpoint.host(),
+                    port = endpoint.port(),
+                    failures = backoff.failures,
+                    "provider connects work again"
+                );
+            }
             state.failed_at = None;
             state.connect_error = None;
             state.connected = true;
@@ -683,6 +839,11 @@ impl Pool {
                 task: task.abort_handle(),
                 link,
             });
+            // A throttle set while these connects were pending must not hold below them.
+            let open = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
+            if state.throttle.is_some() && open > state.limit(config.max_connections) {
+                state.throttle = Some((open, Instant::now()));
+            }
             drop(state);
             drop(connecting);
             Ok(Some((tx, acquired, id)))
@@ -890,5 +1051,66 @@ fn enqueue(conn: &mut Connection, in_flight: &mut VecDeque<Request>, request: Re
     match sent {
         Ok(()) => in_flight.push_back(request),
         Err(error) => request.answer(Err(error), Duration::ZERO),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn expired_admission_reuses_an_idle_connection_but_never_opens_one() {
+        let server = infinidysk_testkit::LoopbackServer::start(Vec::new())
+            .await
+            .unwrap();
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            crate::TlsMode::Plain,
+            None,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let config = PoolConfig {
+            max_connections: 2,
+            pipeline_depth: 2,
+            idle_timeout: Duration::from_secs(60),
+            min_connections: 0,
+        };
+        let pool = Pool::new(endpoint, config, Downloads::new(4)).unwrap();
+        let deadline = Some(tokio::time::Instant::now());
+        assert!(matches!(
+            pool.worker(true, false, deadline).await,
+            Err(Failure::Request(Error::Unavailable))
+        ));
+        assert_eq!(server.peak_connections(), 0);
+        assert_eq!(pool.lock().connecting, 0);
+
+        let Ok((_, load, _, connection)) = pool.worker(true, false, None).await else {
+            panic!("a connection opens before admission expires");
+        };
+        drop(load);
+        let Ok((_, load, _, reused)) = pool.worker(true, false, deadline).await else {
+            panic!("an idle connection is reusable after admission expires");
+        };
+        assert_eq!(reused, connection);
+        assert_eq!(server.peak_connections(), 1);
+        drop(load);
+        pool.abort();
+    }
+
+    #[test]
+    fn slow_failing_retries_keep_doubling_the_backoff() {
+        let start = Instant::now();
+        let mut state = State::default();
+        assert!(state.back_off(start, start));
+        // Each retry starts as the hold ends and takes 6 s to fail.
+        let mut retry = start + CONNECT_BACKOFF;
+        for _ in 0..6 {
+            assert!(!state.back_off(retry, retry + Duration::from_secs(6)));
+            retry = state.backoff.map_or(retry, |b| b.until);
+        }
+        let backoff = state.backoff.map(|b| (b.delay, b.failures));
+        assert_eq!(backoff, Some((MAX_CONNECT_BACKOFF, 7)));
     }
 }

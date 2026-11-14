@@ -19,7 +19,7 @@ use tokio_rustls::client::TlsStream;
 use tokio_util::either::Either;
 
 use crate::article::{Body, MAX_DECODED_LEN, crc_field, field};
-use crate::{Bandwidth, Credentials, Error, Usage, tls};
+use crate::{Bandwidth, Credentials, Error, Usage, resolve, tls};
 
 /// Socket read buffer; large enough that one TLS record batch fits per fill.
 const READ_BUFFER_LEN: usize = 128 * 1024;
@@ -27,12 +27,55 @@ const READ_BUFFER_LEN: usize = 128 * 1024;
 const MAX_LINE_LEN: u64 = 64 * 1024;
 /// RFC 3977 caps message-ids at 250 octets.
 const MAX_MESSAGE_ID_LEN: usize = 250;
-/// Reply text kept on [`Error::Status`].
+/// Reply text kept on [`Error::Status`] and [`Error::AuthRejected`].
 const MAX_REPLY_LEN: usize = 120;
 /// Extra decode capacity so `\r\n=yend` is reached without growing the body buffer.
 const DECODE_SLACK: usize = 64;
+const OTHER_PART: Error = Error::Yenc("article is another part of the file");
+/// Longest TCP connect to an address with another one after it; also at most half the
+/// time left, so a silent address cannot use up the connect deadline.
+const ADDRESS_WAIT: Duration = Duration::from_secs(5);
 
 type Stream = Either<TcpStream, TlsStream<TcpStream>>;
+
+/// Tries `addrs` in order, one at a time, until one connects by `deadline`. The last
+/// address gets all the time left.
+async fn connect_addresses<C, A>(
+    addrs: &[std::net::SocketAddr],
+    deadline: tokio::time::Instant,
+    mut connect: C,
+) -> Result<TcpStream, Error>
+where
+    C: FnMut(std::net::SocketAddr) -> A,
+    A: Future<Output = io::Result<TcpStream>>,
+{
+    let mut last = None;
+    for (i, &addr) in addrs.iter().enumerate() {
+        let now = tokio::time::Instant::now();
+        let Some(left) = deadline
+            .checked_duration_since(now)
+            .filter(|d| !d.is_zero())
+        else {
+            return Err(Error::Timeout);
+        };
+        let until = if i + 1 < addrs.len() {
+            now + ADDRESS_WAIT.min(left / 2)
+        } else {
+            deadline
+        };
+        match tokio::time::timeout_at(until, connect(addr)).await {
+            Ok(Ok(tcp)) => return Ok(tcp),
+            Ok(Err(error)) => last = Some(Error::Io(error)),
+            Err(_) => last = Some(Error::Timeout),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        Error::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "could not resolve to any address",
+        ))
+    }))
+}
 
 /// Counts the NNTP bytes read (after TLS) into the provider's [`Usage`] and the
 /// [`Bandwidth`] bill.
@@ -95,6 +138,33 @@ impl Phase {
             Self::Transfer => "transfer",
             Self::Bandwidth => "bandwidth",
             Self::Draining => "draining",
+        }
+    }
+}
+
+/// Where a connect failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    Resolve,
+    Tcp,
+    Tls,
+    Greeting,
+    Auth,
+}
+
+impl Stage {
+    /// Whether the server had accepted the TCP connection.
+    pub(crate) const fn reached(self) -> bool {
+        matches!(self, Self::Tls | Self::Greeting | Self::Auth)
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Resolve => "resolve",
+            Self::Tcp => "tcp",
+            Self::Tls => "tls",
+            Self::Greeting => "greeting",
+            Self::Auth => "auth",
         }
     }
 }
@@ -240,7 +310,7 @@ impl Endpoint {
         self
     }
 
-    /// `timeout` bounds the TCP connect, the TLS handshake and every single read or
+    /// `timeout` bounds the whole connect and login, and every later single read or
     /// write.
     pub fn new(
         host: impl Into<String>,
@@ -305,20 +375,45 @@ impl Connection {
 
     /// Connects, reads the greeting and authenticates.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, Error> {
+        Self::connect_staged(endpoint)
+            .await
+            .map_err(|(_, error)| error)
+    }
+
+    /// [`connect`](Self::connect), with the stage a failure happened in.
+    pub(crate) async fn connect_staged(endpoint: &Endpoint) -> Result<Self, (Stage, Error)> {
+        Self::connect_staged_until(endpoint, tokio::time::Instant::now() + endpoint.timeout).await
+    }
+
+    /// [`connect_staged`](Self::connect_staged), with all of it ending by `deadline`.
+    pub(crate) async fn connect_staged_until(
+        endpoint: &Endpoint,
+        deadline: tokio::time::Instant,
+    ) -> Result<Self, (Stage, Error)> {
+        let mut stage = Stage::Resolve;
+        match tokio::time::timeout_at(deadline, Self::connect_at(endpoint, &mut stage, deadline))
+            .await
+        {
+            Ok(result) => result.map_err(|error| (stage, error)),
+            Err(_) => Err((stage, Error::Timeout)),
+        }
+    }
+
+    async fn connect_at(
+        endpoint: &Endpoint,
+        stage: &mut Stage,
+        deadline: tokio::time::Instant,
+    ) -> Result<Self, Error> {
         let timeout_after = endpoint.timeout;
         let started = Instant::now();
-        let addrs: Vec<_> = timeout(
-            timeout_after,
-            tokio::net::lookup_host((endpoint.host.as_str(), endpoint.port)),
-        )
-        .await
-        .map_err(|_| Error::Timeout)??
-        .collect();
+        let addrs = resolve::PROVIDERS
+            .resolve(&endpoint.host, endpoint.port, resolve::system)
+            .await?;
         let resolved = Instant::now();
-        let tcp = timeout(timeout_after, TcpStream::connect(addrs.as_slice()))
-            .await
-            .map_err(|_| Error::Timeout)??;
+        *stage = Stage::Tcp;
+        let tcp = connect_addresses(&addrs, deadline, TcpStream::connect).await?;
         let connected = Instant::now();
+        let peer = tcp.peer_addr().ok();
         tcp.set_nodelay(true)?;
         SockRef::from(&tcp).set_tcp_keepalive(
             &TcpKeepalive::new()
@@ -326,6 +421,7 @@ impl Connection {
                 .with_interval(Duration::from_secs(5))
                 .with_retries(3),
         )?;
+        *stage = Stage::Tls;
         let stream = match &endpoint.tls {
             None => Either::Left(tcp),
             Some((connector, name)) => Either::Right(
@@ -357,19 +453,25 @@ impl Connection {
             pending: 0,
             timeout: timeout_after,
             timing: Timing::default(),
-            bandwidth: endpoint.bandwidth.clone(),
+            // Set after login, so the connect deadline never covers a local limit wait.
+            bandwidth: None,
         };
+        *stage = Stage::Greeting;
         match conn.read_status().await? {
             200 | 201 => {}
             code => return Err(conn.unexpected(code)),
         }
         let greeted = Instant::now();
+        *stage = Stage::Auth;
         if let Some(credentials) = &endpoint.credentials {
             conn.authenticate(credentials).await?;
         }
+        // Login bytes stay unpaid until the first read after this.
+        conn.bandwidth = endpoint.bandwidth.clone();
         let ms = |from: Instant, to: Instant| to.duration_since(from).as_millis();
         tracing::debug!(
             host = endpoint.host.as_str(),
+            peer = ?peer,
             dns_ms = ms(started, resolved),
             tcp_ms = ms(resolved, connected),
             tls_ms = ms(connected, secured),
@@ -509,19 +611,22 @@ impl Connection {
             return self.fail_drained(Error::Yenc("missing =ybegin size")).await;
         };
 
+        let other_part = |offset: u64| begin.is_some_and(|begin| begin != offset);
         let mut offset = 0;
         let mut expected = usize::try_from(file_size).unwrap_or(usize::MAX);
+        // Whether the offset was checked against `begin`; a `=ypart` line split across
+        // reads is only seen by the decoder, so the check waits for it or the first byte.
+        let mut checked = false;
         if self.fill().await?.starts_with(b"=ypart ") {
             self.read_line().await?;
             match parse_ypart(&self.line) {
                 Some((begin, len)) => (offset, expected) = (begin, len),
                 None => return self.fail_drained(Error::Yenc("invalid =ypart")).await,
             }
-        }
-        if begin.is_some_and(|begin| begin != offset) {
-            return self
-                .fail_drained(Error::Yenc("article is another part of the file"))
-                .await;
+            if other_part(offset) {
+                return self.fail_drained(OTHER_PART).await;
+            }
+            checked = true;
         }
 
         let mut data = Vec::with_capacity(expected.min(MAX_DECODED_LEN) + DECODE_SLACK);
@@ -529,6 +634,9 @@ impl Connection {
         let mut crc = 0;
         // Decoded bytes already sent to `progress`.
         let mut sent = 0;
+        // Another part found mid-data: decoded to its end and discarded, so the
+        // connection stays in step without draining from inside an encoded line.
+        let mut wrong = false;
         loop {
             if data.len() > MAX_DECODED_LEN {
                 return Err(Error::TooLarge);
@@ -542,7 +650,14 @@ impl Connection {
             let (used, end) = decode_incremental(buf, &mut data, &mut state);
             crc = crc32(crc, &data[decoded..]);
             self.timing.decode += started.elapsed();
-            if let Some(progress) = progress
+            self.stream.consume(used);
+            if !checked && data.len() > decoded {
+                checked = true;
+                wrong = other_part(offset);
+            }
+            if wrong {
+                data.clear();
+            } else if let Some(progress) = progress
                 && data.len() > sent
                 && progress.wanted.load(Ordering::Relaxed)
                 && !progress.tx.is_closed()
@@ -550,10 +665,12 @@ impl Connection {
                 let _ = progress.tx.send((sent, data[sent..].to_vec()));
                 sent = data.len();
             }
-            self.stream.consume(used);
             match end {
                 DecodeEnd::None => {}
                 DecodeEnd::Article => {
+                    if wrong || (!checked && other_part(offset)) {
+                        return Err(OTHER_PART);
+                    }
                     // Without `=yend`, only the length shows the article is whole.
                     if data.len() < expected {
                         return Err(Error::Yenc("article ended before its announced size"));
@@ -564,14 +681,36 @@ impl Connection {
                     // Rest of a `=y…` line; data resumes at a line start.
                     self.read_line().await?;
                     state = DecoderState::default();
-                    if self.line.starts_with(b"part ") {
-                        if let Some((begin, len)) = parse_ypart(&self.line) {
-                            (offset, expected) = (begin, len);
+                    if wrong {
+                        if self.line.starts_with(b"end") {
+                            self.drain().await?;
+                            return Err(OTHER_PART);
                         }
+                    } else if self.line.starts_with(b"part ") {
+                        match parse_ypart(&self.line) {
+                            Some((begin, _)) if other_part(begin) => {
+                                return self.fail_drained(OTHER_PART).await;
+                            }
+                            Some((begin, len)) => {
+                                (offset, expected) = (begin, len);
+                                let fits = len.min(MAX_DECODED_LEN) + DECODE_SLACK;
+                                if data.is_empty() && data.capacity() > fits {
+                                    data = Vec::with_capacity(fits);
+                                }
+                            }
+                            None if !checked => {
+                                return self.fail_drained(Error::Yenc("invalid =ypart")).await;
+                            }
+                            None => {}
+                        }
+                        checked = true;
                     } else if self.line.starts_with(b"end") {
                         let key: &[u8] = if part.is_some() { b"pcrc32" } else { b"crc32" };
                         let posted = crc_field(&self.line, key);
                         self.drain().await?;
+                        if !checked && other_part(offset) {
+                            return Err(OTHER_PART);
+                        }
                         if let Some(expected) = posted
                             && expected != crc
                         {
@@ -610,7 +749,7 @@ impl Connection {
         match self.read_status().await? {
             281 => return Ok(()),
             381 => {}
-            code => return Err(Error::AuthRejected { code }),
+            code => return Err(self.rejected(code)),
         }
         self.write_buf.extend_from_slice(b"AUTHINFO PASS ");
         self.write_buf.extend_from_slice(password.as_bytes());
@@ -618,7 +757,7 @@ impl Connection {
         self.flush().await?;
         match self.read_status().await? {
             281 => Ok(()),
-            code => Err(Error::AuthRejected { code }),
+            code => Err(self.rejected(code)),
         }
     }
 
@@ -657,10 +796,10 @@ impl Connection {
     /// Waits out the download limit for bytes already read. Outside the read timeout,
     /// so a slow limit never fails a healthy connection.
     async fn pay(&mut self) {
-        let unpaid = std::mem::take(&mut self.stream.get_mut().unpaid);
         if let Some(bandwidth) = &self.bandwidth
-            && unpaid > 0
+            && self.stream.get_ref().unpaid > 0
         {
+            let unpaid = std::mem::take(&mut self.stream.get_mut().unpaid);
             let link = &self.stream.get_ref().link;
             let (phase, since) = (link.phase(), link.since.load(Ordering::Relaxed));
             link.set(Phase::Bandwidth);
@@ -683,8 +822,23 @@ impl Connection {
             .ok_or(Error::Protocol)
     }
 
-    /// [`Error::Status`] with the text of the status line just read, cleaned for logs.
+    /// [`Error::Status`] with the text of the status line just read.
     fn unexpected(&self, code: u16) -> Error {
+        Error::Status {
+            code,
+            reply: self.reply(),
+        }
+    }
+
+    fn rejected(&self, code: u16) -> Error {
+        Error::AuthRejected {
+            code,
+            reply: self.reply(),
+        }
+    }
+
+    /// Text of the status line just read, cleaned for logs.
+    fn reply(&self) -> Box<str> {
         let text = String::from_utf8_lossy(self.line.get(3..).unwrap_or_default());
         let reply: String = text.chars().filter(|c| !c.is_control()).collect();
         let reply = reply.trim();
@@ -692,10 +846,7 @@ impl Connection {
         while !reply.is_char_boundary(end) {
             end -= 1;
         }
-        Error::Status {
-            code,
-            reply: reply[..end].into(),
-        }
+        reply[..end].into()
     }
 
     /// Skips lines through the article terminator.
@@ -736,4 +887,103 @@ fn parse_ypart(line: &[u8]) -> Option<(u64, usize)> {
     let end = field::<u64>(line, b"end")?;
     let len = end.checked_sub(begin)?.checked_add(1)?;
     Some((begin.checked_sub(1)?, usize::try_from(len).ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use infinidysk_testkit::LoopbackServer;
+
+    struct Dropped(Arc<AtomicBool>);
+
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_addresses_skips_a_stalled_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good = listener.local_addr().unwrap();
+        let stalled: std::net::SocketAddr = "192.0.2.1:119".parse().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let dropped_first = Arc::new(AtomicBool::new(false));
+        let start = tokio::time::Instant::now();
+        let deadline = start + Duration::from_secs(1);
+
+        let tcp = connect_addresses(&[stalled, good], deadline, |addr| {
+            let guard = (addr == stalled).then(|| Dropped(Arc::clone(&dropped)));
+            if addr == good {
+                dropped_first.store(dropped.load(Ordering::SeqCst), Ordering::SeqCst);
+            }
+            async move {
+                if let Some(_guard) = guard {
+                    std::future::pending::<()>().await;
+                }
+                TcpStream::connect(addr).await
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(tcp.peer_addr().unwrap(), good);
+        assert!(
+            dropped_first.load(Ordering::SeqCst),
+            "the stalled attempt ended first"
+        );
+        // Half the budget went to the stalled address, not all of it.
+        assert!(
+            start.elapsed() < Duration::from_millis(900),
+            "{:?}",
+            start.elapsed()
+        );
+
+        // A single address keeps the whole budget.
+        let tcp = connect_addresses(
+            &[good],
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            |addr| async move {
+                tokio::time::sleep(Duration::from_millis(700)).await;
+                TcpStream::connect(addr).await
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tcp.peer_addr().unwrap(), good);
+    }
+
+    #[tokio::test]
+    async fn login_preserves_bandwidth_debt_until_the_limiter_is_attached() {
+        let server = LoopbackServer::start(Vec::new()).await.unwrap();
+        let usage = Arc::new(Usage::default());
+        let bandwidth = Arc::new(Bandwidth::new(Some(1)));
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            TlsMode::Plain,
+            Some(Credentials {
+                username: "user".into(),
+                password: "pass".into(),
+            }),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+        .with_usage(Arc::clone(&usage))
+        .with_bandwidth(Arc::clone(&bandwidth));
+        let mut conn = Connection::connect(&endpoint).await.unwrap();
+        let debt = usage.used();
+        assert!(debt > 0);
+        assert_eq!(conn.stream.get_ref().unpaid, debt);
+
+        let mut payment = Box::pin(conn.pay());
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(payment.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        bandwidth.set_limit(None);
+        payment.await;
+        assert_eq!(conn.stream.get_ref().unpaid, 0);
+        assert_eq!(usage.used(), debt);
+    }
 }

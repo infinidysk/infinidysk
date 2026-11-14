@@ -36,4 +36,6 @@ pub enum Error {
     HeaderCrc(u64),
     #[error("corrupt header at offset {offset}: {reason}")]
     Corrupt { offset: u64, reason: &'static str },
+    #[error("key derivation was stopped")]
+    Cancelled,
 }

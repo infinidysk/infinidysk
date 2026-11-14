@@ -7,6 +7,8 @@ pub mod queue;
 mod repair;
 pub mod webhook;
 
+use std::time::Duration;
+
 use infinidysk_core::media::Kind;
 use reqwest::{Method, RequestBuilder};
 use serde::Deserialize;
@@ -110,12 +112,16 @@ pub enum Error {
 }
 
 impl Error {
-    /// The Arr was unreachable, slow or failing, so retrying later may work.
+    /// The Arr was unreachable, slow or failing, or dropped the connection mid-request,
+    /// so retrying later may work.
     #[must_use]
     pub fn is_transient(&self) -> bool {
         match self {
             Self::Http(e) => {
-                e.is_connect() || e.is_timeout() || e.status().is_some_and(|s| s.is_server_error())
+                e.is_connect()
+                    || e.is_timeout()
+                    || e.status().is_some_and(|s| s.is_server_error())
+                    || dropped(e)
             }
             Self::Rejected { status, .. } => status.is_server_error(),
             Self::Unexpected(_)
@@ -124,6 +130,22 @@ impl Error {
             | Self::Searching => false,
         }
     }
+}
+
+/// The connection failed while sending the request or reading the response body. A
+/// body cut short reaches JSON decoding as a body error in the cause chain; malformed
+/// JSON that arrived whole does not.
+fn dropped(error: &reqwest::Error) -> bool {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = cause {
+        if let Some(e) = current.downcast_ref::<reqwest::Error>()
+            && (e.is_request() || e.is_body())
+        {
+            return true;
+        }
+        cause = current.source();
+    }
+    false
 }
 
 /// reqwest's own message hides why a request failed, such as a refused connection.
@@ -407,6 +429,11 @@ impl<'a> Session<'a> {
         };
         request(self.http, self.arr, method, &format!("{root}/{path}"))
     }
+
+    fn library_list(&self, path: &str) -> RequestBuilder {
+        self.call(Method::GET, path)
+            .timeout(Duration::from_secs(180))
+    }
 }
 
 fn request(http: &reqwest::Client, arr: &Arr, method: Method, path: &str) -> RequestBuilder {
@@ -478,6 +505,49 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn only_library_lists_override_the_client_timeout() {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap();
+        for (profile, api, list, root) in [
+            (Profile::Radarr, Api::Classic, "movie", "api/v3"),
+            (Profile::Whisparr, Api::Classic, "movie", "api/v3"),
+            (Profile::Sonarr, Api::Classic, "series", "api/v3"),
+            (Profile::Sonarr, Api::V5, "series", "api/v5"),
+            (Profile::Lidarr, Api::Classic, "artist", "api/v1"),
+            (Profile::Chaptarr, Api::Classic, "author", "api/v1"),
+        ] {
+            let arr = Arr {
+                id: Uuid::nil(),
+                name: "test".to_owned(),
+                profile,
+                url: "http://localhost/arr".to_owned(),
+                api_key: "test-key".to_owned(),
+            };
+            let session = Session {
+                http: &http,
+                arr: &arr,
+                api,
+            };
+            let request = session.library_list(list).build().unwrap();
+            assert_eq!(request.timeout(), Some(&Duration::from_secs(180)));
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(request.url().path(), format!("/arr/{root}/{list}"));
+            assert_eq!(request.headers()["X-Api-Key"], "test-key");
+            for (method, path) in [
+                (Method::GET, "system/status"),
+                (Method::GET, "movie/1"),
+                (Method::GET, "moviefile"),
+                (Method::POST, "command"),
+                (Method::DELETE, "moviefile/1"),
+            ] {
+                assert_eq!(session.call(method, path).build().unwrap().timeout(), None);
+            }
+        }
+    }
 
     #[test]
     fn reads_why_an_arr_refused() {

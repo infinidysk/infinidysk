@@ -1,0 +1,11 @@
+schema = 1
+name = "Cheapnews"
+website = "https://www.cheapnews.eu"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "news.cheapnews.eu"
+
+[[servers]]
+hostname = "block.cheapnews.eu"

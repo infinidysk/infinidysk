@@ -1,0 +1,12 @@
+schema = 1
+name = "BinTube"
+website = "https://www.bintube.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "us.bintube.com"
+region = "US"
+
+[[servers]]
+hostname = "eu.bintube.com"

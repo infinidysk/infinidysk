@@ -145,6 +145,14 @@ export function Overview() {
   );
 }
 
+function FirstByteTip() {
+  return (
+    <InfoTip label="About stream first byte">
+      The stream's wait for the first bytes it returned. Not click-to-play time.
+    </InfoTip>
+  );
+}
+
 /** What needs a decision now; each row links to where it is fixed. Renders nothing when all is well. */
 function Attention({ live }: { live?: Live }) {
   const summary = useQuery({ queryKey: ["health", "summary"], queryFn: () => body(api.GET("/api/v1/health/summary")) }).data;
@@ -397,7 +405,9 @@ function Now({ live }: { live: Live }) {
               <TableHead>File</TableHead>
               <TableHead className="hidden w-40 md:table-cell">Position</TableHead>
               <TableHead className="text-right">Rate</TableHead>
-              <TableHead className="hidden text-right sm:table-cell">First byte</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">
+                Stream first byte <FirstByteTip />
+              </TableHead>
               <TableHead className="hidden text-right sm:table-cell">Stalls</TableHead>
             </TableRow>
           </TableHeader>
@@ -476,7 +486,7 @@ const Windowed = memo(function Windowed({ history: h, span }: { history: History
           [
             "Reads",
             count(t.reads),
-            t.first_byte_ms_avg == null ? "none finished" : `first byte ${ms(t.first_byte_ms_avg)} avg`,
+            t.first_byte_ms_avg == null ? "none finished" : `stream first byte ${ms(t.first_byte_ms_avg)} avg`,
             trend(p.map((x) => x.reads), "var(--color-primary)", { bars: true }),
           ],
           [
@@ -808,7 +818,9 @@ const Reads = memo(function Reads({ reads }: { reads: Read[] }) {
                 <TableHead>File</TableHead>
                 <TableHead className="hidden sm:table-cell">Closed</TableHead>
                 <TableHead className="text-right">Read</TableHead>
-                <TableHead className="hidden text-right sm:table-cell">First byte</TableHead>
+                <TableHead className="hidden text-right sm:table-cell">
+                  Stream first byte <FirstByteTip />
+                </TableHead>
                 <TableHead className="hidden text-right sm:table-cell">
                   <span className="inline-flex items-center gap-1">
                     Stalls

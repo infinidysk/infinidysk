@@ -9,6 +9,7 @@ mod connection;
 mod downloads;
 mod missing;
 mod pool;
+mod resolve;
 mod stats;
 mod tls;
 mod usage;
@@ -60,8 +61,8 @@ pub enum Error {
     Unavailable,
     #[error("unexpected server response {code} {reply}")]
     Status { code: u16, reply: Box<str> },
-    #[error("authentication rejected ({code})")]
-    AuthRejected { code: u16 },
+    #[error("authentication rejected ({code} {reply})")]
+    AuthRejected { code: u16, reply: Box<str> },
     #[error("invalid {0}")]
     InvalidArgument(&'static str),
     #[error("tls setup failed")]
@@ -90,8 +91,8 @@ impl Error {
     #[must_use]
     pub fn connect_problem(&self) -> String {
         match self {
-            Self::AuthRejected { code } => {
-                format!("The server rejected the username or password ({code}).")
+            Self::AuthRejected { code, reply } => {
+                format!("The server rejected the username or password: {code} {reply}")
             }
             Self::Timeout => "The server did not answer in time.".to_owned(),
             Self::Closed => "The server closed the connection.".to_owned(),
@@ -115,16 +116,19 @@ impl Error {
         }
     }
 
-    /// Whether the connection is still in a clean command state after this error.
+    /// Whether the connection is still in a clean command state after this error. A 400
+    /// is not: the server ends the session with it.
     #[must_use]
     pub const fn is_connection_reusable(&self) -> bool {
-        matches!(
-            self,
-            Self::NotFound
-                | Self::Status { .. }
-                | Self::InvalidArgument(_)
-                | Self::Yenc(_)
-                | Self::CrcMismatch { .. }
-        )
+        match self {
+            Self::Status { code, .. } => *code != 400,
+            _ => matches!(
+                self,
+                Self::NotFound
+                    | Self::InvalidArgument(_)
+                    | Self::Yenc(_)
+                    | Self::CrcMismatch { .. }
+            ),
+        }
     }
 }

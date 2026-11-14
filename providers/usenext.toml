@@ -1,0 +1,9 @@
+schema = 1
+name = "UseNeXT"
+website = "https://www.usenext.com"
+# Full-speed server only; flat.usenext.de is capped at 2 Mbit/s.
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "high.usenext.de"

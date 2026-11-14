@@ -1,38 +1,41 @@
 # AGENTS.md
 
-Quick-start guide for AI agents working on **infinidysk 2.x**, the from-scratch Rust rewrite of infinidysk on `main`.
-
-The name is always written lowercase: `infinidysk`, even at the start of a sentence. Never "InfiniDysk".
+Rules for AI agents working on **infinidysk 2.x**, the from-scratch Rust rewrite on `main`. Write the name lowercase, `infinidysk`, even at the start of a sentence. Never "InfiniDysk".
 
 ## What this project is
 
 A Usenet-backed virtual filesystem. It imports NZBs from Sonarr/Radarr through a **SABnzbd-compatible API** and serves the media through a **native FUSE mount** and **WebDAV**, streaming directly from Usenet providers without downloading files to disk.
 
-Target: a single Rust binary (tokio, axum, rustls, `fuse3`, sqlx on SQLite + PostgreSQL) with an embedded React + Vite SPA, shipped as a Linux x64/arm64 Docker image on `ubuntu:26.04` (glibc; no musl/Alpine). macOS is for development and benchmarking only. No Windows.
+Target: a single Rust binary (tokio, axum, rustls, `infinidysk-fuse`, sqlx on SQLite + PostgreSQL) with an embedded React + Vite SPA, shipped as a Linux x64/arm64 Docker image on `ubuntu:26.04` (glibc; no musl/Alpine). macOS is for development and benchmarking only. No Windows.
+
+## Load on demand
+
+These files are binding. Read each one only when the task needs it.
+
+| When | Read |
+|------|------|
+| Adding or moving crates, adding cross-crate dependencies, or changing NNTP, stream, pool, permit or prefetch code | [`.agents/skills/infinidysk-crates/SKILL.md`](.agents/skills/infinidysk-crates/SKILL.md) |
+| Writing a commit message, creating a PR or editing a PR title | [`.agents/skills/infinidysk-commits/SKILL.md`](.agents/skills/infinidysk-commits/SKILL.md) |
+| Addressing CodeRabbit, Code Quality or code scanning findings | [`.agents/skills/infinidysk-review-triage/SKILL.md`](.agents/skills/infinidysk-review-triage/SKILL.md) |
+| Adding or changing UI in `ui/` | [`DESIGN.md`](DESIGN.md) |
+| Writing or reviewing Rust, when the `rust-skills` skill is installed | Its `SKILL.md` once per session (it is one file behind several symlinked paths), then only the relevant `rules/` files |
 
 ## The C# 1.x code on `v1` (specification)
 
-| | |
-|---|---|
-| GitHub | [`infinidysk/infinidysk` branch `v1`](https://github.com/infinidysk/infinidysk/tree/v1) |
-| Local checkout (if present) | `../infinidysk` (sibling of this repo, on `v1`) |
-| Stack | .NET 10 backend (`backend/`, namespace `NzbWebDAV`), React Router frontend (`frontend/`), in-tree libs under `libs/` (`UsenetSharp`, `SharpCompress`, `RapidYencSharp`, `rapidyenc` submodule) |
-| Status | **Bug-fix only** (1.x maintenance) |
-
-The plan refers to its files as `infinidysk:<path>` (e.g. `infinidysk:backend/Clients/Usenet/ConnectionPool.cs`); those paths are on `v1`.
-
-Rules for using it:
+The C# 1.x code is on [branch `v1`](https://github.com/infinidysk/infinidysk/tree/v1), checked out at `../infinidysk` when present. It is bug-fix only. The plan cites its files as `infinidysk:<path>`.
 
 - Read C# source and tests as a **specification**. Write idiomatic Rust. No line-by-line ports.
-- **Never modify** `v1` from a task on `main`. Read-only. If you need it and it is not checked out locally, read it via `gh` / the GitHub API (`?ref=v1`).
+- **Never modify** `v1` from a task on `main`. If it is not checked out, read it with `gh` (`?ref=v1`).
 - Behavior that must stay **identical**: SAB API (`/api?mode=…`) and WebDAV paths/semantics (`/view`, `/content`, `/nzbs`, `/.ids`, `/completed-symlinks`). Everything else (schema, blob format, admin API, env vars, UI) is new.
-- Useful starting points in the C# repo: `backend/Clients/Usenet/` (NNTP pool, circuit breaker, streaming client), `backend/Streams/` (multi-segment stream), `backend/Queue/` (NZB/RAR/7z/PAR2), `backend/Api/SabControllers/`, `backend/WebDav/`, `backend/Database/Models/`, `backend.Benchmarks/` (perf scenarios + baselines), `docs/reference/sabnzbd-api.md`, `docs/reference/rfc3977.md`.
+- Starting points: `backend/Clients/Usenet/` (NNTP pool, circuit breaker), `backend/Streams/`, `backend/Queue/`, `backend/Api/SabControllers/`, `backend/WebDav/`, `backend/Database/Models/`, `backend.Benchmarks/`, `docs/reference/sabnzbd-api.md`, `docs/reference/rfc3977.md`.
 
-## Maintainer companion repo
+## Companion repo and scratch space
 
-Decision documents (policies), plans, research, benchmark results and the maintainer workflow live in the private repo [`infinidysk/infinidysk-lab`](https://github.com/infinidysk/infinidysk-lab), checked out at `../infinidysk-lab` when you have access. Code and docs refer to its files as `infinidysk-lab:<path>` (e.g. `infinidysk-lab:docs/health-policy.md` §5.7). When it is present, read its `AGENTS.md` too; it adds to this file. Contributors without access can ignore those references.
+Policies, plans, research, benchmark results and the maintainer workflow live in the private [`infinidysk/infinidysk-lab`](https://github.com/infinidysk/infinidysk-lab) at `../infinidysk-lab`, cited as `infinidysk-lab:<path>`. When it is present, read its `AGENTS.md` too. Contributors without access can ignore those references.
 
-`scrap/` is gitignored local scratch space. Put notes, logs and other files that must not be committed there.
+`scrap/` is gitignored scratch space for notes, logs and files that must not be committed.
+
+**Keep long command output out of the context.** Send cargo, test, docker and benchmark output to a log under `scrap/<task>/` and read back only the tail or the failing lines (`tail -40`, `grep -E '^(error|warning)|FAILED|panicked'`). This applies to background commands too: their full output returns when they finish.
 
 ## Scope rule
 
@@ -59,11 +62,9 @@ When explaining code or systems to the maintainer, use Simple Technical English.
 
 ## Rust guidelines
 
-The maintainer's Rust rules live in the private skill repo [`hoivikaj/rust-skills`](https://github.com/hoivikaj/rust-skills), checked out at `../rust-skills` (sibling of this repo). When it is present, use it when writing or reviewing Rust: read `../rust-skills/SKILL.md`, then open only the files under `../rust-skills/rules/` relevant to the code in front of you. Contributors without access can ignore it; the project rules below are binding either way.
+The maintainer's Rust rules are in the private [`hoivikaj/rust-skills`](https://github.com/hoivikaj/rust-skills) (see Load on demand). Contributors without access can ignore it. The project rules below are binding either way and override rust-skills where they differ.
 
-Project rules (these override rust-skills where they differ):
-
-- Workspace with crates under `crates/<short-name>` (folder `crates/nntp`, package `infinidysk-nntp`); each crate inherits `[workspace.package]`, sets `[lints] workspace = true`, and takes shared dependency versions from `[workspace.dependencies]`. The product binary is `crates/infinidysk`. Create a crate only when code for it exists (see Crate layout).
+- Workspace with crates under `crates/<short-name>` (folder `crates/nntp`, package `infinidysk-nntp`); each crate inherits `[workspace.package]`, sets `[lints] workspace = true`, and takes shared dependency versions from `[workspace.dependencies]`. The product binary is `crates/infinidysk`. Dependencies point downward only. Parsers do no I/O. No traits just for mocking.
 - Release profile: `lto = "fat"`, `codegen-units = 1`, panic **unwind** (never `abort`; the streaming invariants need catchable callback panics).
 - Clippy: `pedantic` baseline minus noisy lints plus selected nursery lints, all set in the root `Cargo.toml`. Prefer fixing over `#[allow]`; any `#[allow]` needs a one-line reason.
 - Edition 2024, toolchain pinned in `rust-toolchain.toml`. Before committing: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`. CI also runs `cargo-deny` (`deny.toml` license allowlist + advisories) and native glibc release builds on Ubuntu 26.04 x64/arm64.
@@ -73,40 +74,8 @@ Project rules (these override rust-skills where they differ):
 - No `unwrap` / `expect` outside tests and provably infallible cases (state the proof in the `expect` message).
 - `thiserror` in library crates, `anyhow` only at the binary edge.
 - `tracing` with structured fields. Never log secrets (provider passwords, API keys, WebDAV credentials).
-- Encode streaming lifecycle invariants (below) as types and `Drop` guards, not conventions.
+- Encode streaming lifecycle invariants as types and `Drop` guards, not conventions (see `infinidysk-crates`).
 - Tests use deterministic generated data and a loopback NNTP server. Never require live Usenet providers in CI.
-
-### Crate layout
-
-Dependencies point downward only. Parsers do no I/O. No traits just for mocking.
-
-| Layer | Crate | Owns |
-|-------|-------|------|
-| L0 pure (no tokio) | `core` | ids, byte ranges, metadata types, versioned zstd blob format |
-| | `yenc` | rapidyenc FFI; the only `unsafe` crate |
-| | `archive` | stored-member headers for RAR4/RAR5/7z, multipart |
-| | `par2` | PAR2 parse, verify, repair |
-| L1 | `nntp` | provider pool, circuit breaker, download permits, lifecycle guards |
-| | `db` | sqlx, SQLite + PostgreSQL, per-backend migrations; one runtime SQL string per query (`$N` placeholders, portable SQL; PostgreSQL-only row locks such as `FOR UPDATE` run behind a backend check) |
-| | `arr` | Arr HTTP client: profiles, system status, SAB download-client discovery, repair calls |
-| L2 | `stream` | multi-segment seekable stream, prefetch |
-| L3 | `vfs` | tree shared by WebDAV and FUSE: lookup, listing, `/.ids`, `/completed-symlinks`, read handles |
-| | `queue` | NZB → archive/multipart → PAR2 → items |
-| | `health` | health checks and repair |
-| L4 | `webdav` | axum WebDAV |
-| | `fuse` | `fuse3` mount; Linux only (`cfg(target_os = "linux")`), so macOS dev builds skip it |
-| bin | `infinidysk` | lib + thin `main.rs`: config, auth, SAB API, admin API, embedded UI |
-| side | `import` | one-time C# `/config` importer (deletable) |
-| | `testkit` | loopback NNTP server, seed-1025 corpus (dev-dependency only) |
-| | `bench` | benchmarks with C# scenario names |
-
-### Streaming lifecycle invariants
-
-- Every BODY/ARTICLE completion fires **exactly once**, including cancellation, missing articles, setup failures and stream failures.
-- Outcomes: `Retrieved` (success, connection reusable), `Cancelled` (drained cleanly, reusable), `NotFound` (clean server miss), `NotRetrieved` (connection must be replaced).
-- Completion releases both the provider-pool lease and the global download permit. Callback panics/errors must not fault transport tasks.
-- Pipelined batch responses complete in request order. Mixed cache-hit batches request only misses while preserving order.
-- Fallback transfers within a batch start in response order and stay bounded; unordered permit acquisition can deadlock sequential consumers.
 
 ### Performance
 
@@ -116,53 +85,12 @@ Playback performance has priority over memory usage. Never trade throughput or p
 
 Known failures (provider errors, missing articles, timeouts, auth failures, missing `/dev/fuse`, …) log as **one human-friendly warning** with a `reason` field and no backtrace. Full error chains/backtraces are for unexpected errors only (optionally `debug!` the chain for known failures). An unhandled stack dump for a known failure is a defect; a remediation plan must include the logging fix.
 
-## Commit conventions (required)
+## Commits and PRs (required)
 
-[Conventional Commits](https://www.conventionalcommits.org/), consumed by release-please:
-
-```
-<type>(<scope>): <short imperative description>
-```
-
-| Type | Use for |
-|------|---------|
-| `feat` | New user-visible behavior |
-| `fix` | Bug fixes, regressions, compatibility fixes |
-| `perf` | Performance-only improvements |
-| `refactor` | Internal restructuring worth a release note (rare; prefer `chore`) |
-| `build` | Packaging operators care about (otherwise `chore(docker)` / `chore(build)`) |
-| `revert` | Reverts |
-| `chore` | **All** non-behavior work: CI, tests only, docs, `AGENTS.md`, skills, tooling, repo hygiene |
-
-- Do not use bare `docs` / `ci` / `test` / `tests` types; use `chore(<scope>)`. Any change that does not alter application behavior is `chore` on both the commit and the PR title, so release-please leaves it out of release notes.
-- **Breaking changes** (user-visible breaks, irreversible/destructive migrations) must use `!` and/or a `BREAKING CHANGE:` footer. Routine additive migrations are plain `feat(db)` / `fix(db)` with a "back up config before upgrading" note in the PR.
-- `chore(main): release …` is reserved for release-please. Never edit `CHANGELOG.md` by hand.
-- Small, focused commits; one logical change each. No vague messages (`wip`, `fix bug`), no unrelated changes in one commit.
-
-Scopes (pick the smallest accurate one; omit only for small cross-cutting changes): `nntp`, `yenc`, `stream`, `archive`, `par2`, `queue`, `sab`, `webdav`, `mount`, `db`, `import`, `api`, `auth`, `health`, `ui`, `deps`, `ci`, `docs`, `test`, `agents`, `skills`, `docker`.
-
-Examples:
-
-```
-feat(queue): verify and repair multipart sets with PAR2
-fix(webdav): return 416 for range requests past the end of a file
-perf(stream): prefetch the next segments before the reader asks
-feat(db)!: rewrite the item schema
-chore(ci): cache the rapidyenc build
-chore(agents): require conventional PR titles
-```
-
-### PR titles
-
-PR titles use the same `<type>(<scope>): <description>` format as commits; release-please and the PR list rely on it. Never write a PR title without the type prefix. Write the description for **end users**: what is fixed or introduced from their point of view, not how. Commit messages carry the technical detail.
-
-| Commit message (technical) | PR title (user-facing) |
-|----------------------------|------------------------|
-| `fix(nntp): count a dropped provider connection as one failure` | `fix(nntp): one dropped connection no longer shows up as several provider errors` |
-| `fix(api): count only failures the caller sees as errors` | `fix(ui): overview errors only count failures you would notice` |
-| `fix(webdav): clamp infinite-depth PROPFIND to depth 1` | `fix(webdav): prevent mounts hanging on large directory listings` |
-
-For changes with no user-visible effect (`chore`, internal refactors) a concise technical title is fine.
+- [Conventional Commits](https://www.conventionalcommits.org/) for commits and PR titles: `<type>(<scope>): <short imperative description>`. release-please reads them.
+- PR titles describe the change for **end users**; commit messages carry the technical detail.
+- Non-behavior work (CI, tests, docs, `AGENTS.md`, skills, tooling) is `chore(<scope>)`; never bare `docs` / `ci` / `test`. Breaking changes use `!`. Never edit `CHANGELOG.md` by hand.
+- Types, scopes and examples: `infinidysk-commits` (see Load on demand).
 
 ## Never write media titles
 
@@ -172,8 +100,6 @@ We cannot verify which media is public domain. **Never** write movie, show, epis
 
 Agents never merge PRs, in this repo or any infinidysk repo: no `gh pr merge`, no UI/API merge, no auto-merge. Opening the PR and reporting its URL ends the handoff. Never force-push shared branches or amend pushed commits.
 
-## Addressing CodeRabbit reviews
+## Addressing reviews
 
-When you address a CodeRabbit review, reply to every comment with what you fixed (with the commit) or why you skipped or declined it. Then resolve **every** CodeRabbit thread, including the ones you skipped or declined, so CodeRabbit can review again. After resolving, check that no CodeRabbit thread is still open, for example with the `reviewThreads { isResolved }` GraphQL query and `resolveReviewThread`. Also check the PR review state before handoff: resolving threads does not dismiss a changes-requested review. If it still blocks the PR, request another review or report the blocker for an authorized maintainer to address. Never dismiss a review just to bypass protection.
-
-In the same pass, address every GitHub Code Quality and Advanced Security (code scanning) finding reported on the PR. Wait for the current commit's quality and security analyses to finish, then list all open alerts with `gh api --paginate "repos/<owner>/<repo>/code-scanning/alerts?ref=refs/pull/<n>/merge&state=open"` and read the PR's review threads from the GitHub bots. Fix each finding, or dismiss it with a stated reason when it is a false positive or will not be fixed. Then resolve its PR thread, when present. After pushing fixes, wait for that commit's analyses and repeat triage. If analysis cannot finish, report the pass as incomplete.
+When you address CodeRabbit, Code Quality or code scanning findings, follow `infinidysk-review-triage` (see Load on demand). In short: reply to and resolve every thread, triage every open alert, and never dismiss a review just to bypass protection.

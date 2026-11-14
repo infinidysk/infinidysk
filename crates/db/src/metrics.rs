@@ -19,7 +19,8 @@ const DAY_MS: i64 = 24 * HOUR_MS;
 const KEEP_MINUTES_MS: i64 = 7 * DAY_MS;
 const KEEP_HOURS_MS: i64 = 400 * DAY_MS;
 const KEEP_SESSIONS_MS: i64 = 90 * DAY_MS;
-const KEEP_EVENTS_MS: i64 = 7 * DAY_MS;
+// Outages draw beside the hour rows in every window, so they last as long.
+const KEEP_EVENTS_MS: i64 = KEEP_HOURS_MS;
 
 const UPSERT_COUNTER: &str = "INSERT INTO counters (grain, ts, key, value) VALUES ($1, $2, $3, $4) \
     ON CONFLICT (grain, ts, key) DO UPDATE SET value = CASE WHEN excluded.key LIKE 'peak.%' \
@@ -27,6 +28,9 @@ const UPSERT_COUNTER: &str = "INSERT INTO counters (grain, ts, key, value) VALUE
 const UPSERT_LIFETIME: &str = "INSERT INTO lifetime (key, value) VALUES ($1, $2) \
     ON CONFLICT (key) DO UPDATE SET value = CASE WHEN excluded.key LIKE 'peak.%' \
     THEN MAX(lifetime.value, excluded.value) ELSE lifetime.value + excluded.value END";
+// `+at` stops SQLite scanning the `at` index for order instead of searching the end index.
+const BREAKER_EVENTS: &str = "SELECT at, provider_key, provider, open_ms FROM breaker_events \
+    WHERE at + open_ms >= $1 ORDER BY +at DESC";
 
 /// Row resolution: minutes are kept 7 days, hours about 13 months.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +104,11 @@ pub struct Usage {
 #[derive(Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
 pub struct BreakerEvent {
     pub at: i64,
+    /// `None` on events stored before keys were.
+    pub provider_key: Option<String>,
+    /// Display name when it opened.
     pub provider: String,
+    /// How long it stayed open.
     pub open_ms: i64,
 }
 
@@ -176,7 +184,8 @@ impl Metrics {
         crate::sqlite_compact(&self.pool).await
     }
 
-    /// Adds one minute of counter deltas (zeros skipped) and finished reads.
+    /// Adds one minute of counter deltas (zeros skipped), finished reads and outages. An
+    /// outage written again with the same key and start keeps the longer length.
     pub async fn write(
         &self,
         minute_ms: i64,
@@ -242,19 +251,25 @@ impl Metrics {
             .await?;
         }
         for e in events {
-            sqlx::query("INSERT INTO breaker_events (at, provider, open_ms) VALUES ($1, $2, $3)")
-                .bind(e.at)
-                .bind(&e.provider)
-                .bind(e.open_ms)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO breaker_events (at, provider_key, provider, open_ms) \
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (provider_key, at) DO UPDATE SET provider = excluded.provider, \
+                 open_ms = MAX(open_ms, excluded.open_ms)",
+            )
+            .bind(e.at)
+            .bind(&e.provider_key)
+            .bind(&e.provider)
+            .bind(e.open_ms)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         Ok(())
     }
 
-    /// Drops minute rows after 7 days, hour rows after about 13 months, reads after 90
-    /// days and breaker events after 7 days. Lifetime totals stay.
+    /// Drops minute rows after 7 days, hour rows and breaker events after about 13
+    /// months and reads after 90 days. Lifetime totals stay.
     pub async fn prune(&self, now_ms: i64) -> Result<(), Error> {
         let _writing = self.writes.read().await;
         let mut tx = self.pool.begin().await?;
@@ -401,14 +416,12 @@ impl Metrics {
             .collect())
     }
 
-    /// Breaker openings since `since_ms`, newest first.
+    /// Breaker openings still open at or after `since_ms`, newest first.
     pub async fn breaker_events(&self, since_ms: i64) -> Result<Vec<BreakerEvent>, Error> {
-        Ok(sqlx::query_as(
-            "SELECT at, provider, open_ms FROM breaker_events WHERE at >= $1 ORDER BY at DESC",
-        )
-        .bind(since_ms)
-        .fetch_all(&self.pool)
-        .await?)
+        Ok(sqlx::query_as(BREAKER_EVENTS)
+            .bind(since_ms)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     /// Sum of counters starting with `prefix` in `grain` rows from `from_ms` up to `to_ms`.
@@ -517,4 +530,36 @@ fn files(path: &Path) -> [PathBuf; 3] {
         PathBuf::from(name)
     };
     [path.to_path_buf(), with("-wal"), with("-shm")]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn outage_lookups_search_their_index() {
+        let path =
+            std::env::temp_dir().join(format!("infinidysk-metrics-{}.sqlite", Uuid::new_v4()));
+        let metrics = Metrics::open(&path).await.expect("open");
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {BREAKER_EVENTS}"
+        )))
+        .bind(0_i64)
+        .fetch_all(&metrics.pool)
+        .await
+        .expect("plan");
+        let plan: Vec<_> = plan.into_iter().map(|row| row.3).collect();
+        assert_eq!(
+            plan,
+            [
+                "SEARCH breaker_events USING INDEX breaker_events_end (<expr>>?)",
+                "USE TEMP B-TREE FOR ORDER BY"
+            ]
+        );
+
+        metrics.close().await;
+        for file in files(&path) {
+            let _ = std::fs::remove_file(file);
+        }
+    }
 }

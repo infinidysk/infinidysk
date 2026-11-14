@@ -386,7 +386,7 @@ function ReadHistory({ id }: { id: string }) {
         <>
           <p>
             {list.length} {list.length === 1 ? "open" : "opens"} · {bytes(served)} read
-            {waits.length > 0 && ` · first byte ${firstByte(waits[Math.floor(waits.length / 2)]!)} median`}
+            {waits.length > 0 && ` · stream first byte ${firstByte(waits[Math.floor(waits.length / 2)]!)} median`}
             {stalls > 0 && <span className="text-warning-text"> · {stallCount(stalls)}</span>}
           </p>
           <ul className="mt-1 space-y-0.5">

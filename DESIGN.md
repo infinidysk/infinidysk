@@ -404,6 +404,7 @@ Fonts: **Geist Variable** for UI text and **Geist Mono Variable** for technical 
 
 - From `lg` (1024px): a 224px sidebar (`w-56 bg-sidebar border-r`), sticky at full height. Top to bottom: the 48px brand row (`border-b px-4`; the wordmark is lowercase `infinidysk` with `dysk` in `text-primary`, as on the docs site), primary nav (scrolls when the window is short), and a footer (`border-t p-2`) with the live status block, the account menu and the version link.
 - Below `lg`: a sticky 48px top bar (`bg-sidebar border-b z-30`) with the brand and a menu button; the menu opens inline below it with the same nav, status, account and version, and scrolls within the viewport.
+- The live maintenance row shows the job title above a wrapping step label, with a non-shrinking count or percentage at the right. Neither label is truncated.
 - Main column: `mx-auto w-full max-w-6xl px-4 py-6 lg:px-8 lg:py-8`. App-wide banners (library conversion) render at the top of main; each page renders inside an error boundary keyed by route.
 
 ### Page anatomy

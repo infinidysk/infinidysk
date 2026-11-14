@@ -963,7 +963,8 @@ macro_rules! release_nzb {
 }
 
 /// Deletes item `$id` (a `Uuid`), its subtree, the job folders this leaves empty, and the
-/// blobs nothing references anymore, in `$tx`.
+/// blobs nothing references anymore, in `$tx`. Evaluates to how many of `$id` and the
+/// folders above it went.
 macro_rules! delete_subtree {
     ($db:expr, $tx:ident, $id:expr) => {{
         let id: Uuid = $id;
@@ -977,10 +978,11 @@ macro_rules! delete_subtree {
                 .fetch_optional(&mut *$tx)
                 .await?
                 .flatten();
-        sqlx::query("DELETE FROM items WHERE id = $1")
+        let mut removed = sqlx::query("DELETE FROM items WHERE id = $1")
             .bind(id)
             .execute(&mut *$tx)
-            .await?;
+            .await?
+            .rows_affected();
         let (mut meta, mut nzbs): (Vec<Uuid>, Vec<Uuid>) = (Vec::new(), Vec::new());
         for (m, n) in refs {
             meta.extend(m);
@@ -989,6 +991,7 @@ macro_rules! delete_subtree {
         // Climb empty folders to the job folder (the one carrying the NZB) and delete it
         // with them; an empty chain that ends anywhere else (a category) stays.
         let mut below = id;
+        let mut climbed = 0;
         while let Some(dir) = parent {
             let empty: Option<(Option<Uuid>, Option<Uuid>)> = sqlx::query_as(EMPTY_DIR)
                 .bind(dir)
@@ -996,12 +999,14 @@ macro_rules! delete_subtree {
                 .fetch_optional(&mut *$tx)
                 .await?;
             let Some((up, nzb)) = empty else { break };
+            climbed += 1;
             if let Some(nzb) = nzb {
                 sqlx::query("DELETE FROM items WHERE id = $1")
                     .bind(dir)
                     .execute(&mut *$tx)
                     .await?;
                 nzbs.push(nzb);
+                removed += climbed;
                 break;
             }
             (below, parent) = (dir, up);
@@ -1019,6 +1024,7 @@ macro_rules! delete_subtree {
         for blob in nzbs {
             release_nzb!($db, $tx, blob);
         }
+        removed
     }};
 }
 
@@ -2001,37 +2007,30 @@ impl Db {
         Ok(deleted)
     }
 
-    /// Deletes the empty folders below `/content/<category>` created before `before`
-    /// that no download in history holds, and the folders that leaves empty up to their
-    /// job folder. Returns how many folders it found empty.
+    /// Deletes one batch of the empty folders below `/content/<category>` created before
+    /// `before` that no download in history holds, and the folders that leaves empty up to
+    /// their job folder. Returns how many folders went; 0 once none is left.
     pub async fn delete_empty_dirs(&self, before: i64) -> Result<u64, Error> {
-        let mut removed = 0;
-        loop {
-            let found = on!(self, pool => {
-                let any: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
-                    .bind(before)
-                    .fetch_all(pool)
-                    .await?;
-                if any.is_empty() {
-                    0
-                } else {
-                    let mut tx = pool.begin_with(self.begin_write()).await?;
-                    let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
-                        .bind(before)
-                        .fetch_all(&mut *tx)
-                        .await?;
-                    for &dir in &dirs {
-                        delete_subtree!(self, tx, dir);
-                    }
-                    tx.commit().await?;
-                    dirs.len() as u64
-                }
-            });
-            if found == 0 {
-                break;
+        let removed = on!(self, pool => {
+            let any: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                .bind(before)
+                .fetch_all(pool)
+                .await?;
+            if any.is_empty() {
+                return Ok(0);
             }
-            removed += found;
-        }
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                .bind(before)
+                .fetch_all(&mut *tx)
+                .await?;
+            let mut removed = 0;
+            for &dir in &dirs {
+                removed += delete_subtree!(self, tx, dir);
+            }
+            tx.commit().await?;
+            removed
+        });
         if removed > 0 {
             self.notify(Change::History);
         }
@@ -3287,19 +3286,28 @@ impl Db {
             .unwrap_or_default())
     }
 
-    /// Asks for an analysis of `id`; a pending request keeps its place.
-    pub async fn request_media_probe(&self, id: ItemId, now: i64) -> Result<(), Error> {
-        let sql = "INSERT INTO media_probes (item_id, requested_at) VALUES ($1, $2) \
+    /// Asks for an analysis of `id`; a pending request keeps its place. `false` if the
+    /// item is gone.
+    pub async fn request_media_probe(&self, id: ItemId, now: i64) -> Result<bool, Error> {
+        let sql = "INSERT INTO media_probes (item_id, requested_at) \
+                   SELECT $1, $2 WHERE EXISTS (SELECT 1 FROM items WHERE id = $1) \
                    ON CONFLICT (item_id) DO UPDATE \
                    SET requested_at = COALESCE(media_probes.requested_at, excluded.requested_at)";
-        on!(self, pool => sqlx::query(sql)
+        let result = on!(self, pool => sqlx::query(sql)
             .bind(id.0)
             .bind(now)
             .execute(pool)
-            .await?
-            .rows_affected());
-        self.notify(Change::Health);
-        Ok(())
+            .await
+            .map(|r| r.rows_affected()));
+        let accepted = match result {
+            Ok(rows) => rows > 0,
+            Err(e) if probe_item_gone(&e) => false,
+            Err(e) => return Err(e.into()),
+        };
+        if accepted {
+            self.notify(Change::Health);
+        }
+        Ok(accepted)
     }
 
     /// The oldest pending analysis of a file that is not being repaired or replaced, with
@@ -3366,7 +3374,7 @@ impl Db {
                    defect_size = excluded.defect_size, defect_seen_at = excluded.defect_seen_at, \
                    defect_source = excluded.defect_source, \
                    structural_hold = excluded.structural_hold";
-        on!(self, pool => sqlx::query(sql)
+        let result = on!(self, pool => sqlx::query(sql)
             .bind(id.0)
             .bind(defect.map(|d| d.offset.cast_signed()))
             .bind(defect.map(|d| d.size.cast_signed()))
@@ -3374,10 +3382,25 @@ impl Db {
             .bind(defect.map(|d| d.source))
             .bind(i16::from(hold))
             .execute(pool)
-            .await?
-            .rows_affected());
-        Ok(())
+            .await
+            .map(|r| r.rows_affected()));
+        match result {
+            Err(e) if !probe_item_gone(&e) => Err(e.into()),
+            _ => Ok(()),
+        }
     }
+}
+
+/// PostgreSQL READ COMMITTED can pass the `EXISTS` guard while a concurrent delete of the
+/// item commits; the FK check then fails, which means the item is gone.
+fn probe_item_gone(e: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(e) = e else {
+        return false;
+    };
+    e.try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+        .is_some_and(|pg| {
+            pg.code() == "23503" && pg.constraint() == Some("media_probes_item_id_fkey")
+        })
 }
 
 /// Unix milliseconds now.

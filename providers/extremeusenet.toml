@@ -1,0 +1,8 @@
+schema = 1
+name = "Extreme Usenet"
+website = "https://www.extremeusenet.nl"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.extremeusenet.nl"

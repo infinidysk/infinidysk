@@ -1,0 +1,9 @@
+schema = 1
+name = "Premium News (Gold/Platin)"
+website = "https://www.premium-news.com"
+# Gold/Platin server only; the Silber server (news.premium-news.net) has a self-signed certificate.
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.premium-news.de"

@@ -659,7 +659,8 @@ impl Maintenance {
         if run.only.is_none() && report.unlinked * 100 > report.checked * HOLD_PERCENT {
             return Err(Stop::Held);
         }
-        if run.dry_run || report.files.is_empty() {
+        // With no files left, a stopped run's empty folders still go.
+        if run.dry_run {
             return Ok(());
         }
 
@@ -688,7 +689,17 @@ impl Maintenance {
             live.done(n);
         }
         live.step("Removing empty folders", None);
-        report.folders_removed = self.parts.db.delete_empty_dirs(report.at_ms).await?;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(Stop::Cancelled);
+            }
+            let removed = self.parts.db.delete_empty_dirs(report.at_ms).await?;
+            if removed == 0 {
+                break;
+            }
+            report.folders_removed += removed;
+            live.done(report.folders_removed);
+        }
         self.parts.handoff.sweep(&self.parts.db).await;
         Ok(())
     }

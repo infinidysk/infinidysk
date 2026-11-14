@@ -529,7 +529,7 @@ function Diagnostics({
               </Row>
               <Row label="Served">{bytes(served)}</Row>
               <Row label="Rate">{rate(throughput)}</Row>
-              <Row label="First byte">{current.first_byte_ms == null ? "–" : `${current.first_byte_ms} ms`}</Row>
+              <Row label="Stream first byte">{current.first_byte_ms == null ? "–" : `${current.first_byte_ms} ms`}</Row>
               <Row label="Stalls">
                 {stalls} · {(stallMs / 1000).toFixed(1)} s
               </Row>

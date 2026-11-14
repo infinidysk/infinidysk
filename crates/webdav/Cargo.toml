@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 axum = { workspace = true, features = ["http1", "query", "tokio"] }
 base64.workspace = true
+futures-util.workspace = true
 hmac.workspace = true
 httpdate.workspace = true
 infinidysk-db.workspace = true
@@ -33,6 +34,7 @@ infinidysk-stream.workspace = true
 infinidysk-testkit.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 tower.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

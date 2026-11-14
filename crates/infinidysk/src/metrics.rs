@@ -23,7 +23,7 @@ use infinidysk_db::metrics::{
 use infinidysk_health::Health;
 use infinidysk_nntp::{Client, LATENCY_BUCKETS, Phase, ProviderStats, Workload};
 use infinidysk_queue::Queue;
-use infinidysk_stream::Cache;
+use infinidysk_stream::{Cache, CacheStats};
 use infinidysk_vfs::{Delivery, Kernel, Session, Vfs};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
@@ -37,6 +37,10 @@ use crate::admin::{Admin, Fail};
 
 const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 const SAMPLES_PER_MINUTE: usize = 30;
+/// Swap and `/proc/self/status` are read this often, not every sample.
+const SLOW_READ_EVERY: Duration = Duration::from_mins(1);
+/// Memory samples kept for support packs: 10 minutes at [`SAMPLE_EVERY`].
+const RESOURCE_SAMPLES: usize = 300;
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
 const DAY_MS: i64 = 24 * HOUR_MS;
@@ -88,8 +92,8 @@ struct Sampled {
     /// Counters since start at the last sample.
     last: HashMap<String, u64>,
     last_at: Option<Instant>,
-    /// Keys of providers whose breaker was open at the last sample.
-    open: HashSet<String>,
+    /// Providers whose breaker is open, by key.
+    open: HashMap<String, Outage>,
     /// Bytes served per open read at the last sample.
     served: HashMap<u64, u64>,
     /// Bytes each provider delivered per open read at the last sample.
@@ -104,6 +108,12 @@ struct Sampled {
     /// Since when the kernel holds a full background window of FUSE requests we have not
     /// received, and whether that was logged.
     kernel_queued: Option<(Instant, bool)>,
+    /// The last [`SlowRead`].
+    slow: Option<SlowRead>,
+    /// Memory evidence per sample, newest last.
+    resources: VecDeque<ResourceSample>,
+    /// Why the last sample had no resources.
+    resources_unavailable: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -192,7 +202,12 @@ struct LiveImport {
     eta_ms: Option<u64>,
 }
 
-/// CPU and memory of infinidysk's cgroup: the whole container under Docker.
+/// CPU and memory of infinidysk's cgroup (the whole container under Docker), and of this
+/// process alone in `process_memory`. Apart from `cgroup_swap_bytes`, `cgroup_<kind>_bytes`
+/// are the kinds in the cgroup's `memory.stat`, none when this kernel does not report one.
+/// They overlap, so never add them to each other or to the `memory_*` fields: `kernel`
+/// includes `slab`, `slab` includes `slab_reclaimable`, `anon_thp` is part of `anon` and
+/// `file` includes `shmem`.
 #[derive(Clone, Copy, Serialize, ToSchema)]
 struct Resources {
     /// Cores busy on average since the previous sample; none on the first.
@@ -212,6 +227,191 @@ struct Resources {
     memory_limit_bytes: u64,
     /// Whether `memory_limit_bytes` is a cgroup limit rather than the host's memory.
     memory_limited: bool,
+    /// Sum of the segment lengths the in-memory cache holds, not capped like
+    /// `memory_segment_cache_bytes`. Logical bytes, not resident memory.
+    segment_cache_logical_bytes: u64,
+    /// Configured size of the in-memory segment cache, also while it is off.
+    segment_cache_capacity_bytes: u64,
+    cgroup_anon_bytes: Option<u64>,
+    cgroup_file_bytes: Option<u64>,
+    cgroup_kernel_bytes: Option<u64>,
+    cgroup_sock_bytes: Option<u64>,
+    cgroup_slab_bytes: Option<u64>,
+    cgroup_slab_reclaimable_bytes: Option<u64>,
+    cgroup_anon_thp_bytes: Option<u64>,
+    cgroup_shmem_bytes: Option<u64>,
+    /// `memory.swap.current`, read once a minute with `process_memory` (at its `at`); none
+    /// without swap accounting. Swap in use shows what was swapped out at some point, not
+    /// that anything waits on it now; `memory_pressure` shows stalls.
+    cgroup_swap_bytes: Option<u64>,
+    /// `memory.events`, read every sample; none when unreadable.
+    memory_events: Option<MemoryEvents>,
+    /// `memory.pressure` (PSI), read every sample; none when unreadable, or when this
+    /// kernel has no PSI.
+    memory_pressure: Option<MemoryPressure>,
+    process_memory: ProcessMemory,
+}
+
+/// The cgroup's `memory.events`: cumulative counts since the cgroup was created, so
+/// compare two samples. `high` and `max` count throttling and reclaim at those limits,
+/// `oom_kill` processes killed. None for a key this kernel does not report.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
+struct MemoryEvents {
+    low: Option<u64>,
+    high: Option<u64>,
+    max: Option<u64>,
+    oom: Option<u64>,
+    oom_kill: Option<u64>,
+}
+
+impl MemoryEvents {
+    fn parse(text: &str) -> Self {
+        Self {
+            low: stat_field(text, "low"),
+            high: stat_field(text, "high"),
+            max: stat_field(text, "max"),
+            oom: stat_field(text, "oom"),
+            oom_kill: stat_field(text, "oom_kill"),
+        }
+    }
+}
+
+/// The cgroup's `memory.pressure` (pressure stall information).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, ToSchema)]
+struct MemoryPressure {
+    /// Some tasks stalled on memory: reclaim, swap-in, refaults.
+    some: Option<Psi>,
+    /// All non-idle tasks stalled on memory at once.
+    full: Option<Psi>,
+}
+
+impl MemoryPressure {
+    fn parse(text: &str) -> Self {
+        let line = |kind: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(kind)?.strip_prefix(' '))
+                .and_then(Psi::parse)
+        };
+        Self {
+            some: line("some"),
+            full: line("full"),
+        }
+    }
+}
+
+/// One pressure line: percent of wall time stalled, averaged by the kernel over 10, 60 and
+/// 300 s, and `total_us` stalled since the cgroup was created (cumulative).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+struct Psi {
+    avg10: f64,
+    avg60: f64,
+    avg300: f64,
+    total_us: u64,
+}
+
+impl Psi {
+    /// `avg10=0.00 avg60=0.00 avg300=0.00 total=0`.
+    fn parse(fields: &str) -> Option<Self> {
+        let field = |key: &str| {
+            fields
+                .split_whitespace()
+                .find_map(|f| f.strip_prefix(key)?.strip_prefix('='))
+        };
+        Some(Self {
+            avg10: field("avg10")?.parse().ok()?,
+            avg60: field("avg60")?.parse().ok()?,
+            avg300: field("avg300")?.parse().ok()?,
+            total_us: field("total")?.parse().ok()?,
+        })
+    }
+}
+
+/// Memory evidence of one sample, for support packs.
+#[derive(Clone, Copy, Serialize)]
+struct ResourceSample {
+    /// When it was sampled, Unix milliseconds.
+    at: i64,
+    /// `memory.current`: the process, the kernel for it, and page cache.
+    memory_current_bytes: u64,
+    memory_kernel_cache_bytes: u64,
+    /// `memory.max`, or the host's memory when that is lower or unset.
+    memory_limit_bytes: u64,
+    memory_limited: bool,
+    /// `memory.swap.current` as read at `swap_at` (once a minute), not at `at`.
+    swap_bytes: Option<u64>,
+    swap_at: i64,
+    events: Option<MemoryEvents>,
+    pressure: Option<MemoryPressure>,
+}
+
+/// The last 10 minutes of memory evidence.
+#[derive(Serialize)]
+pub struct ResourceHistory {
+    sample_every_ms: u64,
+    max_samples: usize,
+    /// Why the newest sample had no resources; samples stop while this is set.
+    unavailable: Option<String>,
+    notes: &'static str,
+    /// Oldest first.
+    samples: Vec<ResourceSample>,
+}
+
+const RESOURCE_NOTES: &str = "memory.events counters and PSI total_us are cumulative since \
+    the cgroup was created: compare samples. PSI avg10/avg60/avg300 are percentages the \
+    kernel averages itself. Swap is read once a minute at swap_at. Swap in use does not show \
+    that anything waits on memory now; only pressure does. null means the file was missing \
+    or unreadable (no PSI in this kernel, or no swap accounting).";
+
+impl ResourceSample {
+    fn of(at: i64, r: &Resources) -> Self {
+        Self {
+            at,
+            memory_current_bytes: r.memory_process_bytes + r.memory_kernel_cache_bytes,
+            memory_kernel_cache_bytes: r.memory_kernel_cache_bytes,
+            memory_limit_bytes: r.memory_limit_bytes,
+            memory_limited: r.memory_limited,
+            swap_bytes: r.cgroup_swap_bytes,
+            swap_at: r.process_memory.at,
+            events: r.memory_events,
+            pressure: r.memory_pressure,
+        }
+    }
+}
+
+impl Resources {
+    /// Fills in the in-memory segment cache fields from `cache`.
+    fn set_segment_cache(&mut self, cache: &CacheStats) {
+        self.memory_segment_cache_bytes = cache.memory_bytes.min(self.memory_process_bytes);
+        self.memory_segment_cache_limit_bytes = if cache.memory_enabled {
+            cache.memory_capacity
+        } else {
+            0
+        };
+        self.segment_cache_logical_bytes = cache.memory_bytes;
+        self.segment_cache_capacity_bytes = cache.memory_capacity;
+    }
+}
+
+/// This process alone, from `/proc/self/status` once a minute; none for a line this kernel
+/// does not report.
+#[derive(Clone, Copy, Default, Serialize, ToSchema)]
+struct ProcessMemory {
+    /// When it was read, Unix milliseconds.
+    at: i64,
+    /// Since the process last started; a restart from the UI resets it.
+    uptime_ms: u64,
+    /// `VmRSS`.
+    rss_bytes: Option<u64>,
+    /// `RssAnon`: the heap and other anonymous memory.
+    rss_anon_bytes: Option<u64>,
+    /// `RssFile`: mapped files such as the binary.
+    rss_file_bytes: Option<u64>,
+    /// `VmHWM`: the most `rss_bytes` has been since the process last started.
+    rss_peak_bytes: Option<u64>,
+    /// `VmSwap`.
+    swap_bytes: Option<u64>,
+    /// `Threads`.
+    threads: Option<u32>,
 }
 
 #[derive(Clone, Serialize, ToSchema)]
@@ -226,6 +426,8 @@ struct LiveRead {
     position: u64,
     served: u64,
     bps: u64,
+    /// Stream wait of the first read that returned bytes. Excludes FUSE ordering and
+    /// handle-lock waits and time before that read; not click-to-play time.
     first_byte_ms: Option<u64>,
     stalls: u64,
     stall_ms: u64,
@@ -235,6 +437,8 @@ struct LiveRead {
     budget_bytes: u64,
     /// How long the reader has waited for data; none while it is not waiting.
     waiting_ms: Option<u64>,
+    /// FUSE file handle, once the open replied.
+    handle: Option<u64>,
     /// FUSE requests on this read not answered yet, oldest first.
     pending: Vec<LivePending>,
     /// The segment the reader is blocked on.
@@ -266,11 +470,16 @@ struct LiveFuse {
 
 #[derive(Clone, Serialize, ToSchema)]
 struct LivePending {
+    /// FUSE request id, as in trace `request` events.
+    request: u64,
     offset: u64,
     size: u32,
+    /// Since the request reached the daemon.
     age_ms: u64,
     /// `order` (behind earlier reads of the handle), `handle_lock` or `read`.
     stage: &'static str,
+    /// Time in `stage`.
+    stage_ms: u64,
 }
 
 #[derive(Clone, Serialize, ToSchema)]
@@ -424,6 +633,8 @@ struct ProviderPoint {
     bytes: u64,
     failures: u64,
     missing: u64,
+    /// Circuit breaker openings.
+    trips: u64,
 }
 
 #[derive(Default, Serialize, ToSchema)]
@@ -581,8 +792,57 @@ struct AppUsage {
 #[derive(Serialize, ToSchema)]
 struct BreakerView {
     at: i64,
+    /// The provider's key; none on outages stored before keys were.
+    provider_key: Option<String>,
+    /// Display name when it opened.
     provider: String,
+    /// How long it stayed open; up to now while it still is.
     open_ms: i64,
+}
+
+/// A provider's open breaker, since `at`.
+#[derive(Clone)]
+struct Outage {
+    at: i64,
+    name: String,
+}
+
+/// Starts outages for providers in `now_open` (key, name) and ends the rest at `at`.
+fn track_outages<'a>(
+    open: &mut HashMap<String, Outage>,
+    now_open: impl IntoIterator<Item = (&'a str, &'a str)>,
+    at: i64,
+) -> Vec<BreakerEvent> {
+    let now_open: HashSet<&str> = now_open
+        .into_iter()
+        .map(|(key, name)| {
+            open.entry(key.to_owned()).or_insert_with(|| Outage {
+                at,
+                name: name.to_owned(),
+            });
+            key
+        })
+        .collect();
+    let mut ended = Vec::new();
+    open.retain(|key, o| {
+        let still = now_open.contains(key.as_str());
+        if !still {
+            ended.push(o.event(key, at));
+        }
+        still
+    });
+    ended
+}
+
+impl Outage {
+    fn event(&self, key: &str, now: i64) -> BreakerEvent {
+        BreakerEvent {
+            at: self.at,
+            provider_key: Some(key.to_owned()),
+            provider: self.name.clone(),
+            open_ms: (now - self.at).max(0),
+        }
+    }
 }
 
 impl Metrics {
@@ -642,6 +902,18 @@ impl Metrics {
         self.live.subscribe()
     }
 
+    /// Memory evidence of the last 10 minutes, for support packs.
+    pub fn resource_history(&self) -> ResourceHistory {
+        let state = self.state();
+        ResourceHistory {
+            sample_every_ms: u64::try_from(SAMPLE_EVERY.as_millis()).unwrap_or(u64::MAX),
+            max_samples: RESOURCE_SAMPLES,
+            unavailable: state.resources_unavailable.clone(),
+            notes: RESOURCE_NOTES,
+            samples: state.resources.iter().copied().collect(),
+        }
+    }
+
     /// Opens the store, then samples every 2 s and writes each finished minute until
     /// `cancel`, then writes the rest and closes the store.
     pub async fn run(&self, cancel: CancellationToken) {
@@ -680,10 +952,18 @@ impl Metrics {
             }
         }
         self.sample();
+        self.end_outages();
         self.write(minute * MINUTE_MS).await;
         if let Some(store) = self.store.get() {
             store.close().await;
         }
+    }
+
+    /// Saves the outages still open as ending now, so a shutdown keeps them.
+    fn end_outages(&self) {
+        let mut state = self.state();
+        let ended = track_outages(&mut state.open, [], now_ms());
+        state.pending.events.extend(ended);
     }
 
     fn state(&self) -> MutexGuard<'_, Sampled> {
@@ -751,11 +1031,16 @@ impl Metrics {
         let sessions = self.sources.vfs.sessions();
         let ended = sessions.take_ended();
         let open = sessions.open();
+        let last = self.state().slow;
         let resources = self
             .cgroup
             .as_ref()
             .map_err(String::clone)
-            .and_then(Cgroup::read);
+            .and_then(|cgroup| {
+                let (usec, r) = cgroup.read()?;
+                let status = Path::new("/proc/self/status");
+                Ok((usec, r, cgroup.read_slow(status, last, now)))
+            });
 
         let mut guard = self.state();
         let state = &mut *guard;
@@ -764,23 +1049,26 @@ impl Metrics {
         });
         state.last_at = Some(now);
         let (resources, resources_unavailable) = match resources {
-            Ok((usec, mut r)) => {
+            Ok((usec, mut r, slow)) => {
                 r.cpu_cores = state.cpu.replace((now, usec)).and_then(|(then, prev)| {
                     let wall = (now - then).as_secs_f64();
                     let busy = u32::try_from(usec.saturating_sub(prev)).unwrap_or(u32::MAX);
                     (wall > 0.0).then(|| f64::from(busy) / 1e6 / wall)
                 });
-                let cache = self.sources.cache.stats();
-                r.memory_segment_cache_bytes = cache.memory_bytes.min(r.memory_process_bytes);
-                r.memory_segment_cache_limit_bytes = if cache.memory_enabled {
-                    cache.memory_capacity
-                } else {
-                    0
-                };
+                r.set_segment_cache(&self.sources.cache.stats());
+                r.cgroup_swap_bytes = slow.cgroup_swap_bytes;
+                r.process_memory = slow.process;
+                state.slow = Some(slow);
+                if state.resources.len() == RESOURCE_SAMPLES {
+                    state.resources.pop_front();
+                }
+                state.resources.push_back(ResourceSample::of(at, &r));
+                state.resources_unavailable = None;
                 (Some(r), None)
             }
             Err(reason) => {
                 state.cpu = None;
+                state.resources_unavailable = Some(reason.clone());
                 (None, Some(reason))
             }
         };
@@ -810,7 +1098,7 @@ impl Metrics {
                 .sum(),
         );
         let mut fetched = 0;
-        let mut open_now = HashSet::new();
+        let mut open_now = Vec::new();
         let mut live_providers = Vec::with_capacity(providers.len());
         for p in &providers {
             let (mut bytes, mut requests, mut failures) = (0, 0, 0);
@@ -831,15 +1119,8 @@ impl Metrics {
                     .pending
                     .add(&format!("peak.p.{}.bps", p.key), rate(bytes));
             }
-            if let Some(left) = p.open_for {
-                if !state.open.contains(&p.key) && state.pending.events.len() < MAX_PENDING {
-                    state.pending.events.push(BreakerEvent {
-                        at,
-                        provider: p.name.clone(),
-                        open_ms: i64::try_from(left.as_millis()).unwrap_or(i64::MAX),
-                    });
-                }
-                open_now.insert(p.key.clone());
+            if p.open_for.is_some() {
+                open_now.push((p.key.as_str(), p.name.as_str()));
             }
             live_providers.push(LiveProvider {
                 key: p.key.clone(),
@@ -870,7 +1151,11 @@ impl Metrics {
                 connecting: p.connecting,
             });
         }
-        state.open = open_now;
+        for ended in track_outages(&mut state.open, open_now, at) {
+            if state.pending.events.len() < MAX_PENDING {
+                state.pending.events.push(ended);
+            }
+        }
 
         for s in &ended {
             let r = record(s);
@@ -926,14 +1211,17 @@ impl Metrics {
                     traced: s.trace.is_some(),
                     budget_bytes: s.watch().budget(),
                     waiting_ms: s.waiting().map(ms),
+                    handle: s.handle(),
                     pending: s
                         .requests()
                         .into_iter()
                         .map(|r| LivePending {
+                            request: r.request,
                             offset: r.offset,
                             size: r.size,
                             age_ms: ms(r.age),
                             stage: r.stage.label(),
+                            stage_ms: ms(r.stage_age),
                         })
                         .collect(),
                     head: s.watch().head().map(|(segment, wait)| LiveHead {
@@ -1050,11 +1338,21 @@ impl Metrics {
     /// Writes what is pending as the minute starting at `minute_ms`; on failure keeps it
     /// for the next try.
     async fn write(&self, minute_ms: i64) {
-        let pending = std::mem::take(&mut self.state().pending);
+        let (pending, mut events) = {
+            let mut state = self.state();
+            let now = now_ms();
+            // Open outages are saved too, so a crash keeps them up to the last write.
+            let open: Vec<BreakerEvent> = state
+                .open
+                .iter()
+                .map(|(key, o)| o.event(key, now))
+                .collect();
+            (std::mem::take(&mut state.pending), open)
+        };
         let Some(store) = self.store.get() else {
             return;
         };
-        if pending.is_empty() {
+        if pending.is_empty() && events.is_empty() {
             return;
         }
         let counters: Vec<_> = pending
@@ -1062,8 +1360,9 @@ impl Metrics {
             .iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect();
+        events.extend(pending.events.iter().cloned());
         let written = store
-            .write(minute_ms, &counters, &pending.sessions, &pending.events)
+            .write(minute_ms, &counters, &pending.sessions, &events)
             .await;
         let mut state = self.state();
         match written {
@@ -1113,13 +1412,14 @@ impl Metrics {
                 None => Default::default(),
             };
         let catalogue = self.sources.vfs.db().catalogue(now - 7 * DAY_MS).await?;
-        let (pending, error, at, pending_minute) = {
+        let (pending, error, at, pending_minute, open) = {
             let state = self.state();
             (
                 state.pending.clone(),
                 state.error.clone(),
                 now_ms(),
                 state.pending_minute,
+                state.open.clone(),
             )
         };
 
@@ -1143,6 +1443,7 @@ impl Metrics {
                         }
                     }
                     Field::Failed(_) => spark.failures += value,
+                    Field::Trips => spark.trips += value,
                     _ => {}
                 }
             }
@@ -1184,13 +1485,19 @@ impl Metrics {
             .map(recent_read)
             .collect();
         reads.sort_by_key(|r| std::cmp::Reverse(r.closed_at));
+        let ongoing: Vec<BreakerEvent> = open.iter().map(|(key, o)| o.event(key, at)).collect();
+        let mut seen = HashSet::new();
         let mut breaker_events: Vec<BreakerView> = pending
             .events
             .iter()
             .rev()
+            .chain(&ongoing)
             .chain(&events)
+            // The store holds open outages as of the last write; the copy in memory is newer.
+            .filter(|e| e.provider_key.is_none() || seen.insert((e.provider_key.clone(), e.at)))
             .map(|e| BreakerView {
                 at: e.at,
+                provider_key: e.provider_key.clone(),
                 provider: e.provider.clone(),
                 open_ms: e.open_ms,
             })
@@ -2129,6 +2436,14 @@ struct Cgroup {
     host_memory: u64,
 }
 
+/// Swap and this process's memory, read once a minute rather than every sample.
+#[derive(Clone, Copy)]
+struct SlowRead {
+    at: Instant,
+    cgroup_swap_bytes: Option<u64>,
+    process: ProcessMemory,
+}
+
 impl Cgroup {
     fn find() -> Result<Self, String> {
         if !cfg!(target_os = "linux") {
@@ -2147,13 +2462,13 @@ impl Cgroup {
         let host_memory = fs::read_to_string("/proc/meminfo")
             .ok()
             .as_deref()
-            .and_then(mem_total)
+            .and_then(|meminfo| kb_field(meminfo, "MemTotal"))
             .ok_or("/proc/meminfo has no MemTotal.")?;
         Ok(Self { dir, host_memory })
     }
 
-    /// CPU time used so far in microseconds, and resources without `cpu_cores` and the
-    /// segment cache.
+    /// CPU time used so far in microseconds, and resources without `cpu_cores`, the segment
+    /// cache, swap and process memory.
     fn read(&self) -> Result<(u64, Resources), String> {
         let read = |name: &str| {
             fs::read_to_string(self.dir.join(name))
@@ -2163,7 +2478,8 @@ impl Cgroup {
             .ok_or("cgroup cpu.stat has no usage_usec.")?;
         let current =
             limit(&read("memory.current")?).ok_or("cgroup memory.current is not a number.")?;
-        let cache = kernel_cache(&read("memory.stat")?).min(current);
+        let stat = read("memory.stat")?;
+        let cache = kernel_cache(&stat).min(current);
         let max = limit(&read("memory.max")?);
         // cpu.max is missing when the cpu controller is not delegated.
         let quota = read("cpu.max").ok().as_deref().and_then(cpu_quota);
@@ -2185,8 +2501,44 @@ impl Cgroup {
                 memory_kernel_cache_bytes: cache,
                 memory_limit_bytes: max.map_or(self.host_memory, |m| m.min(self.host_memory)),
                 memory_limited: max.is_some_and(|m| m < self.host_memory),
+                segment_cache_logical_bytes: 0,
+                segment_cache_capacity_bytes: 0,
+                cgroup_anon_bytes: stat_field(&stat, "anon"),
+                cgroup_file_bytes: stat_field(&stat, "file"),
+                cgroup_kernel_bytes: stat_field(&stat, "kernel"),
+                cgroup_sock_bytes: stat_field(&stat, "sock"),
+                cgroup_slab_bytes: stat_field(&stat, "slab"),
+                cgroup_slab_reclaimable_bytes: stat_field(&stat, "slab_reclaimable"),
+                cgroup_anon_thp_bytes: stat_field(&stat, "anon_thp"),
+                cgroup_shmem_bytes: stat_field(&stat, "shmem"),
+                cgroup_swap_bytes: None,
+                memory_events: read("memory.events").ok().map(|t| MemoryEvents::parse(&t)),
+                memory_pressure: read("memory.pressure")
+                    .ok()
+                    .map(|t| MemoryPressure::parse(&t)),
+                process_memory: ProcessMemory::default(),
             },
         ))
+    }
+
+    /// `last` while it is younger than [`SLOW_READ_EVERY`], else swap and `status`
+    /// (`/proc/self/status`) read again; a missing or unreadable file leaves its values none.
+    fn read_slow(&self, status: &Path, last: Option<SlowRead>, now: Instant) -> SlowRead {
+        if let Some(last) = last
+            && now - last.at < SLOW_READ_EVERY
+        {
+            return last;
+        }
+        let cgroup_swap_bytes = fs::read_to_string(self.dir.join("memory.swap.current"))
+            .ok()
+            .as_deref()
+            .and_then(limit);
+        let status = fs::read_to_string(status).unwrap_or_default();
+        SlowRead {
+            at: now,
+            cgroup_swap_bytes,
+            process: process_memory(&status, now_ms(), crate::logs::started_ms()),
+        }
     }
 }
 
@@ -2221,16 +2573,35 @@ fn cpu_quota(text: &str) -> Option<f64> {
     (period > 0).then(|| f64::from(quota) / f64::from(period))
 }
 
-fn mem_total(meminfo: &str) -> Option<u64> {
-    let kib: u64 = meminfo
+/// A `<key>: <n> kB` line of `/proc/meminfo` or `/proc/self/status` in bytes; `kB` is 1024
+/// bytes there.
+fn kb_field(text: &str, key: &str) -> Option<u64> {
+    let kib: u64 = text
         .lines()
-        .find_map(|l| l.strip_prefix("MemTotal:"))?
+        .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))?
         .trim()
         .strip_suffix("kB")?
         .trim()
         .parse()
         .ok()?;
     kib.checked_mul(1024)
+}
+
+/// This process's memory from `/proc/self/status`, read at `at` by a process that started at
+/// `started`, both Unix milliseconds.
+fn process_memory(status: &str, at: i64, started: i64) -> ProcessMemory {
+    ProcessMemory {
+        at,
+        uptime_ms: (at - started).max(0).cast_unsigned(),
+        rss_bytes: kb_field(status, "VmRSS"),
+        rss_anon_bytes: kb_field(status, "RssAnon"),
+        rss_file_bytes: kb_field(status, "RssFile"),
+        rss_peak_bytes: kb_field(status, "VmHWM"),
+        swap_bytes: kb_field(status, "VmSwap"),
+        threads: status
+            .lines()
+            .find_map(|l| l.strip_prefix("Threads:")?.trim().parse().ok()),
+    }
 }
 
 #[cfg(test)]
@@ -2284,12 +2655,15 @@ mod tests {
             traced: false,
             budget_bytes: 0,
             waiting_ms,
+            handle: None,
             pending: oldest_ms
                 .map(|age_ms| LivePending {
+                    request: 0,
                     offset: 0,
                     size: 0,
                     age_ms,
                     stage: "order",
+                    stage_ms: age_ms,
                 })
                 .into_iter()
                 .collect(),
@@ -2340,8 +2714,30 @@ mod tests {
         assert_eq!(cpu_quota("150000 100000\n"), Some(1.5));
         assert_eq!(cpu_quota("max 100000\n"), None);
         assert_eq!(
-            mem_total("MemTotal:       16 kB\nMemFree: 1 kB\n"),
+            kb_field("MemTotal:       16 kB\nMemFree: 1 kB\n", "MemTotal"),
             Some(16 * 1024)
+        );
+        // Any order, unknown lines ignored, a missing line is none; kB is 1024 bytes.
+        let status = "Name:\tinfinidysk\nVmHWM:\t    3000 kB\nVmRSS:\t    2000 kB\n\
+            RssAnon:\t    1500 kB\nRssFile:\t     500 kB\nRssShmem:\t       0 kB\nThreads:\t42\n";
+        assert_eq!(
+            serde_json::to_value(process_memory(status, 61_000, 1_000))
+                .expect("process memory serializes"),
+            serde_json::json!({
+                "at": 61_000,
+                "uptime_ms": 60_000,
+                "rss_bytes": 2000 * 1024,
+                "rss_anon_bytes": 1500 * 1024,
+                "rss_file_bytes": 500 * 1024,
+                "rss_peak_bytes": 3000 * 1024,
+                "swap_bytes": null,
+                "threads": 42,
+            })
+        );
+        assert_eq!(
+            kb_field(&format!("VmSwap:\t{} kB\n", u64::MAX), "VmSwap"),
+            None,
+            "a value that overflows bytes is unavailable"
         );
     }
 
@@ -2357,7 +2753,8 @@ mod tests {
         write("memory.max", "max\n");
         write(
             "memory.stat",
-            "anon 100\nfile 2048\nslab_reclaimable 512\nslab_unreclaimable 64\n",
+            "slab 576\nanon_thp 64\nfile_mapped 7\nanon 100\nshmem 32\nfile 2048\n\
+             slab_reclaimable 512\nslab_unreclaimable 64\nsock 16\n",
         );
         let cgroup = Cgroup {
             dir: dir.clone(),
@@ -2365,18 +2762,192 @@ mod tests {
         };
 
         write("memory.current", "4096\n");
-        let (usec, r) = cgroup.read().expect("all cgroup files exist");
+        let (usec, mut r) = cgroup.read().expect("all cgroup files exist");
         assert_eq!(usec, 42);
         assert_eq!(r.memory_kernel_cache_bytes, 2560);
         assert_eq!(r.memory_process_bytes, 1536);
         assert_eq!(r.memory_limit_bytes, 1 << 40);
         assert!(!r.memory_limited);
+        assert_eq!(
+            [
+                r.cgroup_anon_bytes,
+                r.cgroup_file_bytes,
+                r.cgroup_kernel_bytes,
+                r.cgroup_sock_bytes,
+                r.cgroup_slab_bytes,
+                r.cgroup_slab_reclaimable_bytes,
+                r.cgroup_anon_thp_bytes,
+                r.cgroup_shmem_bytes,
+            ],
+            [
+                Some(100),
+                Some(2048),
+                None,
+                Some(16),
+                Some(576),
+                Some(512),
+                Some(64),
+                Some(32)
+            ]
+        );
+        let json = serde_json::to_value(r).expect("resources serialize");
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .expect("resources serialize as an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "cgroup_anon_bytes",
+                "cgroup_anon_thp_bytes",
+                "cgroup_file_bytes",
+                "cgroup_kernel_bytes",
+                "cgroup_shmem_bytes",
+                "cgroup_slab_bytes",
+                "cgroup_slab_reclaimable_bytes",
+                "cgroup_sock_bytes",
+                "cgroup_swap_bytes",
+                "cpu_cores",
+                "cpu_limit_cores",
+                "memory_events",
+                "memory_kernel_cache_bytes",
+                "memory_limit_bytes",
+                "memory_limited",
+                "memory_pressure",
+                "memory_process_bytes",
+                "memory_segment_cache_bytes",
+                "memory_segment_cache_limit_bytes",
+                "process_memory",
+                "segment_cache_capacity_bytes",
+                "segment_cache_logical_bytes",
+            ]
+        );
+        // More cached than app memory: the old field stays capped, the new one does not.
+        r.set_segment_cache(&CacheStats {
+            memory_enabled: true,
+            memory_bytes: 4096,
+            memory_capacity: 8192,
+            ..CacheStats::default()
+        });
+        assert_eq!(
+            (r.memory_segment_cache_bytes, r.segment_cache_logical_bytes),
+            (1536, 4096)
+        );
+        assert_eq!(
+            (
+                r.memory_segment_cache_limit_bytes,
+                r.segment_cache_capacity_bytes
+            ),
+            (8192, 8192)
+        );
+        // Turned off: the limit reads 0, the raw capacity stays.
+        r.set_segment_cache(&CacheStats {
+            memory_capacity: 8192,
+            ..CacheStats::default()
+        });
+        assert_eq!(
+            (
+                r.memory_segment_cache_limit_bytes,
+                r.segment_cache_capacity_bytes
+            ),
+            (0, 8192)
+        );
 
         // The stat can briefly exceed memory.current; the cache is clamped.
         write("memory.current", "2000\n");
         let (_, r) = cgroup.read().expect("all cgroup files exist");
         assert_eq!(r.memory_kernel_cache_bytes, 2000);
         assert_eq!(r.memory_process_bytes, 0);
+        // Without memory.events and memory.pressure (no PSI) they are unavailable.
+        assert_eq!((r.memory_events, r.memory_pressure), (None, None));
+
+        write(
+            "memory.events",
+            "low 0\nhigh 12\nmax 3\noom 1\noom_kill 1\noom_group_kill 0\n",
+        );
+        write(
+            "memory.pressure",
+            "some avg10=1.50 avg60=0.25 avg300=0.00 total=123456\n\
+             full avg10=0.00 avg60=0.00 avg300=0.00 total=789\n",
+        );
+        let (_, r) = cgroup.read().expect("all cgroup files exist");
+        assert_eq!(
+            r.memory_events,
+            Some(MemoryEvents {
+                low: Some(0),
+                high: Some(12),
+                max: Some(3),
+                oom: Some(1),
+                oom_kill: Some(1),
+            })
+        );
+        let pressure = r.memory_pressure.expect("pressure was read");
+        assert_eq!(
+            pressure.some,
+            Some(Psi {
+                avg10: 1.5,
+                avg60: 0.25,
+                avg300: 0.0,
+                total_us: 123_456,
+            })
+        );
+        assert_eq!(pressure.full.map(|p| p.total_us), Some(789));
+        // An older kernel without the `full` line.
+        assert_eq!(
+            MemoryPressure::parse("some avg10=0.00 avg60=0.00 avg300=0.00 total=5\n").full,
+            None
+        );
+        let sample = serde_json::to_value(ResourceSample::of(7, &r)).expect("sample serializes");
+        assert_eq!(sample["memory_current_bytes"], 2000);
+        assert_eq!(sample["events"]["high"], 12);
+        assert_eq!(sample["pressure"]["some"]["total_us"], 123_456);
+
+        fs::remove_dir_all(&dir).expect("temp dir is removable");
+    }
+
+    #[test]
+    fn swap_and_process_memory_are_read_once_a_minute() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-cgroup-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("temp dir is writable");
+        let cgroup = Cgroup {
+            dir: dir.clone(),
+            host_memory: 1 << 40,
+        };
+        let start = Instant::now();
+        let swap = dir.join("memory.swap.current");
+        let status = dir.join("status");
+
+        // Missing files are unavailable, not 0.
+        let first = cgroup.read_slow(&status, None, start);
+        assert_eq!(
+            (first.cgroup_swap_bytes, first.process.rss_bytes),
+            (None, None)
+        );
+        fs::write(&swap, "4096\n").expect("temp dir is writable");
+        fs::write(&status, "VmRSS:\t       2 kB\n").expect("temp dir is writable");
+        let kept = cgroup.read_slow(&status, Some(first), start + SAMPLE_EVERY);
+        assert_eq!(
+            (kept.at, kept.cgroup_swap_bytes, kept.process.rss_bytes),
+            (start, None, None),
+            "a sample 2 s later reuses the last read"
+        );
+        let next = cgroup.read_slow(&status, Some(kept), start + SLOW_READ_EVERY);
+        assert_eq!(
+            (next.at, next.cgroup_swap_bytes, next.process.rss_bytes),
+            (start + SLOW_READ_EVERY, Some(4096), Some(2048))
+        );
+        // Missing or unreadable after a good read: the old values are not kept.
+        fs::remove_file(&swap).expect("temp file is removable");
+        fs::remove_file(&status).expect("temp file is removable");
+        fs::create_dir(&status).expect("temp dir is writable");
+        let failed = cgroup.read_slow(&status, Some(next), start + 2 * SLOW_READ_EVERY);
+        assert_eq!(
+            (failed.cgroup_swap_bytes, failed.process.rss_bytes),
+            (None, None)
+        );
 
         fs::remove_dir_all(&dir).expect("temp dir is removable");
     }
@@ -2403,6 +2974,26 @@ mod tests {
             (point.stream, point.queue, point.health, point.missing),
             (1, 2, 0, 1)
         );
+    }
+
+    #[test]
+    fn an_outage_lasts_until_the_breaker_closes_and_keeps_its_key() {
+        let mut open = HashMap::new();
+        let none: Vec<BreakerEvent> = Vec::new();
+        assert_eq!(track_outages(&mut open, [("k1", "Name")], 1_000), none);
+        // Failed probes keep it open well past the first cooldown; a rename changes nothing.
+        assert_eq!(track_outages(&mut open, [("k1", "Renamed")], 200_000), none);
+        let ended = track_outages(&mut open, [], 250_000);
+        assert_eq!(
+            ended,
+            [BreakerEvent {
+                at: 1_000,
+                provider_key: Some("k1".to_owned()),
+                provider: "Name".to_owned(),
+                open_ms: 249_000,
+            }]
+        );
+        assert!(open.is_empty());
     }
 
     #[test]

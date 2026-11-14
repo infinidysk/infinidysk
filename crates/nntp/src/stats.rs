@@ -149,6 +149,7 @@ pub struct ProviderStats {
     pub connections: Vec<ConnectionStats>,
     /// Connects in progress.
     pub connecting: usize,
+    /// Connects that failed, background ones included.
     pub connect_failures: u64,
     /// Times the circuit breaker opened.
     pub trips: u64,

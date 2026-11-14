@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Empty, Failure, IconButton, Loading, PageHeader, Panel, Status } from "../ui";
+import { Empty, Failure, IconButton, InfoTip, Loading, PageHeader, Panel, Status } from "../ui";
 
 // The server sends these untyped (`summary`, JSON lines); they mirror `infinidysk_core::trace`.
 type Cause = "budget" | "permit" | "connection" | "pipeline" | "latency" | "transfer" | "decode" | "disk" | "shared" | "other";
@@ -32,6 +32,26 @@ type Summary = {
   cached: number;
   seeks: number;
   client_ns: number;
+  // Absent in traces from older servers.
+  open_before_ns?: number | null;
+  open_reply_ns?: number | null;
+  requests?: number;
+  requests_failed?: number;
+  requests_cancelled?: number;
+  requests_pending?: number;
+  requests_unmatched?: number;
+  first_request_ns?: number | null;
+  first_reply_ns?: number | null;
+  request_order_ns?: number;
+  request_lock_ns?: number;
+  request_read_ns?: number;
+  longest_order_ns?: number;
+  longest_lock_ns?: number;
+  longest_read_ns?: number;
+  longest_request_ns?: number;
+  in_request_ns?: number;
+  no_request_ns?: number;
+  longest_no_request_ns?: number;
 };
 type Outcome = "retrieved" | "not_found" | "cancelled" | { not_retrieved: string };
 type SegmentStep =
@@ -64,8 +84,16 @@ type TraceEvent = { at_ns: number } & (
       idle_connections: number;
     }
   | { type: "end"; bytes: number }
+  | { type: "dropped"; events: number }
 );
-type Header = { read: Schemas["ReadView"]; providers: string[]; summary: Summary; dropped: number };
+type Header = {
+  read: Schemas["ReadView"];
+  providers: string[];
+  summary: Summary;
+  dropped: number;
+  clock?: { started_unix_ns: number; exported_unix_ns: number; exported_at_ns: number };
+  coverage?: string[];
+};
 
 const causes: { cause: Cause; label: string; hint: string; color: string }[] = [
   { cause: "budget", label: "Budget", hint: "Decoded-bytes budget held by other reads", color: "oklch(0.62 0.17 300)" },
@@ -177,7 +205,9 @@ export function Tracing() {
                 <TableHead>File</TableHead>
                 <TableHead className="hidden w-28 sm:table-cell">Opened</TableHead>
                 <TableHead className="hidden w-24 text-right md:table-cell">Read</TableHead>
-                <TableHead className="hidden w-24 text-right md:table-cell">First byte</TableHead>
+                <TableHead className="hidden w-24 text-right md:table-cell">
+                  Stream first byte <InfoTip label="About stream first byte">From the first prefetch window to its first bytes.</InfoTip>
+                </TableHead>
                 <TableHead className="w-24 text-right">Stalls</TableHead>
                 <TableHead className="hidden w-24 text-right lg:table-cell">Longest</TableHead>
                 <TableHead className="w-12">
@@ -361,23 +391,62 @@ export function TracePage() {
 }
 
 export function TraceBody({ header, events }: { header: Header; events: TraceEvent[] }) {
-  const { read, summary: s, providers } = header;
+  const { read, summary: s, providers, coverage = [] } = header;
   const all = useMemo(() => rows(events), [events]);
   const [page, setPage] = useState(0);
   const shown = all.slice(page * ROWS, (page + 1) * ROWS);
   const pages = Math.ceil(all.length / ROWS);
-  const stats: [string, string, boolean?][] = [
+  const opt = (ns: number | null | undefined) => (ns == null ? "–" : ms(ns));
+  const wait = (total = 0, longest = 0) => (total > 0 ? `${ms(total)} · longest ${ms(longest)}` : "–");
+  const requests = s.requests ?? 0;
+  const stats: [string, string, boolean?, string?][] = [
     ["Client", `${read.delivery === "fuse" ? "FUSE" : "WebDAV"} · ${read.client || "unknown"}`],
     ["Read", `${bytes(read.served)} of ${bytes(read.size)}`],
-    ["First byte", s.first_byte_ns == null ? "–" : ms(s.first_byte_ns)],
+    ["Stream first byte", opt(s.first_byte_ns), false, "From the reader's first prefetch window to its first bytes. Not click-to-play."],
     ["Stalls", s.stalls > 0 ? `${s.stalls} · ${ms(s.stall_ns)}` : "none", s.stalls > 0],
     ["Longest stall", s.stalls > 0 ? ms(s.longest_stall_ns) : "–"],
     ["Segments served", s.cached > 0 ? `${s.served} · ${s.cached} cached` : String(s.served)],
     ["Attempts", s.failed > 0 ? `${s.attempts} · ${s.failed} failed` : String(s.attempts), s.failed > 0],
     ["Hedges won · seeks", `${s.hedges_won} of ${s.hedges} · ${s.seeks}`],
     ["Drained", s.drained_bytes > 0 ? `${bytes(s.drained_bytes)} · ${ms(s.drained_ns)}` : "–"],
-    ["Client paused", s.client_ns > 0 ? ms(s.client_ns) : "–"],
+    [
+      "Between stream reads",
+      s.client_ns > 0 ? ms(s.client_ns) : "–",
+      false,
+      "Gaps of 50 ms or more between reads of the stream. Includes request ordering and handle-lock waits; not proof the player paused.",
+    ],
   ];
+  if (s.open_before_ns != null) {
+    stats.push(
+      ["Open before stream", opt(s.open_before_ns), false, "Open work before the stream started: path, caller and metadata lookups."],
+      ["Open reply", opt(s.open_reply_ns), false, "From the stream start to the open's reply."],
+    );
+  }
+  if (requests > 0) {
+    const failed = s.requests_failed ?? 0;
+    const cancelled = s.requests_cancelled ?? 0;
+    const pending = s.requests_pending ?? 0;
+    stats.push(
+      [
+        "FUSE requests",
+        [`${requests}`, failed > 0 && `${failed} failed`, cancelled > 0 && `${cancelled} cancelled`, pending > 0 && `${pending} pending`]
+          .filter(Boolean)
+          .join(" · "),
+        failed + pending > 0,
+      ],
+      ["First request", opt(s.first_request_ns), false, "From the stream start to the first read request reaching infinidysk."],
+      ["First reply", opt(s.first_reply_ns), false, "That first request's time in infinidysk, from arrival to reply."],
+      ["Ordering wait", wait(s.request_order_ns, s.longest_order_ns), false, "Requests waiting for earlier reads of the same handle. Summed; requests overlap."],
+      ["Handle lock wait", wait(s.request_lock_ns, s.longest_lock_ns), false, "Requests waiting for the handle's reader, busy with another request."],
+      ["In stream reader", wait(s.request_read_ns, s.longest_read_ns), false, "Requests in the stream reader, including segment waits."],
+      [
+        "No request in infinidysk",
+        wait(s.no_request_ns, s.longest_no_request_ns),
+        false,
+        "After the first request, time with no read request in infinidysk. The kernel, its cache or the player had it; the trace cannot tell which.",
+      ],
+    );
+  }
   const samples = events.filter((e) => e.type === "sample");
 
   return (
@@ -388,13 +457,23 @@ export function TraceBody({ header, events }: { header: Header; events: TraceEve
         </p>
       )}
       <dl className="bg-card mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4">
-        {stats.map(([label, value, warn]) => (
+        {stats.map(([label, value, warn, hint]) => (
           <div key={label} className="bg-card p-3 outline outline-border">
-            <dt className="text-muted-foreground text-xs">{label}</dt>
+            <dt className="text-muted-foreground flex items-center gap-1 text-xs">
+              {label}
+              {hint && <InfoTip label={`About ${label.toLowerCase()}`}>{hint}</InfoTip>}
+            </dt>
             <dd className={cn("mt-0.5 truncate font-medium tabular-nums", warn && "text-warning-text")}>{value}</dd>
           </div>
         ))}
       </dl>
+      {coverage.length > 0 && (
+        <ul className="text-muted-foreground mb-6 list-disc space-y-1 pl-5 text-xs">
+          {coverage.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      )}
       {s.stall_ns > 0 && <Attribution summary={s} />}
       {samples.length > 0 && <Samples samples={samples} />}
       <section>

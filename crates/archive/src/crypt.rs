@@ -9,6 +9,8 @@ pub use infinidysk_core::crypt::{BLOCK, Cipher, Key};
 use sha1::block_api::compress;
 use sha2::{Digest, Sha256};
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::Error;
 
 /// Highest KDF cost accepted: RAR5's own limit and 7-Zip's.
@@ -56,13 +58,19 @@ impl Kdf {
     /// Derives the key for `password`. Fails with [`Error::WrongPassword`] when the
     /// archive's password check disagrees.
     pub fn derive(&self, password: &str) -> Result<Derived, Error> {
+        self.derive_until(password, &AtomicBool::new(false))
+    }
+
+    /// Like [`Kdf::derive`], but fails with [`Error::Cancelled`] soon after `stop` is set,
+    /// so a caller that no longer wants the key does not wait out every round.
+    pub fn derive_until(&self, password: &str, stop: &AtomicBool) -> Result<Derived, Error> {
         match self {
             Self::Rar5 { salt, lg2, check } => {
-                rar5(rar_password(password), salt, *lg2, check.as_ref())
+                rar5(rar_password(password), salt, *lg2, check.as_ref(), stop)
             }
-            Self::Rar4 { salt } => Ok(rar4(rar_password(password), salt.as_ref())),
+            Self::Rar4 { salt } => rar4(rar_password(password), salt.as_ref(), stop),
             Self::SevenZip { salt, cycles } => Ok(Derived {
-                key: Key::Aes256(sevenzip(password, salt, *cycles)),
+                key: Key::Aes256(sevenzip(password, salt, *cycles, stop)?),
                 iv: None,
             }),
         }
@@ -82,6 +90,7 @@ fn rar5(
     salt: &[u8; 16],
     lg2: u8,
     check: Option<&[u8; 8]>,
+    stop: &AtomicBool,
 ) -> Result<Derived, Error> {
     let mac = Hmac::<Sha256>::new_from_slice(password.as_bytes())
         .expect("HMAC accepts keys of any length");
@@ -99,6 +108,7 @@ fn rar5(
     let mut values = [[0u8; 32]; 3];
     for (value, rounds) in values.iter_mut().zip([(1u32 << lg2) - 1, 16, 16]) {
         for _ in 0..rounds {
+            stopped(stop)?;
             u = prf(&u);
             for (x, y) in f.iter_mut().zip(&u) {
                 *x ^= y;
@@ -125,13 +135,14 @@ fn utf16le(password: &str) -> Vec<u8> {
     password.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }
 
-fn rar4(password: &str, salt: Option<&[u8; 8]>) -> Derived {
+fn rar4(password: &str, salt: Option<&[u8; 8]>, stop: &AtomicBool) -> Result<Derived, Error> {
     const ROUNDS: u32 = 0x40000;
     let mut raw = utf16le(password);
     raw.extend(salt.into_iter().flatten());
     let mut sha = Sha1Rar29::new();
     let mut iv = [0u8; BLOCK];
     for i in 0..ROUNDS {
+        stopped(stop)?;
         sha.update(&mut raw);
         let [a, b, c, _] = i.to_le_bytes();
         sha.update(&mut [a, b, c]);
@@ -144,10 +155,10 @@ fn rar4(password: &str, salt: Option<&[u8; 8]>) -> Derived {
     for (k, word) in key.as_chunks_mut::<4>().0.iter_mut().zip(&digest) {
         *k = word.to_le_bytes();
     }
-    Derived {
+    Ok(Derived {
         key: Key::Aes128(key),
         iv: Some(iv),
-    }
+    })
 }
 
 /// SHA-1 as RAR 2.9 implemented it: each 64-byte block hashed straight from the input
@@ -222,23 +233,33 @@ fn schedule_tail(block: &[u8; 64]) -> [u8; 64] {
     out
 }
 
-fn sevenzip(password: &str, salt: &[u8], cycles: u8) -> [u8; 32] {
+fn sevenzip(password: &str, salt: &[u8], cycles: u8, stop: &AtomicBool) -> Result<[u8; 32], Error> {
     let pw = utf16le(password);
     let mut key = [0u8; 32];
     if cycles == 0x3f {
         for (k, b) in key.iter_mut().zip(salt.iter().chain(&pw)) {
             *k = *b;
         }
-        return key;
+        return Ok(key);
     }
     let mut sha = Sha256::new();
     for i in 0..1u64 << cycles {
+        stopped(stop)?;
         sha.update(salt);
         sha.update(&pw);
         sha.update(i.to_le_bytes());
     }
     key.copy_from_slice(&sha.finalize());
-    key
+    Ok(key)
+}
+
+/// One relaxed load per round: the flag guards no data, and a round's hashing dwarfs it.
+fn stopped(stop: &AtomicBool) -> Result<(), Error> {
+    if stop.load(Ordering::Relaxed) {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -289,5 +310,44 @@ mod tests {
             .unwrap()
         };
         assert_ne!(sevenzip(&long), sevenzip(&prefix(127)));
+    }
+
+    #[test]
+    fn a_stopped_derivation_gives_up() {
+        let stopped = AtomicBool::new(true);
+        for kdf in [
+            Kdf::Rar5 {
+                salt: [0; 16],
+                lg2: 4,
+                check: None,
+            },
+            Kdf::Rar4 { salt: None },
+            Kdf::SevenZip {
+                salt: vec![],
+                cycles: 4,
+            },
+        ] {
+            assert_eq!(
+                kdf.derive_until("secret", &stopped),
+                Err(Error::Cancelled),
+                "{kdf:?}"
+            );
+        }
+
+        // 2^24 rounds over a long password take minutes; the flag ends it mid-way.
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let worker = std::thread::spawn({
+            let stop = std::sync::Arc::clone(&stop);
+            move || {
+                Kdf::SevenZip {
+                    salt: vec![],
+                    cycles: 24,
+                }
+                .derive_until(&"p".repeat(4096), &stop)
+            }
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(worker.join().unwrap(), Err(Error::Cancelled));
     }
 }

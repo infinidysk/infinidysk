@@ -565,18 +565,18 @@ function Runs({ runs }: { runs: Schemas["MaintenanceRun"][] }) {
 
 /** The running maintenance job in the sidebar, from the live view. */
 export function MaintenanceNow({ live }: { live: Schemas["LiveMaintenance"] }) {
-  const percent = live.total ? Math.round((live.done / live.total) * 100) : null;
+  const amount = live.total ? `${Math.round((live.done / live.total) * 100)}%` : progress(live.job, live);
   return (
     <Link
       to={live.job === "backup-database" ? "/settings/backups" : "/settings/maintenance"}
       className="hover:bg-sidebar-accent/60 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs"
     >
       <Loader2 className="text-primary size-3.5 shrink-0 animate-spin" />
-      <span className="min-w-0 flex-1 truncate" title={`${jobCopy[live.job].title} · ${live.step}`}>
+      <span className="min-w-0 flex-1" title={`${jobCopy[live.job].title} · ${live.step}`}>
         {jobCopy[live.job].title}
-        <span className="text-muted-foreground"> · {live.step}</span>
+        <span className="text-muted-foreground block">{live.step}</span>
       </span>
-      {percent != null && <span className="text-muted-foreground tabular-nums">{percent}%</span>}
+      {amount && <span className="text-muted-foreground shrink-0 tabular-nums">{amount}</span>}
     </Link>
   );
 }

@@ -1,0 +1,8 @@
+schema = 1
+name = "UsenetDiscounter"
+website = "https://www.usenetdiscounter.com"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "reader.usenetdiscounter.com"
