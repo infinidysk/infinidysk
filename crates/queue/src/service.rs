@@ -1009,6 +1009,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 static CPU_PERMITS: Semaphore = Semaphore::const_new(2);
 
 /// Runs CPU-heavy NZB work (hundreds of ms for a large NZB) off the async runtime.
+///
+/// Takes one `CPU_PERMITS` permit for the duration of `f`.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     let permit = CPU_PERMITS
         .acquire()
@@ -1017,6 +1019,10 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
     blocking_with_permit(permit, f).await
 }
 
+/// Runs `f` on the blocking pool and releases `permit` when `f` returns.
+///
+/// `f` must not call [`blocking`] or take another `CPU_PERMITS` permit: it already holds
+/// one, and waiting for a second can deadlock once every permit is held this way.
 async fn blocking_with_permit<T: Send + 'static>(
     permit: SemaphorePermit<'static>,
     f: impl FnOnce() -> T + Send + 'static,
