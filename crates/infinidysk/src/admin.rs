@@ -2356,7 +2356,7 @@ async fn post_indexer_search_queue(
 ) -> Result<(StatusCode, Json<SearchQueued>), Fail> {
     let category = request.category.trim();
     let reference = admin.search_refs.resolve(&request.nzb_ref)?;
-    let (endpoint, indexer_key) = {
+    let (endpoint, indexer_keys) = {
         let store = admin.config.read().await;
         let settings = store.settings();
         if !reference_is_current(settings, &reference, &admin.search_refs)? {
@@ -2371,9 +2371,9 @@ async fn post_indexer_search_queue(
             .find(|indexer| indexer.id == reference.indexer_id)
             .ok_or(Fail::NotFound)?;
         let endpoint = crate::newznab::endpoint(indexer).map_err(|_| Fail::NotFound)?;
-        let key = indexer.api_key.0.clone();
+        let keys = crate::newznab::origin_keys(&settings.indexers, &endpoint);
         drop(store);
-        (endpoint, key)
+        (endpoint, keys)
     };
     let _download_permit = admin
         .indexer_downloads
@@ -2385,17 +2385,21 @@ async fn post_indexer_search_queue(
         .acquire()
         .await
         .map_err(|_| Fail::Unavailable("Indexer downloads are unavailable.".to_owned()))?;
+    let indexer_keys: Vec<&str> = indexer_keys.iter().map(String::as_str).collect();
     let fetched = crate::fetch::Fetcher::fetch_indexer(
         &reference.url,
         &endpoint,
-        &indexer_key,
+        &indexer_keys,
         reference.source_dns.as_ref(),
     )
     .await
     .map_err(|_| Fail::Unavailable("Could not retrieve the indexer NZB.".to_owned()))?;
     drop(permit);
     let prepared = Queue::prepare(&fetched.body).await;
-    let fallback_title = if crate::fetch::contains_api_key(&reference.title, &indexer_key) {
+    let fallback_title = if indexer_keys
+        .iter()
+        .any(|key| crate::fetch::contains_api_key(&reference.title, key))
+    {
         "Indexer download"
     } else {
         &reference.title

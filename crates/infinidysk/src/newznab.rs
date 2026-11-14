@@ -43,6 +43,20 @@ pub(crate) fn base_url_contains_key(raw: &str, url: &Url, api_key: &str) -> bool
         || crate::fetch::url_contains_key(url, api_key)
 }
 
+/// The API key of every configured indexer at `endpoint`'s origin.
+///
+/// Indexers may share an origin with different paths and keys. A download URL alone does not
+/// say whose key it carries, so a download must keep all of them out of foreign redirects.
+pub(crate) fn origin_keys(indexers: &[Indexer], endpoint: &Url) -> Vec<String> {
+    indexers
+        .iter()
+        .filter(|indexer| {
+            self::endpoint(indexer).is_ok_and(|other| other.origin() == endpoint.origin())
+        })
+        .map(|indexer| indexer.api_key.0.clone())
+        .collect()
+}
+
 pub(crate) fn endpoint(indexer: &Indexer) -> Result<Url, &'static str> {
     let mut url = base_url(indexer)?;
     if indexer.api_key.0.trim().is_empty() || indexer.api_key.0 == crate::config::MASK {
@@ -589,6 +603,28 @@ mod tests {
     use super::*;
     use crate::config::{Secret, Settings};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn origin_keys_cover_every_indexer_at_the_origin() {
+        let indexer = |base_url: &str, key: &str, enabled| Indexer {
+            base_url: base_url.to_owned(),
+            api_key: Secret(key.to_owned()),
+            enabled,
+            ..Indexer::default()
+        };
+        let indexers = [
+            indexer("https://indexer.example/first", "first-key", true),
+            indexer("https://indexer.example/second", "second-key", false),
+            indexer("https://indexer.example:8443/third", "other-port", true),
+            indexer("https://other.example/api", "other-host", true),
+            indexer("https://indexer.example/keyless", "", true),
+        ];
+        let endpoint = endpoint(&indexers[0]).unwrap();
+        assert_eq!(
+            origin_keys(&indexers, &endpoint),
+            ["first-key", "second-key"]
+        );
+    }
 
     async fn fake(
         status: &str,

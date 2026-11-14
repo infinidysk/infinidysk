@@ -51,10 +51,14 @@ impl Fetcher {
             .unwrap_or_else(|_| Err("Fetching the NZB timed out after 60 seconds.".to_owned()))
     }
 
+    /// Downloads a search result's `url` from the indexer at `indexer_endpoint`.
+    ///
+    /// `api_keys` holds the key of every configured indexer at that origin, like
+    /// [`Self::fetch_configured`].
     pub async fn fetch_indexer(
         url: &str,
         indexer_endpoint: &Url,
-        api_key: &str,
+        api_keys: &[&str],
         searched_dns: Option<&IndexerDns>,
     ) -> Result<Fetched, String> {
         let url = Url::parse(url).map_err(|_| "The NZB URL is invalid.".to_owned())?;
@@ -78,8 +82,8 @@ impl Fetcher {
                 None
             };
             let local = source.is_some();
-            let keys = std::slice::from_ref(&api_key);
-            Self::fetch_with_indexer_dns(url, source, Some((indexer_endpoint, keys, local))).await
+            Self::fetch_with_indexer_dns(url, source, Some((indexer_endpoint, api_keys, local)))
+                .await
         })
         .await
         .unwrap_or_else(|_| Err("Fetching the NZB timed out after 60 seconds.".to_owned()))
@@ -98,10 +102,9 @@ impl Fetcher {
             let source = IndexerDns::lookup(indexer_endpoint)
                 .await
                 .map_err(|_| "Could not safely resolve the configured indexer.".to_owned())?;
-            let policy = source
-                .is_local()
-                .then_some((indexer_endpoint, api_keys, true));
-            Self::fetch_with_indexer_dns(url, Some(source), policy).await
+            // A public indexer keeps the key checks too: its redirects can also leak keys.
+            let policy = (indexer_endpoint, api_keys, source.is_local());
+            Self::fetch_with_indexer_dns(url, Some(source), Some(policy)).await
         })
         .await
         .unwrap_or_else(|_| Err("Fetching the NZB timed out after 60 seconds.".to_owned()))
@@ -838,7 +841,7 @@ mod tests {
         let fetched = Fetcher::fetch_indexer(
             &format!("http://{addr}/nzb"),
             &endpoint,
-            "mock-key",
+            &["mock-key"],
             Some(&searched_dns),
         )
         .await;
@@ -859,7 +862,7 @@ mod tests {
         let result = Fetcher::fetch_indexer(
             "http://8.8.8.8/api?t=get&id=1&apikey=secret",
             &endpoint,
-            "secret",
+            &["secret"],
             Some(&searched_dns),
         )
         .await;
@@ -934,7 +937,7 @@ mod tests {
         let nzb = Fetcher::fetch_indexer(
             &format!("http://{addr}/release"),
             &endpoint,
-            "secret",
+            &["secret"],
             Some(&IndexerDns::lookup(&endpoint).await.unwrap()),
         )
         .await
@@ -1004,7 +1007,7 @@ mod tests {
             let result = Fetcher::fetch_indexer(
                 &format!("http://{addr}/start"),
                 &endpoint,
-                api_key,
+                &[api_key],
                 Some(&IndexerDns::lookup(&endpoint).await.unwrap()),
             )
             .await;
@@ -1044,7 +1047,7 @@ mod tests {
             let result = Fetcher::fetch_indexer(
                 &format!("http://{origin_addr}/start"),
                 &endpoint,
-                "mock-key",
+                &["mock-key"],
                 Some(&IndexerDns::lookup(&endpoint).await.unwrap()),
             )
             .await;
@@ -1110,6 +1113,18 @@ mod tests {
         assert!(allowed_indexer_url_for(&public, &endpoint, &keys, true).is_ok());
         let private = Url::parse("http://192.168.1.1/api").unwrap();
         assert!(allowed_indexer_url_for(&private, &endpoint, &[], true).is_err());
+
+        // A public indexer gets the same key checks.
+        let endpoint = Url::parse("https://indexer.example/first/api").unwrap();
+        for key in keys {
+            let foreign = Url::parse(&format!("https://cdn.example/nzb?apikey={key}")).unwrap();
+            assert!(
+                allowed_indexer_url_for(&foreign, &endpoint, &keys, false).is_err(),
+                "{key}"
+            );
+        }
+        let own = Url::parse("https://indexer.example/second/api?apikey=second-key").unwrap();
+        assert!(allowed_indexer_url_for(&own, &endpoint, &keys, false).is_ok());
     }
 
     #[tokio::test]
@@ -1143,7 +1158,7 @@ mod tests {
             let fetched = Fetcher::fetch_indexer(
                 &format!("http://{addr}{path}"),
                 &endpoint,
-                "mock-secret-123",
+                &["mock-secret-123"],
                 Some(&IndexerDns::lookup(&endpoint).await.unwrap()),
             )
             .await
@@ -1173,11 +1188,12 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let public = Url::parse("https://indexer.example/api").unwrap();
         assert!(
-            Fetcher::fetch_indexer("http://127.0.0.1:9/nzb", &public, "secret", None)
+            Fetcher::fetch_indexer("http://127.0.0.1:9/nzb", &public, &["secret"], None)
                 .await
                 .is_err()
         );
-        let dns = Fetcher::fetch_indexer("http://localhost:9/nzb", &public, "secret", None).await;
+        let dns =
+            Fetcher::fetch_indexer("http://localhost:9/nzb", &public, &["secret"], None).await;
         assert!(dns.is_err());
         let local_server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = local_server.local_addr().unwrap();
@@ -1193,7 +1209,7 @@ mod tests {
         let result = Fetcher::fetch_indexer(
             &format!("http://{address}/start"),
             &local,
-            "secret",
+            &["secret"],
             Some(&IndexerDns::lookup(&local).await.unwrap()),
         )
         .await;
@@ -1215,7 +1231,7 @@ mod tests {
             Fetcher::fetch_indexer(
                 &format!("http://{address}/start"),
                 &local,
-                "secret",
+                &["secret"],
                 Some(&IndexerDns::lookup(&local).await.unwrap())
             )
             .await
@@ -1246,7 +1262,7 @@ mod tests {
         let error = Fetcher::fetch_indexer(
             &format!("http://{addr}/large"),
             &endpoint,
-            "key",
+            &["key"],
             Some(&source),
         )
         .await
@@ -1270,7 +1286,7 @@ mod tests {
             Fetcher::fetch_indexer(
                 &format!("http://{addr}/slow"),
                 &endpoint,
-                "key",
+                &["key"],
                 Some(&source),
             ),
         )

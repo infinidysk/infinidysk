@@ -731,16 +731,7 @@ async fn add_url(state: &Sab, ctx: &Ctx, p: &Params) -> Result<Value, Fail> {
                 .filter(|indexer| indexer.enabled)
                 .filter_map(|indexer| crate::newznab::endpoint(indexer).ok())
                 .find(|endpoint| endpoint.origin() == requested.origin())?;
-            // Indexers may share an origin with different paths and keys; the URL alone
-            // does not say whose key it carries, so redirects must expose none of them.
-            let keys: Vec<String> = indexers
-                .iter()
-                .filter(|indexer| {
-                    crate::newznab::endpoint(indexer)
-                        .is_ok_and(|other| other.origin() == endpoint.origin())
-                })
-                .map(|indexer| indexer.api_key.0.clone())
-                .collect();
+            let keys = crate::newznab::origin_keys(indexers, &endpoint);
             Some((requested, endpoint, keys))
         })
     };
