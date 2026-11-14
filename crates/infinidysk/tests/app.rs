@@ -1720,24 +1720,29 @@ async fn concurrent_indexer_searches_have_a_global_external_work_limit() {
         .await;
         assert_eq!(code, "HTTP/1.1 200 OK");
     }
-    let (code, body) = send(
-        addr,
-        &admin_request("GET", "/api/v1/indexers/search?q=bulk&limit=5", ""),
-    )
-    .await;
-    assert_eq!(code, "HTTP/1.1 200 OK");
-    let body: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(body["results"].as_array().unwrap().len(), 20);
-    assert!(
-        body["indexers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|row| row["ok"] == true)
-    );
+    // Two overlapping searches: each one alone stays at 12 through its own buffering, so
+    // only the shared limit keeps both together at 12.
+    let first = admin_request("GET", "/api/v1/indexers/search?q=bulk-a&limit=5", "");
+    let second = admin_request("GET", "/api/v1/indexers/search?q=bulk-b&limit=5", "");
+    let (first, second) = tokio::join!(send(addr, &first), send(addr, &second));
+    for (code, body) in [first, second] {
+        assert_eq!(code, "HTTP/1.1 200 OK");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["results"].as_array().unwrap().len(), 20);
+        assert!(
+            body["indexers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["ok"] == true)
+        );
+    }
     let peak = peak.load(Ordering::SeqCst);
     assert!(peak > 1, "legitimate indexers should search in parallel");
-    assert!(peak <= 12, "external search concurrency was {peak}");
+    assert!(
+        peak <= 12,
+        "combined external search concurrency was {peak}"
+    );
     mock.abort();
     cancel.cancel();
     server.await.unwrap().unwrap();
