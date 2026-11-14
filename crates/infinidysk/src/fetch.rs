@@ -78,17 +78,21 @@ impl Fetcher {
                 None
             };
             let local = source.is_some();
-            Self::fetch_with_indexer_dns(url, source, Some((indexer_endpoint, api_key, local)))
-                .await
+            let keys = std::slice::from_ref(&api_key);
+            Self::fetch_with_indexer_dns(url, source, Some((indexer_endpoint, keys, local))).await
         })
         .await
         .unwrap_or_else(|_| Err("Fetching the NZB timed out after 60 seconds.".to_owned()))
     }
 
+    /// Downloads `url` from a configured indexer at `indexer_endpoint`'s origin.
+    ///
+    /// `api_keys` holds the key of every configured indexer at that origin: indexers may share
+    /// one with different paths, and a redirect must not carry any of their keys elsewhere.
     pub(crate) async fn fetch_configured(
         url: Url,
         indexer_endpoint: &Url,
-        api_key: &str,
+        api_keys: &[&str],
     ) -> Result<Fetched, String> {
         tokio::time::timeout(TOTAL, async {
             let source = IndexerDns::lookup(indexer_endpoint)
@@ -96,7 +100,7 @@ impl Fetcher {
                 .map_err(|_| "Could not safely resolve the configured indexer.".to_owned())?;
             let policy = source
                 .is_local()
-                .then_some((indexer_endpoint, api_key, true));
+                .then_some((indexer_endpoint, api_keys, true));
             Self::fetch_with_indexer_dns(url, Some(source), policy).await
         })
         .await
@@ -106,7 +110,7 @@ impl Fetcher {
     async fn fetch_with_indexer_dns(
         url: Url,
         source: Option<IndexerDns>,
-        indexer: Option<(&Url, &str, bool)>,
+        indexer: Option<(&Url, &[&str], bool)>,
     ) -> Result<Fetched, String> {
         let http = Client::builder()
             .user_agent(USER_AGENT)
@@ -119,11 +123,12 @@ impl Fetcher {
             .build()
             .map_err(|_| "Could not create indexer client.".to_owned())?;
         let mut fetched = Self::follow(url, &http, indexer).await?;
-        if let Some((_, api_key, _)) = indexer
-            && fetched
-                .file_name
-                .as_ref()
-                .is_some_and(|name| contains_api_key(name, api_key))
+        if let Some((_, api_keys, _)) = indexer
+            && fetched.file_name.as_ref().is_some_and(|name| {
+                api_keys
+                    .iter()
+                    .any(|api_key| contains_api_key(name, api_key))
+            })
         {
             fetched.file_name = None;
         }
@@ -133,11 +138,11 @@ impl Fetcher {
     async fn follow(
         mut url: Url,
         http: &Client,
-        indexer: Option<(&Url, &str, bool)>,
+        indexer: Option<(&Url, &[&str], bool)>,
     ) -> Result<Fetched, String> {
         for _ in 0..=MAX_REDIRECTS {
-            if let Some((endpoint, api_key, local)) = indexer {
-                allowed_indexer_url(&url, endpoint, api_key, local)?;
+            if let Some((endpoint, api_keys, local)) = indexer {
+                allowed_indexer_url_for(&url, endpoint, api_keys, local)?;
             } else {
                 allowed_public_url(&url)?;
             }
@@ -230,6 +235,19 @@ pub(crate) fn local_indexer(addrs: &[SocketAddr]) -> bool {
                     ),
                 }
         })
+}
+
+/// [`allowed_indexer_url`] for every key in `api_keys`.
+fn allowed_indexer_url_for(
+    url: &Url,
+    endpoint: &Url,
+    api_keys: &[&str],
+    local: bool,
+) -> Result<(), String> {
+    // The empty key runs the checks that need no key, even when `api_keys` is empty.
+    std::iter::once("")
+        .chain(api_keys.iter().copied())
+        .try_for_each(|api_key| allowed_indexer_url(url, endpoint, api_key, local))
 }
 
 pub(crate) fn allowed_indexer_url(
@@ -952,7 +970,7 @@ mod tests {
             )
             .build()
             .unwrap();
-        let fetched = Fetcher::follow(url, &client, Some((&origin, "secret", false)))
+        let fetched = Fetcher::follow(url, &client, Some((&origin, &["secret"], false)))
             .await
             .unwrap();
         assert_eq!(fetched.body, b"hello");
@@ -1072,6 +1090,26 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn redirects_expose_no_key_of_indexers_sharing_an_origin() {
+        let endpoint = Url::parse("http://127.0.0.1:8080/first/api").unwrap();
+        let keys = ["first-key", "second-key"];
+        for key in keys {
+            let foreign = Url::parse(&format!("https://cdn.example/nzb?apikey={key}")).unwrap();
+            assert_eq!(
+                allowed_indexer_url_for(&foreign, &endpoint, &keys, true).unwrap_err(),
+                "The indexer download URL would expose credentials.",
+                "{key}"
+            );
+        }
+        let own = Url::parse("http://127.0.0.1:8080/second/api?t=get&apikey=second-key").unwrap();
+        assert!(allowed_indexer_url_for(&own, &endpoint, &keys, true).is_ok());
+        let public = Url::parse("https://cdn.example/file?token=public").unwrap();
+        assert!(allowed_indexer_url_for(&public, &endpoint, &keys, true).is_ok());
+        let private = Url::parse("http://192.168.1.1/api").unwrap();
+        assert!(allowed_indexer_url_for(&private, &endpoint, &[], true).is_err());
     }
 
     #[tokio::test]

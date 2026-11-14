@@ -725,21 +725,28 @@ async fn add_url(state: &Sab, ctx: &Ctx, p: &Params) -> Result<Value, Fail> {
     let configured = {
         let store = state.config.read().await;
         reqwest::Url::parse(url).ok().and_then(|requested| {
-            let matched = store
-                .settings()
-                .indexers
+            let indexers = &store.settings().indexers;
+            let endpoint = indexers
                 .iter()
                 .filter(|indexer| indexer.enabled)
-                .find_map(|indexer| {
-                    let endpoint = crate::newznab::endpoint(indexer).ok()?;
-                    (endpoint.origin() == requested.origin())
-                        .then(|| (endpoint, indexer.api_key.0.clone()))
-                });
-            matched.map(|(endpoint, key)| (requested, endpoint, key))
+                .filter_map(|indexer| crate::newznab::endpoint(indexer).ok())
+                .find(|endpoint| endpoint.origin() == requested.origin())?;
+            // Indexers may share an origin with different paths and keys; the URL alone
+            // does not say whose key it carries, so redirects must expose none of them.
+            let keys: Vec<String> = indexers
+                .iter()
+                .filter(|indexer| {
+                    crate::newznab::endpoint(indexer)
+                        .is_ok_and(|other| other.origin() == endpoint.origin())
+                })
+                .map(|indexer| indexer.api_key.0.clone())
+                .collect();
+            Some((requested, endpoint, keys))
         })
     };
-    let fetched = if let Some((requested, endpoint, key)) = configured {
-        Fetcher::fetch_configured(requested, &endpoint, &key).await
+    let fetched = if let Some((requested, endpoint, keys)) = configured {
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+        Fetcher::fetch_configured(requested, &endpoint, &keys).await
     } else {
         state.fetcher.fetch(url).await
     };
