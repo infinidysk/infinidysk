@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api, body, HttpError, type Schemas } from "../api/client";
 import { authKey } from "../auth";
 import { bytes, count } from "../format";
@@ -51,6 +52,7 @@ function QueueControls({
 }) {
   const unavailable = !item.can_queue || outcome?.kind === "expired";
   const locked = readOnly || unavailable || pending || (outcome !== undefined && outcome.kind !== "error");
+  const failed = outcome?.kind === "error" || outcome?.kind === "expired" || outcome?.kind === "rejected";
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -64,13 +66,13 @@ function QueueControls({
             ))}
           </SelectContent>
         </Select>
-        <Button type="button" size="sm" disabled={locked || !categories.includes(category)} onClick={onQueue}>
+        <Button type="button" variant="outline" size="sm" disabled={locked || !categories.includes(category)} onClick={onQueue}>
           {pending ? <Loader2 className="animate-spin" /> : <Plus />}
           {pending ? "Queuing" : "Queue"}
         </Button>
       </div>
       {outcome ? (
-        <p role="status" className={outcome.kind === "error" || outcome.kind === "expired" || outcome.kind === "rejected" ? "text-destructive text-xs" : "text-success-text text-xs"}>
+        <p role={failed ? "alert" : "status"} className={failed ? "text-destructive text-xs" : "text-success-text text-xs"}>
           {outcome.message}
           {(outcome.kind === "created" || outcome.kind === "existing") && (
             <> · <Link to="/queue" className="underline underline-offset-2">View queue</Link></>
@@ -253,7 +255,7 @@ export function SearchPage() {
             Search
           </Button>
         </div>
-        {validation ? <p id="newznab-query-error" className="text-destructive text-xs">{validation}</p> :
+        {validation ? <p id="newznab-query-error" role="alert" className="text-destructive text-xs">{validation}</p> :
           <p id="newznab-query-hint" className="text-muted-foreground text-xs">1–250 characters. Search starts when you select Search.</p>}
       </form>
 
@@ -326,7 +328,12 @@ export function SearchPage() {
                         {visible.map((item) => (
                           <TableRow key={item.nzb_ref}>
                             <TableCell className="w-full max-w-0">
-                              <div title={item.title} className="truncate font-medium"><ReleaseName name={item.title} /></div>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div tabIndex={0} className="truncate rounded-sm font-medium"><ReleaseName name={item.title} /></div>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-md break-words">{item.title}</TooltipContent>
+                              </Tooltip>
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{bytes(item.size_bytes)}</TableCell>
                             <TableCell className="max-w-32 truncate" title={item.indexer_name}>{item.indexer_name}</TableCell>

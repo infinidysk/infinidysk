@@ -24,10 +24,12 @@ export function Indexers({ title, description }: { title: string; description: s
   const [checked, setChecked] = useState<{ revision: string; result: ConnectionResult } | null>(null);
   // Counts editor openings, so a save that finishes late cannot close a newer editor.
   const session = useRef(0);
-  const updated = () => {
-    void client.invalidateQueries({ queryKey: ["indexers"] });
-    void client.invalidateQueries({ queryKey: ["settings"] });
-  };
+  // Returns the refetch, so a mutation that awaits it stays pending until the list has the new revision.
+  const updated = () =>
+    Promise.all([
+      client.invalidateQueries({ queryKey: ["indexers"] }),
+      client.invalidateQueries({ queryKey: ["settings"] }),
+    ]);
   const save = useMutation({
     mutationFn: ({ value }: { value: Indexer; session: number }) =>
       value.id
@@ -39,11 +41,11 @@ export function Indexers({ title, description }: { title: string; description: s
             enabled: value.enabled,
           } })),
     onSuccess: (_, { session: saved }) => {
-      updated();
+      void updated();
       setChecked(null);
       if (saved === session.current) setEditing(null);
     },
-    onError: updated,
+    onError: () => void updated(),
   });
   const remove = useMutation({
     mutationFn: (id: string) => body(api.DELETE("/api/v1/indexers/{id}", { params: { path: { id } } })),
@@ -147,6 +149,8 @@ export function Indexers({ title, description }: { title: string; description: s
                   </Button>
                   <IconButton
                     label={locked ? `View ${item.name}` : `Edit ${item.name}`}
+                    // An editor opened mid-toggle would keep the old revision and every save would get 409.
+                    disabled={toggle.isPending && toggle.variables?.id === item.id}
                     onClick={() => openEditor(item)}
                   >
                     <Pencil />
@@ -187,7 +191,7 @@ export function Indexers({ title, description }: { title: string; description: s
         onClose={() => setEditing(null)}
       >
         {draft && (
-          <fieldset disabled={locked} className="space-y-4">
+          <fieldset disabled={locked || save.isPending} className="space-y-4">
             <Field id="indexer-name" label="Name" layout="horizontal">
               <Input id="indexer-name" required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             </Field>
