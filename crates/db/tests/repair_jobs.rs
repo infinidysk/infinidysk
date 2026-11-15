@@ -52,17 +52,15 @@ async fn history_contract(db: &Db) {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            db.claim_par2_lane(100, check, false)
-                .await
-                .unwrap()
-                .unwrap()
-                .id,
-            id
-        );
+        let claim = db
+            .claim_par2_lane(100, check, false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.id, id);
         if state != 1 {
             db.finish_par2(
-                id,
+                claim.claim(),
                 state,
                 "result",
                 0,
@@ -103,15 +101,15 @@ async fn handoff_at_capacity(db: &Db) {
     }
     assert_eq!(db.par2_pending().await.unwrap(), 128);
     let check = db.claim_par2_lane(11, true, true).await.unwrap().unwrap();
-    assert!(db.escalate_par2(check.id, 12).await.unwrap());
+    assert!(db.escalate_par2(check.claim(), 12).await.unwrap());
     assert_eq!(db.par2_pending().await.unwrap(), 128);
     let repair = db.claim_par2_lane(13, false, false).await.unwrap().unwrap();
     assert_eq!(repair.nzb_blob, Some(nzb.0));
     assert_eq!(repair.scan_at, Some(1));
-    assert!(!db.escalate_par2(check.id, 14).await.unwrap());
+    assert!(!db.escalate_par2(check.claim(), 14).await.unwrap());
     let next = db.claim_par2_lane(14, true, true).await.unwrap().unwrap();
     db.cancel_par2(next.id, 15).await.unwrap();
-    assert!(!db.escalate_par2(next.id, 16).await.unwrap());
+    assert!(!db.escalate_par2(next.claim(), 16).await.unwrap());
 }
 
 async fn lane_contract(db: &Db) {
@@ -148,6 +146,7 @@ async fn lane_contract(db: &Db) {
         .unwrap()
         .unwrap();
     assert_eq!(repair.id, ids[5]);
+    let mut manual_claims = Vec::new();
     for expected in &ids[2..5] {
         let claimed = db
             .claim_par2_lane(1000, true, false)
@@ -158,6 +157,7 @@ async fn lane_contract(db: &Db) {
             claimed.id, *expected,
             "manual work must overtake older scan requests"
         );
+        manual_claims.push(claimed.claim());
     }
     let scan = db.claim_par2_lane(1000, true, true).await.unwrap().unwrap();
     assert_eq!(scan.id, ids[0]);
@@ -167,15 +167,15 @@ async fn lane_contract(db: &Db) {
         "enqueue time stays separate from the scan receipt scope"
     );
     assert!(scan.repair_on_failure);
-    db.update_availability_progress(scan.id, 2, 10)
+    db.update_availability_progress(scan.claim(), 2, 10)
         .await
         .unwrap();
     assert!(
-        db.update_availability_progress(scan.id, 11, 10)
+        db.update_availability_progress(scan.claim(), 11, 10)
             .await
             .is_err()
     );
-    db.finish_par2(scan.id, 2, "available", 0, 0, 1001, None)
+    db.finish_par2(scan.claim(), 2, "available", 0, 0, 1001, None)
         .await
         .unwrap();
     db.restart_par2(scan.id, 1002).await.unwrap();
@@ -187,10 +187,10 @@ async fn lane_contract(db: &Db) {
     assert_eq!(manual.id, scan.id);
     assert_eq!(manual.scan_at, None);
     assert_eq!(manual.checked_articles, 0);
-    db.yield_par2_attempt(manual.id, manual.attempts)
+    db.yield_par2_attempt(manual.claim(), manual.attempts)
         .await
         .unwrap();
-    db.yield_par2_attempt(manual.id, manual.attempts)
+    db.yield_par2_attempt(manual.claim(), manual.attempts)
         .await
         .unwrap();
     let yielded = db
@@ -212,7 +212,7 @@ async fn lane_contract(db: &Db) {
         .find(|row| row.0 == 5)
         .unwrap_or((5, 0, 0, 0));
     db.finish_par2(
-        manual.id,
+        manual.claim(),
         5,
         "Missing or corrupt articles found.",
         0,
@@ -223,7 +223,7 @@ async fn lane_contract(db: &Db) {
     .await
     .unwrap();
     db.finish_par2(
-        ids[2],
+        manual_claims[0],
         5,
         "repair unavailable: memory allowance",
         0,
@@ -234,7 +234,7 @@ async fn lane_contract(db: &Db) {
     .await
     .unwrap();
     db.finish_par2(
-        repair.id,
+        repair.claim(),
         5,
         "repair unavailable: source matching",
         0,
@@ -287,12 +287,12 @@ async fn durable_requests(db: &Db) {
     assert_eq!(first, duplicate);
     let job = db.claim_par2(12).await.unwrap().unwrap();
     assert_eq!(job.id, first);
-    db.update_par2_progress(first, "Discovering PAR2 files", 40, 0, 13)
+    db.update_par2_progress(job.claim(), "Discovering PAR2 files", 40, 0, 13)
         .await
         .unwrap();
-    db.update_par2_requests(first, 12, 10).await.unwrap();
-    assert!(db.update_par2_requests(first, 9, 10).await.is_err());
-    assert!(db.update_par2_requests(first, 12, -1).await.is_err());
+    db.update_par2_requests(job.claim(), 12, 10).await.unwrap();
+    assert!(db.update_par2_requests(job.claim(), 9, 10).await.is_err());
+    assert!(db.update_par2_requests(job.claim(), 12, -1).await.is_err());
     let listed = db.par2_jobs().await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(
@@ -312,7 +312,7 @@ async fn durable_requests(db: &Db) {
         (resumed.completed_requests, resumed.missing_requests),
         (12, 10)
     );
-    db.finish_par2(first, 2, "verified", 100, 0, 14, None)
+    db.finish_par2(resumed.claim(), 2, "verified", 100, 0, 14, None)
         .await
         .unwrap();
     assert!(db.claim_par2(15).await.unwrap().is_none());
@@ -332,11 +332,11 @@ async fn durable_requests(db: &Db) {
         (0, 0)
     );
     db.cancel_par2(first, 17).await.unwrap();
-    db.update_par2_progress(first, "Late progress", 999, 0, 18)
+    db.update_par2_progress(restarted.claim(), "Late progress", 999, 0, 18)
         .await
         .unwrap();
     assert_eq!(db.par2_jobs().await.unwrap()[0].reason, "cancelled");
-    db.finish_par2(first, 3, "late completion", 200, 50, 18, None)
+    db.finish_par2(restarted.claim(), 3, "late completion", 200, 50, 18, None)
         .await
         .unwrap();
     let duration = db
@@ -345,7 +345,7 @@ async fn durable_requests(db: &Db) {
         .unwrap()
         .unwrap()
         .duration_ms;
-    db.finish_par2(first, 3, "late completion", 200, 50, 19, None)
+    db.finish_par2(restarted.claim(), 3, "late completion", 200, 50, 19, None)
         .await
         .unwrap();
     assert_eq!(
@@ -392,7 +392,9 @@ async fn durable_requests(db: &Db) {
             .unwrap();
         if n < 22 {
             let job = db.claim_par2(31).await.unwrap().unwrap();
-            db.finish_par2(job.id, 2, "", 0, 0, 32, None).await.unwrap();
+            db.finish_par2(job.claim(), 2, "", 0, 0, 32, None)
+                .await
+                .unwrap();
         }
     }
     let jobs = db.par2_jobs().await.unwrap();
@@ -403,6 +405,111 @@ async fn durable_requests(db: &Db) {
     );
     assert_eq!(jobs.iter().filter(|job| job.state == 0).count(), 3);
     assert!(jobs.iter().all(|job| job.file_path.is_some()));
+}
+
+#[tokio::test]
+async fn cancelled_attempt_cannot_finish_or_refund_a_restarted_claim() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    stale_claims(&db).await;
+}
+
+async fn stale_claims(db: &Db) {
+    for job in db.par2_jobs().await.unwrap() {
+        db.cancel_par2(job.id, 0).await.unwrap();
+    }
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut item = Item::child(&root, "claim.bin", ItemKind::NzbFile).unwrap();
+    let nzb = BlobId::new();
+    let meta = BlobId::new();
+    item.nzb_blob = Some(nzb);
+    item.meta_blob = Some(meta);
+    db.insert(&[item.clone()], &[(nzb, b"nzb"), (meta, b"meta")])
+        .await
+        .unwrap();
+    let id = db
+        .request_par2(Owner::Item(item.id), false, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    let old = db.claim_par2(10).await.unwrap().unwrap();
+    db.cancel_par2(id, 11).await.unwrap();
+    db.restart_par2(id, 12).await.unwrap();
+    let current = db.claim_par2_lane(12, false, false).await.unwrap().unwrap();
+    assert_eq!(old.attempts, current.attempts);
+    assert!(current.claim_generation > old.claim_generation);
+    db.yield_par2_attempt(old.claim(), old.attempts)
+        .await
+        .unwrap();
+    db.update_par2_progress(old.claim(), "stale", 999, 99, 13)
+        .await
+        .unwrap();
+    db.update_par2_requests(old.claim(), 999, 99).await.unwrap();
+    db.update_availability_progress(old.claim(), 99, 999)
+        .await
+        .unwrap();
+    db.set_par2_verified(old.claim(), 999).await.unwrap();
+    assert!(!db.escalate_par2(old.claim(), 13).await.unwrap());
+    db.finish_par2(old.claim(), 3, "stale", 999, 99, 13, None)
+        .await
+        .unwrap();
+    let after = db
+        .par2_jobs()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|job| job.id == id)
+        .unwrap();
+    assert_eq!(
+        (after.state, after.attempts, after.transferred_bytes),
+        (1, 1, 0)
+    );
+    assert_eq!(
+        (
+            after.completed_requests,
+            after.checked_articles,
+            after.verified_bytes
+        ),
+        (0, 0, 0)
+    );
+    db.update_par2_progress(current.claim(), "current", 42, 0, 14)
+        .await
+        .unwrap();
+    db.finish_par2(current.claim(), 2, "verified", 42, 0, 15, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.par2_result(Owner::Item(item.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        2
+    );
+    db.restart_par2_scan(id, 16, Some(16), false).await.unwrap();
+    let restarted = db
+        .par2_jobs()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|job| job.id == id)
+        .unwrap();
+    assert!(restarted.claim_generation > current.claim_generation);
+    let next = db.claim_par2(16).await.unwrap().unwrap();
+    assert!(next.claim_generation > restarted.claim_generation);
+    db.finish_par2(current.claim(), 5, "late", 999, 0, 17, None)
+        .await
+        .unwrap();
+    db.finish_par2(next.claim(), 2, "verified", 0, 0, 17, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.par2_result(Owner::Item(item.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        2
+    );
 }
 
 #[tokio::test]
@@ -422,6 +529,7 @@ async fn postgres_requests_obey_the_same_claim_resume_and_cancellation_contract(
     lane_contract(&db).await;
     history_contract(&db).await;
     handoff_at_capacity(&db).await;
+    stale_claims(&db).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP DATABASE {name} WITH (FORCE)"

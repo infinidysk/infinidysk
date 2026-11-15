@@ -29,6 +29,8 @@ This is infinidysk **2.0**, rewritten in Rust and now in **beta**. On 1.x? See [
 > [!WARNING]
 > **Moving from 1.x to 2.x is a breaking change.** Changing the image name alone is not an upgrade. Follow [Upgrade from 1.x](https://www.infinidysk.com/v2/upgrade/), and check [what is not in 2.x yet](https://www.infinidysk.com/v2/whats-new/#feature-comparison).
 
+When staging saved 1.x repair data, unusable candidates are reported and kept in the original directory. Valid candidates still migrate. Saved bytes become repairs only after complete PAR2 verification.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/overview-dark.png" />
   <img src=".github/assets/overview-light.png" alt="The infinidysk Overview page: files being read right now, download activity for the last 24 hours, and summary tiles for reads, stalls, provider misses, imports, health checks and cache" />

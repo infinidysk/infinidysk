@@ -92,8 +92,8 @@ macro_rules! columns {
 }
 
 #[derive(sqlx::FromRow)]
-struct Row {
-    id: Uuid,
+pub(super) struct Row {
+    pub(super) id: Uuid,
     set_id: Vec<u8>,
     file_id: Vec<u8>,
     start_byte: i64,
@@ -102,7 +102,7 @@ struct Row {
     descriptor: Vec<u8>,
 }
 
-fn decode(row: &Row) -> Result<Patch, Error> {
+pub(super) fn decode(row: &Row) -> Result<Patch, Error> {
     let patch = Patch::decode(&row.descriptor)?;
     if patch.id.0 != row.id
         || patch.source.set.as_slice() != row.set_id
@@ -258,9 +258,12 @@ impl Db {
             if changed > 0 {
                 sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND state = 1 AND verify_only = TRUE")
                     .bind(item.0).bind(meta.0).bind(generation).bind(source.generation).execute(&mut *tx).await?;
+            }
+            let committed = tx.commit().await;
+            if changed > 0 {
                 self.blob_epoch.fetch_add(1, Ordering::Release);
             }
-            tx.commit().await?;
+            committed?;
             changed
         });
         Ok(changed > 0)
@@ -437,8 +440,9 @@ impl Db {
             // Enabled before visibility so a concurrent read cannot skip a committed row.
             self.repair_present.store(true, Ordering::Release);
             // Released health observations must retry even after an uncertain COMMIT.
+            let committed = tx.commit().await;
             self.blob_epoch.fetch_add(1, Ordering::Release);
-            tx.commit().await?;
+            committed?;
         });
         Ok(true)
     }

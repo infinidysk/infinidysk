@@ -120,12 +120,26 @@ pub async fn stage(config: &Path, db: &Db) -> Result<(), crate::Error> {
         for shard in std::fs::read_dir(&path).map_err(crate::Error::LegacyRepairs)? {
             let shard = shard.map_err(crate::Error::LegacyRepairs)?;
             if !shard.file_type().map_err(crate::Error::LegacyRepairs)?.is_dir() { continue; }
+            let mut candidates = std::collections::BTreeSet::new();
             for entry in std::fs::read_dir(shard.path()).map_err(crate::Error::LegacyRepairs)? {
                 let entry = entry.map_err(crate::Error::LegacyRepairs)?;
                 let name = entry.file_name();
-                let Some(hash) = name.to_str().filter(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase())) else { continue };
-                let (header, data) = pair(&root, hash).map_err(crate::Error::LegacyRepairs)?;
-                let decoded = body(&header, data).map_err(crate::Error::LegacyRepairs)?;
+                let Some(hash) = name.to_str().map(|name| name.strip_suffix(".h").unwrap_or(name)).filter(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase())) else { continue };
+                candidates.insert(hash.to_owned());
+            }
+            for hash in candidates {
+                let hash = hash.as_str();
+                let candidate = pair(&root, hash).and_then(|(header, data)| body(&header, data).map(|decoded| (header, decoded)));
+                let (header, decoded) = match candidate {
+                    Ok(candidate) => candidate,
+                    Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotADirectory | std::io::ErrorKind::IsADirectory) || error.raw_os_error() == Some(nix::libc::ELOOP) => {
+                        let reason = "legacy payload is missing, inaccessible, or inconsistent; original files retained";
+                        runtime.block_on(db.mark_legacy_repair_unusable(hash, reason))?;
+                        tracing::warn!(hash, reason, "C# repair candidate is unusable");
+                        continue;
+                    }
+                    Err(error) => return Err(crate::Error::LegacyRepairs(error)),
+                };
                 runtime.block_on(db.stage_legacy_repair(hash, &header, &decoded.data, &Sha256::digest(&decoded.data)))?;
                 copied += 1;
             }
@@ -207,6 +221,60 @@ mod tests {
         serde_json::to_vec(&serde_json::json!({ "FileSize": 100, "LineLength": 128,
             "PartNumber": 2, "TotalParts": 10, "PartSize": 4, "PartOffset": 10 }))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn unusable_candidates_do_not_block_valid_staging_or_become_repairs() {
+        let root = std::env::temp_dir().join(format!("legacy-mixed-{}", uuid::Uuid::new_v4()));
+        for (hash, payload, with_header) in [
+            ("A".repeat(64), &b"data"[..], true),
+            ("B".repeat(64), &b"data"[..], false),
+            ("C".repeat(64), &b"short"[..], true),
+        ] {
+            let shard = root.join("repair-segments").join(&hash[..2]);
+            std::fs::create_dir_all(&shard).unwrap();
+            std::fs::write(shard.join(&hash), payload).unwrap();
+            if with_header {
+                std::fs::write(shard.join(format!("{hash}.h")), header()).unwrap();
+            }
+        }
+        let missing = "D".repeat(64);
+        let shard = root.join("repair-segments").join(&missing[..2]);
+        std::fs::create_dir_all(&shard).unwrap();
+        std::fs::write(shard.join(format!("{missing}.h")), header()).unwrap();
+        let url = format!("sqlite:{}", root.join("candidates.sqlite").display());
+        let db = Db::connect(&url).await.unwrap();
+        stage(&root, &db).await.unwrap();
+        db.close().await;
+        let db = Db::connect(&url).await.unwrap();
+        assert!(db.legacy_repair(&"A".repeat(64)).await.unwrap().is_some());
+        for hash in ["B".repeat(64), "C".repeat(64), missing.clone()] {
+            assert!(db.legacy_repair(&hash).await.unwrap().is_none());
+            assert!(
+                db.config()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|(key, _)| key == &format!("legacy.repair.unusable.{hash}"))
+            );
+            let shard = root.join("repair-segments").join(&hash[..2]);
+            if hash == missing {
+                assert_eq!(
+                    std::fs::read(shard.join(format!("{hash}.h"))).unwrap(),
+                    header()
+                );
+            } else {
+                let expected = if hash.starts_with('B') {
+                    &b"data"[..]
+                } else {
+                    &b"short"[..]
+                };
+                assert_eq!(std::fs::read(shard.join(&hash)).unwrap(), expected);
+            }
+        }
+        stage(&root, &db).await.unwrap();
+        db.close().await;
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

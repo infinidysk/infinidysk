@@ -151,6 +151,65 @@ fn patch() -> Patch {
 }
 
 #[tokio::test]
+async fn backup_inspection_rejects_catalog_mismatches_even_with_valid_payloads() {
+    use sha2::{Digest as _, Sha256};
+    for change in [
+        "message_id = 'wrong@loopback'",
+        "set_id = zeroblob(16)",
+        "file_id = zeroblob(16)",
+        "start_byte = 1",
+        "end_byte = 4",
+        "id = randomblob(16)",
+    ] {
+        let path = std::env::temp_dir().join(format!("backup-{}.db", uuid::Uuid::new_v4()));
+        let source_path = path.with_extension("source.sqlite");
+        let fixture = Fixture::open(
+            format!("sqlite:{}", source_path.display()),
+            Cleanup::Sqlite(source_path),
+        )
+        .await;
+        let mut patch = patch();
+        patch.sha256 = Sha256::digest(b"abc").into();
+        fixture
+            .db
+            .publish_patches(&fixture.source().await, slice::from_ref(&patch))
+            .await
+            .unwrap();
+        fixture
+            .db
+            .set_repair_payload(&patch, Some(b"abc"))
+            .await
+            .unwrap();
+        fixture.db.backup_into(&path, || false).await.unwrap();
+        assert_eq!(
+            infinidysk_db::check_file(&path, || false)
+                .await
+                .unwrap()
+                .problems,
+            Vec::<String>::new()
+        );
+        let mut conn = SqliteConnection::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        sqlx::query(AssertSqlSafe(format!("UPDATE repair_patches SET {change}")))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        conn.close().await.unwrap();
+        assert!(
+            !infinidysk_db::check_file(&path, || false)
+                .await
+                .unwrap()
+                .problems
+                .is_empty(),
+            "{change}"
+        );
+        fixture.close().await;
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn omitted_reads_require_the_exact_owned_nzb_generation_set_file_and_range() {
     use infinidysk_core::repair::Omitted;
     for fixture in fixtures().await {
@@ -251,6 +310,69 @@ async fn omitted_reads_require_the_exact_owned_nzb_generation_set_file_and_range
                 .is_none()
         );
         fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn publication_invalidates_after_commit_attempt_including_commit_errors() {
+    use std::time::Duration;
+    for metadata in [false, true] {
+        for fail in [false, true] {
+            for fixture in fixtures().await {
+                if !matches!(fixture.cleanup, Cleanup::Postgres(_, _)) {
+                    fixture.close().await;
+                    continue;
+                }
+                let table = if metadata { "blobs" } else { "repair_patches" };
+                let event = if metadata { "UPDATE" } else { "INSERT" };
+                let failure = if fail {
+                    "RAISE EXCEPTION 'test commit failure';"
+                } else {
+                    ""
+                };
+                fixture.execute("", &format!("CREATE FUNCTION block_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(1930); {failure} RETURN NEW; END $$; CREATE CONSTRAINT TRIGGER block_commit AFTER {event} ON {table} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION block_commit();")).await;
+                let mut lock = PgConnection::connect(&fixture.url).await.unwrap();
+                sqlx::query("SELECT pg_advisory_lock(1930)")
+                    .execute(&mut lock)
+                    .await
+                    .unwrap();
+                let db = fixture.db.clone();
+                let source = fixture.source().await;
+                let before = db.blob_epoch();
+                let publication = tokio::spawn(async move {
+                    if metadata {
+                        db.publish_repair_metadata(&source, b"new-meta").await
+                    } else {
+                        db.publish_patches(&source, &[patch()]).await
+                    }
+                });
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    loop {
+                        let waiting: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))").fetch_one(&mut lock).await.unwrap();
+                        if waiting { break; }
+                        tokio::task::yield_now().await;
+                    }
+                }).await.unwrap();
+                let during = fixture.db.blob_epoch();
+                assert_eq!(
+                    fixture.db.blob(fixture.meta).await.unwrap().unwrap(),
+                    b"meta"
+                );
+                sqlx::query("SELECT pg_advisory_unlock(1930)")
+                    .execute(&mut lock)
+                    .await
+                    .unwrap();
+                let result = publication.await.unwrap();
+                assert_eq!(result.is_err(), fail);
+                assert_eq!(during, before, "epoch advanced before commit completed");
+                assert!(
+                    fixture.db.blob_epoch() > before,
+                    "commit attempts must invalidate even on error"
+                );
+                lock.close().await.unwrap();
+                fixture.close().await;
+            }
+        }
     }
 }
 

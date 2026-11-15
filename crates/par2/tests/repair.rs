@@ -5,6 +5,60 @@ const INDEX: &[u8] = include_bytes!("fixtures/set.par2");
 const VOLUME: &[u8] = include_bytes!("fixtures/set.vol0+3.par2");
 const LIMIT: usize = 2_000_000;
 
+#[test]
+fn cancellation_during_checksum_padding_stops_and_poisons_feed() {
+    use std::cell::Cell;
+    let input = Input {
+        length: 1,
+        checksum: infinidysk_par2::Slice {
+            md5: [0; 16],
+            crc32: 0,
+        },
+    };
+    let inputs = [input];
+    let mut repair = Repair::new(8_388_608, &inputs, &[], &[], 1, || false).unwrap();
+    let calls = Cell::new(0);
+    let result = repair.feed(0, b"a", || {
+        calls.set(calls.get() + 1);
+        calls.get() >= 4
+    });
+    assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+    assert!(matches!(
+        repair.feed(0, b"a", || false),
+        Err(Error::Cancelled)
+    ));
+}
+
+#[test]
+fn chunked_checksums_preserve_padded_hashes_and_cancel_data_hashing() {
+    use infinidysk_par2::Slice;
+    use std::cell::Cell;
+    let data = vec![0x5a; 131_071];
+    let mut padded = data.clone();
+    padded.resize(139_264, 0);
+    let expected = Slice {
+        md5: Md5::digest(&padded).into(),
+        crc32: infinidysk_yenc::crc32(0, &padded),
+    };
+    assert_eq!(Slice::checksum(padded.len() as u64, &data), Some(expected));
+    let inputs = [Input {
+        length: data.len(),
+        checksum: expected,
+    }];
+    let mut repair = Repair::new(padded.len(), &inputs, &[], &[], 1, || false).unwrap();
+    repair.feed(0, &data, || false).unwrap();
+    repair.finish(|| false).unwrap();
+    let mut repair = Repair::new(padded.len(), &inputs, &[], &[], 1, || false).unwrap();
+    let calls = Cell::new(0);
+    assert!(matches!(
+        repair.feed(0, &data, || {
+            calls.set(calls.get() + 1);
+            calls.get() == 3
+        }),
+        Err(Error::Cancelled)
+    ));
+}
+
 fn packets() -> Vec<&'static [u8]> {
     packets_from(VOLUME)
 }

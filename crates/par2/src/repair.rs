@@ -208,11 +208,18 @@ impl<'a> Repair<'a> {
         if self.missing.binary_search(&index).is_ok() || self.seen[index] {
             return Err(invalid("missing or already verified"));
         }
-        if data.len() != input.length || !input.checksum.matches(self.size as u64, data) {
+        if data.len() != input.length {
             return Err(invalid("length or checksum mismatch"));
         }
         // A cancelled operation or panicking callback must never leave resumable partial rows.
         self.cancelled = true;
+        if !input
+            .checksum
+            .matches_cancellable(self.size as u64, data, &cancelled)?
+        {
+            self.cancelled = false;
+            return Err(invalid("length or checksum mismatch"));
+        }
         for (row, &exponent) in self.rows.iter_mut().zip(&self.exponents) {
             let coefficient = FIELD.pow(FIELD.constants[index], exponent);
             add_scaled(row, data, coefficient, &cancelled)?;
@@ -246,7 +253,11 @@ impl<'a> Repair<'a> {
             {
                 add_scaled(&mut data, row, coefficient, &cancelled)?;
             }
-            if !self.inputs[index].checksum.matches(self.size as u64, &data) {
+            if !self.inputs[index].checksum.matches_cancellable(
+                self.size as u64,
+                &data,
+                &cancelled,
+            )? {
                 return Err(Error::Slice {
                     index,
                     reason: "reconstructed checksum mismatch",

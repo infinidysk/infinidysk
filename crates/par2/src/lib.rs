@@ -75,21 +75,52 @@ impl Slice {
 
     /// Hash one unpadded input slice, including PAR2's final zero padding.
     pub fn checksum(slice_size: u64, data: &[u8]) -> Option<Self> {
+        // The callback is always false, so cancellation cannot discard a checksum.
+        Self::checksum_cancellable(slice_size, data, &|| false)
+            .ok()
+            .flatten()
+    }
+
+    pub(crate) fn matches_cancellable(
+        &self,
+        slice_size: u64,
+        data: &[u8],
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<bool, Error> {
+        Ok(Self::checksum_cancellable(slice_size, data, cancelled)?.as_ref() == Some(self))
+    }
+
+    fn checksum_cancellable(
+        slice_size: u64,
+        data: &[u8],
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Option<Self>, Error> {
         static ZEROS: [u8; 4096] = [0; 4096];
-        let mut pad = slice_size.checked_sub(data.len() as u64)?;
+        let Some(mut pad) = slice_size.checked_sub(data.len() as u64) else {
+            return Ok(None);
+        };
         let mut md5 = Md5::new();
-        md5.update(data);
-        let mut crc = infinidysk_yenc::crc32(0, data);
+        let mut crc = 0;
+        for chunk in data.chunks(65_536) {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            md5.update(chunk);
+            crc = infinidysk_yenc::crc32(crc, chunk);
+        }
         while pad > 0 {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
             let n = usize::try_from(pad).map_or(ZEROS.len(), |p| p.min(ZEROS.len()));
             md5.update(&ZEROS[..n]);
             crc = infinidysk_yenc::crc32(crc, &ZEROS[..n]);
             pad -= n as u64;
         }
-        Some(Self {
+        Ok(Some(Self {
             md5: md5.finalize().into(),
             crc32: crc,
-        })
+        }))
     }
 }
 

@@ -17,6 +17,7 @@ pub struct Job {
     pub meta_blob: Option<Uuid>,
     pub meta_generation: Option<i64>,
     pub generation: i64,
+    pub claim_generation: i64,
     pub verify_only: bool,
     pub state: i16,
     pub attempts: i32,
@@ -38,45 +39,65 @@ pub struct Job {
     pub file_path: Option<String>,
 }
 
+/// Captured from a claimed job, never reconstructed from its current database row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Claim {
+    id: Uuid,
+    generation: i64,
+}
+
+impl Job {
+    pub const fn claim(&self) -> Claim {
+        Claim {
+            id: self.id,
+            generation: self.claim_generation,
+        }
+    }
+}
+
 macro_rules! columns {
-    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at, scan_at, repair_on_failure, checked_articles, total_articles, completed_requests, missing_requests" };
+    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, claim_generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at, scan_at, repair_on_failure, checked_articles, total_articles, completed_requests, missing_requests" };
 }
 
 impl Db {
     pub async fn update_par2_requests(
         &self,
-        id: Uuid,
+        claim: Claim,
         completed: i64,
         missing: i64,
     ) -> Result<(), Error> {
         if missing < 0 || completed < missing {
             return Err(Error::RepairBounds("request progress"));
         }
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET completed_requests = $2, missing_requests = $3 WHERE id = $1 AND state IN (1, 6)")
-            .bind(id).bind(completed).bind(missing).execute(pool).await?.rows_affected());
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET completed_requests = $2, missing_requests = $3 WHERE id = $1 AND claim_generation = $4 AND state IN (1, 6)")
+            .bind(claim.id).bind(completed).bind(missing).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
 
     /// Playback preemption does not consume a provider/storage retry.
-    pub async fn yield_par2_attempt(&self, id: Uuid, claimed_attempt: i32) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET attempts = attempts - 1 WHERE id = $1 AND state = 1 AND attempts = $2 AND attempts > 0")
-            .bind(id).bind(claimed_attempt).execute(pool).await?.rows_affected());
+    pub async fn yield_par2_attempt(
+        &self,
+        claim: Claim,
+        claimed_attempt: i32,
+    ) -> Result<(), Error> {
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET attempts = attempts - 1 WHERE id = $1 AND claim_generation = $3 AND state = 1 AND attempts = $2 AND attempts > 0")
+            .bind(claim.id).bind(claimed_attempt).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
 
     /// Release the availability slot and queue its repair in the same commit, even at capacity.
-    pub async fn escalate_par2(&self, id: Uuid, now: i64) -> Result<bool, Error> {
+    pub async fn escalate_par2(&self, claim: Claim, now: i64) -> Result<bool, Error> {
         let _serial = self.searches.lock().await;
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
             let source: Option<(Uuid, i64, Option<i64>)> = sqlx::query_as(
-                "UPDATE repair_jobs SET state = 5, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) RETURNING nzb_blob, generation, scan_at")
-                .bind(id).bind(now).fetch_optional(&mut *tx).await?;
+                "UPDATE repair_jobs SET state = 5, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $3 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) RETURNING nzb_blob, generation, scan_at")
+                .bind(claim.id).bind(now).bind(claim.generation).fetch_optional(&mut *tx).await?;
             let Some((nzb, generation, scan_at)) = source else { return Ok(false) };
             let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = FALSE")
                 .bind(nzb).bind(generation).fetch_optional(&mut *tx).await?;
             if let Some(existing) = existing {
-                sqlx::query("UPDATE repair_jobs SET state = 0, attempts = 0, reason = '', next_at = $2, updated_at = $2, started_at = NULL, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, verified_bytes = 0, completed_requests = 0, missing_requests = 0, scan_at = $3 WHERE id = $1 AND state IN (2, 3, 5, 6)")
+                sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, started_at = NULL, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, verified_bytes = 0, completed_requests = 0, missing_requests = 0, scan_at = $3 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                     .bind(existing).bind(now).bind(scan_at).execute(&mut *tx).await?;
             } else {
                 sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, generation, verify_only, next_at, updated_at, scan_at) VALUES ($1, $2, $3, FALSE, $4, $4, $5)")
@@ -89,15 +110,15 @@ impl Db {
 
     pub async fn update_availability_progress(
         &self,
-        id: Uuid,
+        claim: Claim,
         checked: i64,
         total: i64,
     ) -> Result<(), Error> {
         if checked < 0 || total < checked {
             return Err(Error::RepairBounds("article progress"));
         }
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET checked_articles = $2, total_articles = $3 WHERE id = $1 AND state IN (1, 6)")
-            .bind(id).bind(checked).bind(total).execute(pool).await?.rows_affected());
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET checked_articles = $2, total_articles = $3 WHERE id = $1 AND claim_generation = $4 AND state IN (1, 6)")
+            .bind(claim.id).bind(checked).bind(total).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
 
@@ -109,7 +130,7 @@ impl Db {
         prefer_scan: bool,
     ) -> Result<Option<Job>, Error> {
         Ok(on!(self, pool => sqlx::query_as(concat!(
-            "UPDATE repair_jobs SET state = 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
+            "UPDATE repair_jobs SET state = 1, claim_generation = claim_generation + 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
             "(SELECT id FROM repair_jobs WHERE state IN (0, 4) AND next_at <= $1 AND verify_only = $2 ",
             "ORDER BY CASE WHEN (scan_at IS NOT NULL) = $3 THEN 0 ELSE 1 END, next_at, id LIMIT 1) ",
             "AND state IN (0, 4) RETURNING ", columns!()))
@@ -160,7 +181,7 @@ impl Db {
     /// Persist live progress without overwriting a cancellation or completed result.
     pub async fn update_par2_progress(
         &self,
-        id: Uuid,
+        claim: Claim,
         phase: &str,
         transferred: i64,
         stored: i64,
@@ -169,8 +190,8 @@ impl Db {
         if transferred < 0 || stored < 0 || phase.len() > 128 {
             return Err(Error::RepairBounds("job progress"));
         }
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET reason = $2, transferred_bytes = $3, stored_bytes = $4, updated_at = $5 WHERE id = $1 AND state = 1")
-            .bind(id).bind(phase).bind(transferred).bind(stored).bind(now).execute(pool).await?.rows_affected());
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET reason = $2, transferred_bytes = $3, stored_bytes = $4, updated_at = $5 WHERE id = $1 AND claim_generation = $6 AND state = 1")
+            .bind(claim.id).bind(phase).bind(transferred).bind(stored).bind(now).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
 
@@ -181,12 +202,12 @@ impl Db {
         )
     }
 
-    pub async fn set_par2_verified(&self, id: Uuid, bytes: i64) -> Result<(), Error> {
+    pub async fn set_par2_verified(&self, claim: Claim, bytes: i64) -> Result<(), Error> {
         if bytes < 0 {
             return Err(Error::RepairBounds("verified byte count"));
         }
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET verified_bytes = $2 WHERE id = $1 AND state IN (1, 6)")
-            .bind(id).bind(bytes).execute(pool).await?.rows_affected());
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET verified_bytes = $2 WHERE id = $1 AND claim_generation = $3 AND state IN (1, 6)")
+            .bind(claim.id).bind(bytes).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
     pub async fn advance_par2_scan(&self, old: &str, new: &str) -> Result<bool, Error> {
@@ -253,7 +274,7 @@ impl Db {
             let state: Option<i16> = sqlx::query_scalar("SELECT state FROM repair_jobs WHERE id = $1")
                 .bind(id).fetch_optional(&mut *tx).await?;
             if scan_at.is_none() && state.is_some_and(|state| matches!(state, 0 | 4)) {
-                sqlx::query("UPDATE repair_jobs SET scan_at = NULL, next_at = $2 WHERE id = $1 AND state IN (0, 4)")
+                sqlx::query("UPDATE repair_jobs SET scan_at = NULL, next_at = $2, claim_generation = claim_generation + 1 WHERE id = $1 AND state IN (0, 4)")
                     .bind(id).bind(now).execute(&mut *tx).await?;
                 tx.commit().await?;
                 return Ok(());
@@ -262,7 +283,7 @@ impl Db {
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
             if count >= 128 { return Err(Error::RepairBounds("pending job count")); }
-            sqlx::query("UPDATE repair_jobs SET state = 0, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
+            sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                 .bind(id).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;
             tx.commit().await?;
             Ok(())
@@ -324,7 +345,7 @@ impl Db {
     pub async fn claim_par2(&self, now: i64) -> Result<Option<Job>, Error> {
         // Atomic UPDATE also prevents duplicate claims from concurrent async callers.
         Ok(on!(self, pool => sqlx::query_as(concat!(
-            "UPDATE repair_jobs SET state = 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
+            "UPDATE repair_jobs SET state = 1, claim_generation = claim_generation + 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
             "(SELECT id FROM repair_jobs WHERE state IN (0, 4) AND next_at <= $1 ORDER BY next_at, id LIMIT 1) ",
             "AND state IN (0, 4) RETURNING ", columns!()))
             .bind(now).fetch_optional(pool).await?))
@@ -340,7 +361,7 @@ impl Db {
     #[allow(clippy::too_many_arguments)] // One persisted result, including its measured byte counters.
     pub async fn finish_par2(
         &self,
-        id: Uuid,
+        claim: Claim,
         state: i16,
         reason: &str,
         transferred: i64,
@@ -357,9 +378,9 @@ impl Db {
         }
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
-            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND state IN (1, 6) RETURNING state, nzb_blob")
-                .bind(id).bind(state).bind(reason).bind(transferred).bind(stored).bind(now).bind(retry.unwrap_or(now))
-                .fetch_optional(&mut *tx).await?;
+            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND state IN (1, 6) RETURNING state, nzb_blob")
+                .bind(claim.id).bind(state).bind(reason).bind(transferred).bind(stored).bind(now).bind(retry.unwrap_or(now))
+                .bind(claim.generation).fetch_optional(&mut *tx).await?;
             if let Some((state, Some(source))) = result && state != 4 { release_nzb!(self, tx, source); }
             tx.commit().await?;
         });

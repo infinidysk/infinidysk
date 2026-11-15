@@ -5,6 +5,20 @@ use sha2::{Digest as _, Sha256};
 use crate::{Db, Error, Pool, on};
 
 impl Db {
+    /// Keep a durable failure report separate from staged, usable candidate bytes.
+    /// Original C# files remain untouched in their source directory.
+    pub async fn mark_legacy_repair_unusable(&self, hash: &str, reason: &str) -> Result<(), Error> {
+        on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            sqlx::query("DELETE FROM legacy_repair_articles WHERE hash = $1")
+                .bind(hash).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+                .bind(format!("legacy.repair.unusable.{hash}")).bind(reason).execute(&mut *tx).await?;
+            tx.commit().await?;
+        });
+        Ok(())
+    }
+
     pub async fn stage_legacy_repair(
         &self,
         hash: &str,
@@ -23,8 +37,14 @@ impl Db {
         {
             return Err(Error::Corrupt("invalid legacy repair candidate"));
         }
-        on!(self, pool => sqlx::query("INSERT INTO legacy_repair_articles (hash, header, payload, sha256) VALUES ($1, $2, $3, $4) ON CONFLICT (hash) DO NOTHING")
-            .bind(hash).bind(header).bind(bytes).bind(checksum).execute(pool).await?.rows_affected());
+        on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            sqlx::query("INSERT INTO legacy_repair_articles (hash, header, payload, sha256) VALUES ($1, $2, $3, $4) ON CONFLICT (hash) DO NOTHING")
+                .bind(hash).bind(header).bind(bytes).bind(checksum).execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM config WHERE key = $1")
+                .bind(format!("legacy.repair.unusable.{hash}")).execute(&mut *tx).await?;
+            tx.commit().await?;
+        });
         Ok(())
     }
 
