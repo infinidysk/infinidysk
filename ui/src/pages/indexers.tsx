@@ -1,12 +1,13 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Pencil, PlugZap, Plus, Trash2 } from "lucide-react";
+import { Info, Loader2, Pencil, PlugZap, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmButton, EditorSheet, Empty, Failure, Field, IconButton, Loading, SettingsSection, Status, Toggle } from "../ui";
-import { api, body, type Schemas } from "../api/client";
+import { api, body, HttpError, type Schemas } from "../api/client";
 import { MASK, notAPassword, useSettings } from "../settings";
 
 type Indexer = Schemas["IndexerRead"];
@@ -22,7 +23,8 @@ export function Indexers({ title, description }: { title: string; description: s
   const [editing, setEditing] = useState<Indexer | null>(null);
   const [draft, setDraft] = useState<Indexer | null>(null);
   const [checked, setChecked] = useState<{ revision: string; result: ConnectionResult } | null>(null);
-  // Counts editor openings, so a save that finishes late cannot close a newer editor.
+  // Counts editor openings and closings, so a save that finishes late cannot close a newer
+  // editor; its result is reported with a toast instead.
   const session = useRef(0);
   // Returns the refetch, so a mutation that awaits it stays pending until the list has the new revision.
   const updated = () =>
@@ -31,7 +33,7 @@ export function Indexers({ title, description }: { title: string; description: s
       client.invalidateQueries({ queryKey: ["settings"] }),
     ]);
   const save = useMutation({
-    mutationFn: ({ value }: { value: Indexer; session: number }) =>
+    mutationFn: ({ value }: { value: Indexer; base: Indexer; session: number }) =>
       value.id
         ? body(api.PUT("/api/v1/indexers/{id}", { params: { path: { id: value.id } }, body: value }))
         : body(api.POST("/api/v1/indexers", { body: {
@@ -40,17 +42,43 @@ export function Indexers({ title, description }: { title: string; description: s
             api_key: value.api_key,
             enabled: value.enabled,
           } })),
-    onSuccess: (_, { session: saved }) => {
+    onSuccess: (saved, { session: from }) => {
+      // The cache gets the new revision at once, so an editor opened before the refetch is current.
+      client.setQueryData<Indexer[]>(["indexers"], (list) =>
+        list && (list.some((i) => i.id === saved.id) ? list.map((i) => (i.id === saved.id ? saved : i)) : [...list, saved]),
+      );
       void updated();
       setChecked(null);
-      if (saved === session.current) setEditing(null);
+      if (from === session.current) setEditing(null);
+      else toast.success(`Saved ${saved.name}`);
     },
-    onError: () => void updated(),
+    onError: async (error, { value, base, session: from }) => {
+      await updated();
+      if (from !== session.current) {
+        toast.error(error.message);
+        return;
+      }
+      // Another session changed this indexer: keep the user's edits on top of the new revision.
+      const fresh = error instanceof HttpError && error.status === 409
+        ? client.getQueryData<Indexer[]>(["indexers"])?.find((i) => i.id === value.id)
+        : undefined;
+      if (fresh) {
+        const edits = Object.fromEntries(
+          (Object.keys(value) as (keyof Indexer)[])
+            .filter((key) => key !== "revision" && value[key] !== base[key])
+            .map((key) => [key, value[key]]),
+        );
+        setEditing(fresh);
+        setDraft({ ...fresh, ...edits });
+      }
+    },
   });
   const remove = useMutation({
     mutationFn: (id: string) => body(api.DELETE("/api/v1/indexers/{id}", { params: { path: { id } } })),
     onSuccess: updated,
   });
+  const nameMissing = !!draft && draft.name !== "" && !draft.name.trim();
+  const urlMissing = !!draft && draft.base_url !== "" && !draft.base_url.trim();
   const toggle = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
       body(api.PATCH("/api/v1/indexers/{id}/enabled", { params: { path: { id } }, body: { enabled } })),
@@ -91,7 +119,8 @@ export function Indexers({ title, description }: { title: string; description: s
     <SettingsSection title={title} description={description} actions={addButton("default")}>
       {managed && (
         <Alert>
-          <AlertDescription>Indexers are managed by environment variables and cannot be edited here.</AlertDescription>
+          <Info />
+          <AlertDescription>Indexers are set by environment variables and cannot be changed here.</AlertDescription>
         </Alert>
       )}
       {indexers.isPending || settings.isPending ? <Loading /> : indexers.isError ? <Failure error={indexers.error} /> : null}
@@ -101,7 +130,7 @@ export function Indexers({ title, description }: { title: string; description: s
       {test.isError && <Failure error={test.error} />}
       {!indexers.isPending && !indexers.isError && (
         list.length === 0 ? (
-          <Empty title="No indexers" action={!locked && addButton("outline")}>
+          <Empty title="No indexers yet" action={!locked && addButton("outline")}>
             Add a Newznab-compatible indexer to search it and queue its NZBs.
           </Empty>
         ) : (
@@ -115,10 +144,13 @@ export function Indexers({ title, description }: { title: string; description: s
                   </div>
                   <div className="text-muted-foreground break-all font-mono text-xs">{item.base_url}</div>
                   {checked?.revision === item.revision && (
-                    <div className="mt-1">
+                    <div className="mt-1 space-y-0.5" role={checked.result.success ? "status" : "alert"}>
                       <Status tone={checked.result.success ? "success" : "destructive"}>
-                        {checked.result.success ? "Connected" : checked.result.error ?? "Not connected"}
+                        {checked.result.success ? "Connected" : "Can’t connect"}
                       </Status>
+                      {!checked.result.success && checked.result.error && (
+                        <p className="text-destructive text-xs break-words">{checked.result.error}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -161,8 +193,9 @@ export function Indexers({ title, description }: { title: string; description: s
                       icon={<Trash2 />}
                       label={`Remove ${item.name}`}
                       title={`Remove ${item.name}?`}
-                      message="The indexer configuration will be deleted."
+                      message="Search stops using it right away."
                       confirm="Remove"
+                      disabled={remove.isPending}
                       onConfirm={() => remove.mutate(item.id)}
                     />
                   )}
@@ -174,7 +207,7 @@ export function Indexers({ title, description }: { title: string; description: s
       )}
       <EditorSheet
         open={editing !== null}
-        title={editing?.id ? `Edit ${editing.name}` : "Add indexer"}
+        title={editing?.id ? `${locked ? "View" : "Edit"} ${editing.name}` : "Add indexer"}
         description="Newznab API connection settings."
         dirty={JSON.stringify(editing) !== JSON.stringify(draft)}
         saving={save.isPending}
@@ -182,21 +215,25 @@ export function Indexers({ title, description }: { title: string; description: s
         submit={editing?.id ? "Save changes" : "Add indexer"}
         readOnly={locked}
         onSubmit={() => {
-          if (!locked && !save.isPending && draft && draft.name.trim() && draft.base_url.trim() && draft.api_key && (!keyRequired || draft.api_key !== MASK)) {
+          if (!locked && !save.isPending && editing && draft && draft.name.trim() && draft.base_url.trim() && draft.api_key && (!keyRequired || draft.api_key !== MASK)) {
             save.mutate({
               value: { ...draft, name: draft.name.trim(), base_url: draft.base_url.trim() },
+              base: editing,
               session: session.current,
             });
           }
         }}
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          session.current += 1;
+          setEditing(null);
+        }}
       >
         {draft && (
           <fieldset disabled={locked || save.isPending} className="space-y-4">
-            <Field id="indexer-name" label="Name" layout="horizontal">
+            <Field id="indexer-name" label="Name" layout="horizontal" error={nameMissing ? "Enter a name." : undefined}>
               <Input id="indexer-name" required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             </Field>
-            <Field id="indexer-url" label="Newznab URL" layout="horizontal">
+            <Field id="indexer-url" label="Newznab URL" layout="horizontal" error={urlMissing ? "Enter the Newznab URL." : undefined}>
               <Input id="indexer-url" type="url" className="font-mono" required placeholder="https://indexer.example/api" value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })} />
             </Field>
             <Field
