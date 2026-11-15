@@ -441,6 +441,42 @@ async fn addurl_unconfigured_local_target_keeps_sab_failure_history_without_conn
 }
 
 #[tokio::test]
+async fn addurl_falls_back_when_the_served_file_name_is_unusable() {
+    use axum::routing::get as route;
+
+    let indexer = Router::new().route(
+        "/get",
+        route(|| async {
+            (
+                [(
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename*=UTF-8''a%2Fb.nzb",
+                )],
+                NZB,
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, indexer).await });
+    let (app, db) = setup_with_local_indexer(Some(&base)).await;
+
+    let (code, body) = send(
+        &app,
+        get(&format!("mode=addurl&name={base}/get&apikey=key")),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let queued = db.queue().await.unwrap();
+    assert_eq!(queued.len(), 1);
+    assert!(
+        queued[0].file_name.starts_with("Unnamed NZB "),
+        "{}",
+        queued[0].file_name
+    );
+}
+
+#[tokio::test]
 async fn addurl_follows_redirects_and_records_failures() {
     use axum::response::Redirect;
     use axum::routing::get as route;

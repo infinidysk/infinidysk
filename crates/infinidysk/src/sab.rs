@@ -308,8 +308,14 @@ impl Params {
                             params.nzb = Some((file_name, data));
                         }
                     } else {
-                        let value =
-                            String::from_utf8(data).map_err(|_| bad("Invalid form field"))?;
+                        let value = String::from_utf8(data).map_err(|_| {
+                            // Before the key matches, every rejection stays 401.
+                            if authorized {
+                                bad("Invalid form field")
+                            } else {
+                                Fail::Auth("API Key Required")
+                            }
+                        })?;
                         if name.eq_ignore_ascii_case("apikey") && !value.is_empty() {
                             if expected_key.is_some_and(|expected| {
                                 !expected.is_empty() && same(value.as_bytes(), expected.as_bytes())
@@ -750,9 +756,17 @@ async fn add_url(state: &Sab, ctx: &Ctx, p: &Params) -> Result<Value, Fail> {
     // ponytail: with no name anywhere the job is named by time; reading the NZB's own
     // `<meta type="name">` would do better if unnamed URLs turn up.
     let fallback = format!("Unnamed NZB {}", now_ms());
+    // A name the server sent that we cannot use falls back, like SABnzbd, instead of
+    // refusing the job.
     let name = given
         .map(str::to_owned)
-        .or_else(|| fetched.as_ref().ok().and_then(|f| f.file_name.clone()))
+        .or_else(|| {
+            fetched
+                .as_ref()
+                .ok()
+                .and_then(|f| f.file_name.clone())
+                .filter(|name| nzb_file_name(name).is_ok())
+        })
         .unwrap_or(fallback);
     let file_name = nzb_file_name(&name).map_err(bad)?;
     let job = Submission {
