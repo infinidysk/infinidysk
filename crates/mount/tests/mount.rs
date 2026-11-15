@@ -5,6 +5,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use infinidysk_core::{
@@ -22,6 +23,7 @@ const ARTICLE: usize = 4096;
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs /dev/fuse and root for cross-UID checks"]
+#[allow(clippy::significant_drop_tightening)] // Capture the session before changing bytes; apply consumes it afterward.
 async fn reads_the_tree_through_the_kernel() {
     assert!(
         nix::unistd::geteuid().is_root(),
@@ -54,6 +56,42 @@ async fn reads_the_tree_through_the_kernel() {
         priority: 0,
         backbone: None,
     }]));
+    let repaired = Arc::new(AtomicBool::new(false));
+    client.set_repairs(Box::new({
+        let repaired = Arc::clone(&repaired);
+        let file_size = data.len() as u64;
+        let bodies: std::collections::HashMap<_, _> = articles
+            .iter()
+            .enumerate()
+            .map(|(index, article)| {
+                let start = index * ARTICLE;
+                let data: Vec<u8> = data[start..(start + ARTICLE).min(data.len())]
+                    .iter()
+                    .map(|byte| byte ^ 0x80)
+                    .collect();
+                (
+                    article.message_id.clone(),
+                    infinidysk_nntp::Body {
+                        data: data.into(),
+                        offset: start as u64,
+                        file_size,
+                        part: None,
+                        total: None,
+                    },
+                )
+            })
+            .collect();
+        move |key| {
+            if !repaired.load(Ordering::SeqCst) {
+                return None;
+            }
+            let infinidysk_nntp::RepairKey::Article(id) = key else {
+                return None;
+            };
+            let body = bodies.get(id)?.clone();
+            Some(Box::pin(async move { Ok(Some(body)) }))
+        }
+    }));
 
     let tmp = std::env::temp_dir().join(format!("infinidysk-fuse-{}", ItemId::new()));
     std::fs::create_dir_all(&tmp).unwrap();
@@ -117,8 +155,10 @@ async fn reads_the_tree_through_the_kernel() {
         until: Instant::now() + Duration::from_secs(600),
         capacity: 10_000,
     }));
+    let invalidator = Arc::new(infinidysk_mount::Invalidator::default());
     let task = tokio::spawn(run(
         Arc::clone(&vfs),
+        Arc::clone(&invalidator),
         Config {
             mount_dir: mount.clone(),
             uid: 1234,
@@ -133,6 +173,7 @@ async fn reads_the_tree_through_the_kernel() {
     ));
 
     let rt = tokio::runtime::Handle::current();
+    let read_vfs = Arc::clone(&vfs);
     let checks = tokio::task::spawn_blocking(move || {
         let readme = mount.join("README");
         for _ in 0..100 {
@@ -255,6 +296,28 @@ async fn reads_the_tree_through_the_kernel() {
             "the moved link still plays"
         );
         assert!(std::fs::remove_dir(mount.join("completed-symlinks/tv")).is_err());
+
+        // Both aliases have cached pages. Repair must update even already-open files.
+        let alias = std::fs::File::open(&target).unwrap();
+        let mut bytes = vec![0; data.len()];
+        std::os::unix::fs::FileExt::read_exact_at(&alias, &mut bytes, 0).unwrap();
+        assert_eq!(bytes, data);
+        let fence = read_vfs.read_fence(file.id);
+        for enabled in [true, false] {
+            let mut writers = [rt.block_on(fence.write())];
+            let publication = invalidator.prepare(&mut writers).unwrap();
+            repaired.store(enabled, Ordering::SeqCst);
+            rt.block_on(publication.apply()).unwrap();
+            drop(writers);
+            let expected: Vec<_> = data
+                .iter()
+                .map(|byte| if enabled { byte ^ 0x80 } else { *byte })
+                .collect();
+            for opened in [&*f, &alias] {
+                std::os::unix::fs::FileExt::read_exact_at(opened, &mut bytes, 0).unwrap();
+                assert_eq!(bytes, expected);
+            }
+        }
 
         // Reads on an open file must not need the database: once its attributes expire,
         // the next buffered read refreshes them with a GETATTR on its handle before serving

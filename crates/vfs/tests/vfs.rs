@@ -270,7 +270,7 @@ async fn serves_content_links_ids_and_queued_nzbs() {
     .with_cache(Arc::new(Cache::new(true, 1 << 20)))
     .with_report({
         let faults = Arc::clone(&faults);
-        Arc::new(move |id, index, fault| faults.lock().unwrap().push((id, index, fault)))
+        Arc::new(move |id, _version, index, fault| faults.lock().unwrap().push((id, index, fault)))
     });
 
     assert_eq!(

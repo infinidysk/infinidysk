@@ -72,6 +72,122 @@ fn nzb(articles: &[Article], len: usize, name: &str) -> Vec<u8> {
 
 type Log = Arc<(Mutex<Vec<String>>, AtomicBool)>;
 
+#[tokio::test]
+async fn a_check_discards_observations_when_repairs_change_during_provider_reads() {
+    use infinidysk_core::{FileMeta, blob};
+    for metadata_change in [true, false] {
+        let (articles, len) = mkv("health-publication");
+        let server = LoopbackServer::start(articles.clone()).await.unwrap();
+        let (db, item, _) = import(&server, &articles, len).await;
+        let (_arr_tx, arr) = watch::channel(Vec::new());
+        let (_settings_tx, settings) = watch::channel(Settings::default());
+        let health = Health::new(db.clone(), client(&server), arr, settings)
+            .unwrap()
+            .with_par2();
+        let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+        status.state = HealthState::Unchecked;
+        status.last_check = None;
+        status.next_check = Some(0);
+        db.set_health(item.id, &status, Recheck::None)
+            .await
+            .unwrap();
+        server.stall_article(&articles[0].message_id, 1, Duration::from_millis(500));
+        let checking = tokio::spawn(async move { health.step().await.unwrap() });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while server.stalled(&articles[0].message_id) == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+            .await
+            .unwrap();
+        let meta_id = item.meta_blob.unwrap();
+        let raw = db.blob(meta_id).await.unwrap().unwrap();
+        let mut metadata = blob::decode_meta(&raw).unwrap();
+        let FileMeta::Nzb(file) = &mut metadata else {
+            panic!("plain file")
+        };
+        if metadata_change {
+            file.segments.items[0]
+                .fallbacks
+                .push("after-publication@loopback".into());
+            db.update_blob(meta_id, &blob::encode_meta(&metadata).unwrap())
+                .await
+                .unwrap();
+        } else {
+            let source = db
+                .repair_source(infinidysk_db::repair::Owner::Item(item.id))
+                .await
+                .unwrap()
+                .unwrap();
+            let patch = infinidysk_core::repair::Patch {
+                id: infinidysk_core::PatchId::new(),
+                source: infinidysk_core::repair::Source {
+                    set: [1; 16],
+                    file: [2; 16],
+                    range: infinidysk_core::ByteRange {
+                        start: 0,
+                        end: ARTICLE as u64,
+                    },
+                    file_length: len as u64,
+                    message_id: Some(articles[0].message_id.clone()),
+                    part: Some(1),
+                    total: Some(u32::try_from(articles.len()).unwrap()),
+                },
+                sha256: [3; 32],
+            };
+            // Only the SQL publication boundary is exercised; this client never reads the patch.
+            assert!(db.publish_patches(&source, &[patch]).await.unwrap());
+        }
+        drop(paused);
+        assert!(checking.await.unwrap());
+        let (_, result) = db.health(item.id).await.unwrap().unwrap();
+        assert_eq!(
+            result.last_check, None,
+            "an old observation must not become a current check"
+        );
+        assert_eq!(result.state, HealthState::Unchecked);
+        assert_eq!(
+            blob::decode_meta(&db.blob(meta_id).await.unwrap().unwrap()).unwrap(),
+            metadata
+        );
+    }
+}
+
+#[tokio::test]
+async fn pending_par2_repair_defers_arr_replacement_and_releases_write_admission() {
+    let (articles, len) = mkv("par2-health");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (_arr_tx, arr) = watch::channel(Vec::new());
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_par2();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Repairing;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    assert!(health.step().await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Repairing);
+    assert_eq!(
+        db.par2_result(infinidysk_db::repair::Owner::Item(item.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        0
+    );
+    let _paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+        .await
+        .unwrap();
+}
+
 /// A 100 KB MKV posted under `prefix`.
 fn mkv(prefix: &str) -> (Vec<Article>, usize) {
     let mut data: Vec<u8> = (0..100_000u32)

@@ -7,6 +7,7 @@
 
 #![allow(clippy::cast_precision_loss)] // Byte counts stay far below 2^52.
 
+mod repair_bench;
 mod usage;
 
 use std::error::Error;
@@ -188,6 +189,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?;
     let client_rt = Builder::new_multi_thread().enable_all().build()?;
+    if filter.starts_with("par2-") {
+        return repair_bench::run(&filter, json_path.as_deref(), &server_rt, &client_rt);
+    }
 
     let mut json = String::new();
     let mut shape = None;

@@ -43,13 +43,14 @@ fn accepts_what_sabnzbd_accepts() {
         (video.name(), video.date),
         ("video.mkv", Some(1_700_000_000))
     );
-    let seg = |id: &str, bytes| Segment {
+    let seg = |id: &str, bytes, number| Segment {
         id: id.to_owned(),
         bytes,
+        number,
     };
     assert_eq!(
         video.segments,
-        [seg("a@x", 100), seg("c@x", 300), seg("g@x", 10)]
+        [seg("a@x", 100, 1), seg("c@x", 300, 3), seg("g@x", 10, 7)]
     );
     assert_eq!(video.bytes(), 410);
     assert!(video.gap && !unknown.gap);
@@ -74,6 +75,28 @@ fn reads_gzip_and_latin1_and_rejects_empty_or_broken() {
         Err(Error::Empty)
     ));
     assert!(matches!(parse(b"<nzb><file></nzb>"), Err(Error::Xml(_))));
+}
+
+#[test]
+fn extreme_part_numbers_keep_their_order_without_overflowing_gap_detection() {
+    let xml = format!(
+        "<nzb><file subject=\"a.bin\"><segments>\
+        <segment bytes=\"1\" number=\"{}\">a@x</segment>\
+        <segment bytes=\"1\" number=\"{}\">b@x</segment>\
+        </segments></file></nzb>",
+        i64::MIN,
+        i64::MAX
+    );
+    let nzb = parse(xml.as_bytes()).unwrap();
+    assert!(nzb.files[0].gap);
+    assert_eq!(
+        nzb.files[0]
+            .segments
+            .iter()
+            .map(|s| s.number)
+            .collect::<Vec<_>>(),
+        [i64::MIN, i64::MAX]
+    );
 }
 
 /// Local sanity check: `INFINIDYSK_SAMPLE_NZBS=scrap/samplenzb cargo test -p infinidysk-queue -- --ignored`.

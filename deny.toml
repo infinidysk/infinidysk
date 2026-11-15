@@ -44,3 +44,6 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# Temporary checked-invalidation dependency; Cargo.toml pins the reviewed commit.
+allow-git = ["https://github.com/infinidysk/infinidysk-fuse"]
+required-git-spec = "rev"

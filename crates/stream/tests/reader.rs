@@ -18,6 +18,302 @@ const ARTICLE_SIZE: usize = 16 * 1024;
 const MISSING: usize = 5;
 
 #[tokio::test]
+async fn waiting_segment_admission_leaves_memory_for_other_readers() {
+    let client = Arc::new(Client::new([]));
+    let cache = Arc::new(Cache::new(true, 1024));
+    cache.insert("admission@test", bytes::Bytes::from_static(b"new"));
+    let budget = Budget::new(3);
+    let layout = Arc::new(Layout::new(vec![Segment {
+        message_id: "admission@test".into(),
+        size: 3,
+        begin: None,
+    }]));
+    let make_reader = || {
+        SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 1)
+            .with_cache(Arc::clone(&cache))
+            .with_budget(budget.clone())
+    };
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let (release, waiting) = tokio::sync::watch::channel(false);
+    let mut blocked = make_reader().with_access(Arc::new({
+        let entered = Arc::clone(&entered);
+        move |_| {
+            let (entered, mut waiting) = (Arc::clone(&entered), waiting.clone());
+            Box::pin(async move {
+                entered.notify_one();
+                while !*waiting.borrow_and_update() {
+                    waiting.changed().await.map_err(std::io::Error::other)?;
+                }
+                Ok(())
+            })
+        }
+    }));
+    let blocked = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        blocked.read_to_end(&mut bytes).await.unwrap();
+        bytes
+    });
+    tokio::time::timeout(Duration::from_secs(1), entered.notified())
+        .await
+        .unwrap();
+    {
+        let mut free = make_reader();
+        let mut bytes = Vec::new();
+        tokio::time::timeout(Duration::from_secs(1), free.read_to_end(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(bytes, b"new");
+    }
+    release.send_replace(true);
+    assert_eq!(blocked.await.unwrap(), b"new");
+}
+
+#[tokio::test]
+async fn segment_admission_covers_cache_hits_and_known_hole_filler() {
+    for known_hole in [false, true] {
+        let client = Arc::new(Client::new([]));
+        let cache = Arc::new(Cache::new(true, 1024));
+        cache.insert("admission@test", bytes::Bytes::from_static(b"old"));
+        let gaps = Arc::new(Gaps::default());
+        if known_hole {
+            gaps.refresh([0].into_iter().collect(), false);
+        }
+        let mut reader = SegmentReader::new(
+            client,
+            Arc::new(Layout::new(vec![Segment {
+                message_id: "admission@test".into(),
+                size: 3,
+                begin: None,
+            }])),
+            1,
+        )
+        .with_cache(cache)
+        .with_gaps(gaps)
+        .with_access(Arc::new(|id| {
+            Box::pin(async move {
+                assert_eq!(id, "admission@test");
+                Err(std::io::Error::other("publication blocks old bytes"))
+            })
+        }));
+        let mut bytes = Vec::new();
+        let error = reader.read_to_end(&mut bytes).await.unwrap_err();
+        assert!(error.to_string().contains("publication blocks old bytes"));
+        assert_eq!(bytes, [] as [u8; 0]);
+    }
+}
+
+#[tokio::test]
+async fn omitted_articles_keep_separate_source_keys_and_never_use_an_empty_id_cache_entry() {
+    use infinidysk_core::{BlobId, ByteRange, repair::Omitted};
+    use infinidysk_nntp::{Body, RepairKey};
+    let first = Omitted {
+        nzb: BlobId::new(),
+        generation: 0,
+        set: [1; 16],
+        file: [2; 16],
+        range: ByteRange {
+            start: 100,
+            end: 103,
+        },
+        file_length: 200,
+    };
+    let second = Omitted {
+        set: [3; 16],
+        ..first
+    };
+    let missing = Omitted {
+        nzb: BlobId::new(),
+        ..first
+    };
+    let client = Arc::new(Client::new([]));
+    client.set_repairs(Box::new(move |key| {
+        let RepairKey::Omitted(key) = key else {
+            return None;
+        };
+        let data = if *key == first {
+            b"abc"
+        } else if *key == second {
+            b"def"
+        } else {
+            return None;
+        };
+        Some(Box::pin(async {
+            Ok(Some(Body {
+                data: bytes::Bytes::from_static(data),
+                offset: 100,
+                file_size: 200,
+                part: Some(2),
+                total: Some(3),
+            }))
+        }))
+    }));
+    let layout = Arc::new(
+        Layout::new(
+            (0..3)
+                .map(|_| Segment {
+                    message_id: String::new(),
+                    size: 3,
+                    begin: Some(100),
+                })
+                .collect(),
+        )
+        .with_omitted([(0, first), (1, second), (2, missing)])
+        .unwrap(),
+    );
+    let cache = Arc::new(Cache::new(true, 1_000_000));
+    cache.insert("", bytes::Bytes::from_static(b"bad"));
+    for known in [false, true] {
+        let gaps = Arc::new(Gaps::default());
+        if known {
+            gaps.refresh([0, 1, 2].into_iter().collect(), false);
+        }
+        let mut reader = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 3)
+            .with_cache(Arc::clone(&cache))
+            .with_gaps(gaps);
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(bytes, b"abcdef\0\0\0");
+    }
+    let mut reader = SegmentReader::new(client, layout, 3)
+        .with_cache(cache)
+        .with_strict();
+    let mut bytes = Vec::new();
+    assert!(reader.read_to_end(&mut bytes).await.is_err());
+    assert_eq!(bytes, b"abcdef");
+}
+
+#[tokio::test]
+async fn a_repaired_article_is_never_padded_to_fit_stale_layout_sizes() {
+    let client = Arc::new(Client::new([]));
+    client.set_repairs(Box::new(|_| {
+        Some(Box::pin(async {
+            Ok(Some(infinidysk_nntp::Body {
+                data: bytes::Bytes::from_static(b"abc"),
+                offset: 0,
+                file_size: 3,
+                part: None,
+                total: None,
+            }))
+        }))
+    }));
+    let layout = Arc::new(Layout::new(vec![Segment {
+        message_id: "repair@loopback".into(),
+        size: 4,
+        begin: Some(0),
+    }]));
+    for cached in [false, true] {
+        let mut reader = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 1);
+        if cached {
+            reader = reader.with_cache(Arc::new(Cache::new(true, 1_000_000)));
+        }
+        let error = reader.read_to_end(&mut Vec::new()).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+}
+
+#[tokio::test]
+async fn repaired_articles_beat_cached_bytes_and_known_holes_in_order() {
+    for (cached, known, strict, disk) in [
+        (false, false, false, false),
+        (true, false, false, false),
+        (true, true, false, false),
+        (false, true, true, false),
+        (true, false, false, true),
+    ] {
+        let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
+        let served = corpus
+            .articles
+            .iter()
+            .enumerate()
+            .filter_map(|(i, a)| (i != MISSING).then_some(a.clone()));
+        let server = LoopbackServer::start(served).await.unwrap();
+        let (client, layout) = setup(&corpus, &server);
+        let id = corpus.articles[MISSING].message_id.clone();
+        let body = infinidysk_nntp::Body {
+            data: bytes::Bytes::copy_from_slice(
+                &corpus.data[MISSING * ARTICLE_SIZE..(MISSING + 1) * ARTICLE_SIZE],
+            ),
+            offset: (MISSING * ARTICLE_SIZE) as u64,
+            file_size: corpus.data.len() as u64,
+            part: Some(6),
+            total: Some(12),
+        };
+        let repaired_id = id.clone();
+        client.set_repairs(Box::new(move |id| {
+            if !matches!(id, infinidysk_nntp::RepairKey::Article(id) if id == repaired_id) {
+                return None;
+            }
+            let body = body.clone();
+            Some(Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(Some(body))
+            }))
+        }));
+        let cache = Arc::new(Cache::new(!disk, 1_000_000));
+        let dir = std::env::temp_dir().join(format!(
+            "infinidysk-repair-cache-{}",
+            infinidysk_core::ItemId::new()
+        ));
+        if disk {
+            cache
+                .configure(&CacheConfig {
+                    memory_enabled: false,
+                    memory_bytes: 1_000_000,
+                    disk: Some(DiskConfig {
+                        dir: dir.clone(),
+                        max_bytes: 1_000_000,
+                        max_age: Duration::from_secs(3600),
+                    }),
+                })
+                .await;
+        }
+        cache.insert(&id, bytes::Bytes::from(vec![9; ARTICLE_SIZE]));
+        if disk {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while cache.stats().disk.is_none_or(|s| s.items != 1) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        let gaps = Arc::new(Gaps::default());
+        if known {
+            gaps.refresh([MISSING].into_iter().collect(), true);
+        }
+        let mut reader = SegmentReader::new(client, layout, 8)
+            .with_gaps(gaps)
+            .with_budget(Budget::new(4 * ARTICLE_SIZE));
+        if cached {
+            reader = reader.with_cache(Arc::clone(&cache));
+        }
+        if strict {
+            reader = reader.with_strict();
+        }
+        let mut actual = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_to_end(&mut actual))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual, corpus.data);
+        assert_eq!(server.body_commands(), 11);
+        if disk {
+            drop(reader);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while cache.stats().disk.is_none_or(|s| s.items != 12) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            drop(cache);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
 async fn reads_and_seeks_across_segments_zero_filling_missing_ones() {
     let corpus = Corpus::generate(1025, 24, ARTICLE_SIZE);
     let mut served = corpus.articles.clone();

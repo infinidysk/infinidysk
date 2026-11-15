@@ -15,6 +15,151 @@ use tokio::net::TcpListener;
 
 const ARTICLE_SIZE: usize = 16 * 1024;
 
+#[tokio::test]
+async fn an_omitted_repair_must_match_its_exact_posted_range_and_file_length() {
+    use infinidysk_core::{BlobId, ByteRange, repair::Omitted};
+    use infinidysk_nntp::Body;
+    let key = Omitted {
+        nzb: BlobId::new(),
+        generation: 0,
+        set: [1; 16],
+        file: [2; 16],
+        range: ByteRange {
+            start: 100,
+            end: 103,
+        },
+        file_length: 200,
+    };
+    for (offset, file_size, data) in [
+        (101, 200, &b"abc"[..]),
+        (100, 201, &b"abc"[..]),
+        (100, 200, &b"ab"[..]),
+    ] {
+        let client = Client::new([]);
+        client.set_repairs(Box::new(move |_| {
+            Some(Box::pin(async move {
+                Ok(Some(Body {
+                    data: bytes::Bytes::from_static(data),
+                    offset,
+                    file_size,
+                    part: Some(2),
+                    total: Some(3),
+                }))
+            }))
+        }));
+        assert!(matches!(
+            client.repaired_omitted(&key).await,
+            Err(Error::Repair(_))
+        ));
+        assert!(client.repaired("", None).await.unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn repaired_bodies_and_effective_stat_use_no_provider_or_download_permit() {
+    let server = LoopbackServer::start([]).await.unwrap();
+    let downloads = Downloads::new(1);
+    let client = Client::new([provider(server.addr().port(), 0, None, &downloads)]);
+    client.set_repairs(Box::new(|id| {
+        matches!(id, infinidysk_nntp::RepairKey::Article("repair@loopback")).then(|| {
+            Box::pin(async {
+                Ok(Some(infinidysk_nntp::Body {
+                    data: bytes::Bytes::from_static(b"repaired"),
+                    offset: 100,
+                    file_size: 200,
+                    part: Some(2),
+                    total: Some(3),
+                }))
+            }) as infinidysk_nntp::ArticleFuture<'_, Option<infinidysk_nntp::Body>>
+        })
+    }));
+    let available = downloads.available_permits();
+    assert_eq!(
+        client
+            .body_with("repair@loopback", Workload::Stream, None, None, Some(100))
+            .await
+            .unwrap()
+            .data
+            .as_ref(),
+        b"repaired"
+    );
+    assert_eq!(
+        client
+            .hedge("repair@loopback", None, Some(100))
+            .await
+            .unwrap()
+            .data
+            .as_ref(),
+        b"repaired"
+    );
+    client
+        .stat("repair@loopback", Workload::Health, None)
+        .await
+        .unwrap();
+    assert_eq!(server.body_commands(), 0);
+    assert_eq!(downloads.available_permits(), available);
+    assert!(matches!(
+        client
+            .provider_stat("repair@loopback", Workload::Health, None)
+            .await,
+        Err(Error::NotFound)
+    ));
+    assert!(
+        client
+            .body_with("repair@loopback", Workload::Stream, None, None, Some(101))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_local_lookup_never_holds_up_provider_reads() {
+    let corpus = Corpus::generate(1025, 1, ARTICLE_SIZE);
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    let downloads = Downloads::new(1);
+    let client = Arc::new(Client::new([provider(
+        server.addr().port(),
+        0,
+        None,
+        &downloads,
+    )]));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let notify = Arc::clone(&started);
+    client.set_repairs(Box::new(move |id| {
+        if !matches!(id, infinidysk_nntp::RepairKey::Article("waiting@loopback")) {
+            return None;
+        }
+        let notify = Arc::clone(&notify);
+        Some(Box::pin(async move {
+            notify.notify_one();
+            std::future::pending().await
+        }))
+    }));
+    let waiting = {
+        let client = Arc::clone(&client);
+        tokio::spawn(async move {
+            client
+                .body("waiting@loopback", Workload::Stream, None)
+                .await
+        })
+    };
+    started.notified().await;
+    let body = tokio::time::timeout(
+        Duration::from_secs(3),
+        client.body(&corpus.articles[0].message_id, Workload::Stream, None),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(body.data.as_ref(), corpus.data);
+    waiting.abort();
+    assert!(waiting.await.unwrap_err().is_cancelled());
+    assert_eq!(downloads.available_permits(), 1);
+    assert_eq!(server.body_commands(), 1);
+}
+
 fn provider(
     port: u16,
     priority: u32,

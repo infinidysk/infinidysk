@@ -12,5 +12,8 @@ db.sqlite-wal
 # Local scratch space (plans, notes, dumps); never committed.
 /scrap/
 
+# Separate upstream dependency checkout; never include its source in this repository.
+/infinidysk-fuse/
+
 # The Rust skill is private and installed per user; never vendor it here.
 /.agents/skills/rust-skills/

@@ -16,6 +16,7 @@ http-body-util.workspace = true
 infinidysk.workspace = true
 infinidysk-core.workspace = true
 infinidysk-db.workspace = true
+infinidysk-health.workspace = true
 infinidysk-nntp.workspace = true
 infinidysk-queue.workspace = true
 infinidysk-stream.workspace = true
@@ -26,6 +27,7 @@ nix = { workspace = true, features = ["resource"] }
 serde_json.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "sync", "time"] }
+tokio-util.workspace = true
 tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
