@@ -3032,16 +3032,17 @@ async fn post_indexer_test(
     State(admin): State<Arc<Admin>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<IndexerTest>, Fail> {
-    let indexer = admin
-        .config
-        .read()
-        .await
-        .settings()
-        .indexers
-        .iter()
-        .find(|i| i.id == id)
-        .cloned()
-        .ok_or(Fail::NotFound)?;
+    // The revision is taken with the tested indexer, so the result names what was tested.
+    let (indexer, revision) = {
+        let store = admin.config.read().await;
+        let settings = store.settings();
+        let indexer = settings
+            .indexers
+            .iter()
+            .find(|i| i.id == id)
+            .ok_or(Fail::NotFound)?;
+        (indexer.clone(), indexer_read(settings, indexer).revision)
+    };
     let permit = admin
         .indexer_work
         .acquire()
@@ -3055,6 +3056,7 @@ async fn post_indexer_test(
     Ok(Json(IndexerTest {
         success: error.is_none(),
         error,
+        revision,
     }))
 }
 
@@ -3062,6 +3064,8 @@ async fn post_indexer_test(
 struct IndexerTest {
     success: bool,
     error: Option<&'static str>,
+    /// The revision of the indexer settings that were tested.
+    revision: String,
 }
 
 #[cfg(test)]

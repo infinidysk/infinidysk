@@ -2498,6 +2498,8 @@ export interface components {
         };
         IndexerTest: {
             error?: string | null;
+            /** @description The revision of the indexer settings that were tested. */
+            revision: string;
             success: boolean;
         };
         IndexerUpdate: {

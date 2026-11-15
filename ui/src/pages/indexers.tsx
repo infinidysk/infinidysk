@@ -59,7 +59,8 @@ export function Indexers({ title, description }: { title: string; description: s
   });
   const test = useMutation({
     mutationFn: ({ id }: Indexer) => body(api.POST("/api/v1/indexers/{id}/test", { params: { path: { id } } })),
-    onSuccess: (result, { revision }) => setChecked({ revision, result }),
+    // The server names the revision it tested, which can be newer than this row.
+    onSuccess: (result) => setChecked({ revision: result.revision, result }),
   });
   const managed = settings.data?.locked.some((path) => path === "indexers" || path.startsWith("indexers."));
   const locked = !settings.data || managed === true;

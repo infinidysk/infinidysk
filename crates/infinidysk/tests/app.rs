@@ -2612,9 +2612,11 @@ async fn manages_multiple_indexers_through_admin_http() {
     )
     .await;
     assert_eq!(code, "HTTP/1.1 200 OK");
+    let tested: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(tested["success"], true);
     assert_eq!(
-        serde_json::from_str::<Value>(&body).unwrap()["success"],
-        true
+        tested["revision"], a["revision"],
+        "names the tested revision"
     );
     let (code, body) = send(
         addr,
