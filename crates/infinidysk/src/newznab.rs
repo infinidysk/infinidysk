@@ -10,7 +10,8 @@ use uuid::Uuid;
 use crate::config::Indexer;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_BODY: usize = 256_000;
+// An extended item is a few KB, so 500 results need well over 1 MB.
+const MAX_BODY: usize = 4_000_000;
 const MAX_RESULTS: usize = 500;
 const MAX_TITLE_BYTES: usize = 512;
 const MAX_LINK_BYTES: usize = 2048;
@@ -141,7 +142,7 @@ async fn read_response(http: &reqwest::Client, url: Url) -> Result<Vec<u8>, &'st
         .map_err(|_| "Could not read indexer response.")?
     {
         if chunk.len() > MAX_BODY - body.len() {
-            return Err("Indexer response exceeds 256 KB.");
+            return Err("Indexer response exceeds 4 MB.");
         }
         body.extend_from_slice(&chunk);
     }
@@ -1011,7 +1012,7 @@ mod tests {
         let (indexer, task) = mock_search("200 OK", &big, Duration::ZERO).await;
         assert_eq!(
             search(&indexer, "two words", 12).await.unwrap_err(),
-            "Indexer response exceeds 256 KB."
+            "Indexer response exceeds 4 MB."
         );
         task.await.unwrap();
 
@@ -1102,10 +1103,7 @@ mod tests {
     #[tokio::test]
     async fn bounds_and_timeout() {
         let (indexer, task) = fake("200 OK", &"x".repeat(MAX_BODY + 1), Duration::ZERO).await;
-        assert_eq!(
-            test(&indexer).await,
-            Err("Indexer response exceeds 256 KB.")
-        );
+        assert_eq!(test(&indexer).await, Err("Indexer response exceeds 4 MB."));
         task.await.unwrap();
         let (indexer, task) = fake("200 OK", "<caps/>", Duration::from_secs(60)).await;
         assert_eq!(
