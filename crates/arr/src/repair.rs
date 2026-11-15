@@ -607,6 +607,60 @@ pub async fn replace(
             return Ok(());
         }
     }
+    delete_and_search(&s, owner).await
+}
+
+/// Whether the replacement the Arr grabbed for `owner` after `since_ms` (Unix ms) has
+/// failed with nothing else on its way: the Arr still holds the broken file, no search
+/// of the media runs, nothing for it is queued, and every newest grab after `since_ms`
+/// failed. A grab without a date never counts.
+pub async fn replacement_failed(
+    http: &reqwest::Client,
+    arr: &Arr,
+    job: Option<&str>,
+    owner: &Owner,
+    since_ms: i64,
+) -> Result<bool, Error> {
+    if owner.current.is_none() || owner.replaced() {
+        return Ok(false);
+    }
+    let s = Session::open(http, arr).await?;
+    let commands: Vec<Command> = fetch(s.call(Method::GET, "command")).await?;
+    if commands.iter().any(|c| searching(&owner.media, c)) || replacing(&s, job, owner).await? {
+        return Ok(false);
+    }
+    let mut any = false;
+    for grab in newest_grabs(&s, owner).await? {
+        let after = grab
+            .date
+            .as_deref()
+            .and_then(|d| d.parse::<jiff::Timestamp>().ok())
+            .is_some_and(|d| d.as_millisecond() > since_ms);
+        let original = job.is_some_and(|job| {
+            grab.download_id
+                .as_deref()
+                .is_some_and(|id| id.trim().eq_ignore_ascii_case(job))
+        });
+        if !after || original {
+            continue;
+        }
+        if !failed(&s, &grab).await? {
+            return Ok(false);
+        }
+        any = true;
+    }
+    Ok(any)
+}
+
+/// Deletes the owner's file and searches its media, the step [`replace`] ends with when
+/// the Arr's own search brings nothing.
+pub async fn search_again(http: &reqwest::Client, arr: &Arr, owner: &Owner) -> Result<(), Error> {
+    let s = Session::open(http, arr).await?;
+    delete_and_search(&s, owner).await
+}
+
+async fn delete_and_search(s: &Session<'_>, owner: &Owner) -> Result<(), Error> {
+    let call = |method, path: String| s.call(method, &path);
     let (kind, search) = match &owner.media {
         Media::Episodes { ids, .. } => (
             "episodefile",
@@ -664,21 +718,7 @@ async fn own_search(
         if !commands.iter().any(|c| searching(&owner.media, c)) {
             // History precedes queue refresh, but a later failure invalidates its grab.
             for grab in newest_grabs(s, owner).await? {
-                if grab.id <= since {
-                    continue;
-                }
-                let download = grab
-                    .download_id
-                    .as_deref()
-                    .filter(|id| !id.trim().is_empty())
-                    .ok_or(Error::Unexpected("grab history without downloadId"))?;
-                let failed: Page = fetch(s.call(Method::GET, "history").query(&[
-                    ("downloadId", download),
-                    ("eventType", FAILED),
-                    ("pageSize", "1"),
-                ]))
-                .await?;
-                if !failed.records.iter().any(|failure| failure.id > grab.id) {
+                if grab.id > since && !failed(s, &grab).await? {
                     return Ok(true);
                 }
             }
@@ -693,6 +733,22 @@ async fn own_search(
         }
         tokio::time::sleep(SEARCH_POLL.min(deadline - now)).await;
     }
+}
+
+/// Whether a download failure followed `grab`; an older one does not count.
+async fn failed(s: &Session<'_>, grab: &Record) -> Result<bool, Error> {
+    let download = grab
+        .download_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or(Error::Unexpected("grab history without downloadId"))?;
+    let failures: Page = fetch(s.call(Method::GET, "history").query(&[
+        ("downloadId", download),
+        ("eventType", FAILED),
+        ("pageSize", "1"),
+    ]))
+    .await?;
+    Ok(failures.records.iter().any(|failure| failure.id > grab.id))
 }
 
 /// The Arr's newest grab of each of the owner's media.
