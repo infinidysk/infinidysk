@@ -22,10 +22,12 @@ type QueueState = {
   kind: "created" | "existing" | "rejected" | "expired" | "error";
   message: string;
 };
+type Ready = { phase: "ready"; term: string; data: SearchResponse };
 type SearchState =
   | { phase: "idle" }
-  | { phase: "loading"; term: string }
-  | { phase: "ready"; term: string; data: SearchResponse }
+  // `last` keeps the previous results on screen while a new search runs.
+  | { phase: "loading"; term: string; last?: Ready }
+  | Ready
   | { phase: "error"; term: string; error: Error };
 
 function errorMessage(error: unknown): string {
@@ -113,6 +115,8 @@ export function SearchPage() {
   const [readOnly, setReadOnly] = useState(false);
   const activeSearch = useRef<AbortController | null>(null);
   const searchVersion = useRef(0);
+  // The search whose rows are on screen; it lags `searchVersion` while a new search runs.
+  const shownVersion = useRef(0);
   const pendingQueue = useRef(new Set<string>());
   const categories = useMemo(() => {
     const sab = settings.data?.settings.sab;
@@ -140,10 +144,19 @@ export function SearchPage() {
     activeSearch.current?.abort();
     const controller = new AbortController();
     activeSearch.current = controller;
-    setPage(0);
-    setChosen({});
-    setOutcomes({});
-    setSearch({ phase: "loading", term });
+    setSearch((current) => ({
+      phase: "loading",
+      term,
+      last: current.phase === "ready" ? current : current.phase === "loading" ? current.last : undefined,
+    }));
+    // Rows, choices and outcomes of the previous search stay until the new answer replaces them.
+    const replace = (next: SearchState) => {
+      shownVersion.current = version;
+      setPage(0);
+      setChosen({});
+      setOutcomes({});
+      setSearch(next);
+    };
 
     void (async () => {
       try {
@@ -152,14 +165,14 @@ export function SearchPage() {
           signal: controller.signal,
         }));
         if (searchVersion.current === version && !controller.signal.aborted) {
-          setSearch({ phase: "ready", term, data });
+          replace({ phase: "ready", term, data });
         }
       } catch (error) {
         if (searchVersion.current === version && !controller.signal.aborted) {
           if (error instanceof HttpError && error.status === 401) {
             void client.invalidateQueries({ queryKey: authKey });
           }
-          setSearch({ phase: "error", term, error: error instanceof Error ? error : new Error(errorMessage(error)) });
+          replace({ phase: "error", term, error: error instanceof Error ? error : new Error(errorMessage(error)) });
         }
       } finally {
         if (activeSearch.current === controller) activeSearch.current = null;
@@ -173,7 +186,7 @@ export function SearchPage() {
     const previous = outcomes[item.nzb_ref];
     if (previous && previous.kind !== "error") return;
 
-    const version = searchVersion.current;
+    const version = shownVersion.current;
     pendingQueue.current.add(item.nzb_ref);
     setBusy((current) => new Set([...current, item.nzb_ref]));
     setOutcomes((current) => {
@@ -224,7 +237,7 @@ export function SearchPage() {
           return remaining;
         });
       }
-      if (version === searchVersion.current) {
+      if (version === shownVersion.current) {
         setOutcomes((current) => ({ ...current, [item.nzb_ref]: next }));
       } else if (next.kind === "created" || next.kind === "existing") {
         // The row is gone after a new search, so the late outcome is reported with a toast.
@@ -235,14 +248,15 @@ export function SearchPage() {
     })();
   };
 
-  const results = search.phase === "ready" ? search.data.results : [];
+  const shown = search.phase === "ready" ? search : search.phase === "loading" ? search.last : undefined;
+  const refreshing = search.phase === "loading" && shown !== undefined;
+  const results = shown?.data.results ?? [];
   const visible = results.slice(page, page + PAGE);
   const size = (value: number) => (value > 0 ? bytes(value) : "–");
-  const term = search.phase === "idle" ? "" : search.term;
-  const noResults = `No results found for “${term}”. Try another search term, or check the indexer status above.`;
+  const noResults = `No results found for “${shown?.term ?? ""}”. Try another search term, or check the indexer status above.`;
   const announcement =
     search.phase === "loading" ? "Searching enabled indexers…" :
-    search.phase === "ready" ? `${count(results.length, "result")} for “${term}”` : "";
+    search.phase === "ready" ? `${count(results.length, "result")} for “${search.term}”` : "";
 
   const controls = (item: SearchResult) => (
     <QueueControls
@@ -296,7 +310,7 @@ export function SearchPage() {
       {search.phase === "idle" && (
         <Empty title="No search yet">Enter a term and select Search to find NZBs across enabled indexers.</Empty>
       )}
-      {search.phase === "loading" && (
+      {search.phase === "loading" && !refreshing && (
         <section aria-label="Searching indexers">
           <p className="text-muted-foreground mb-3 flex items-center gap-2"><Loader2 className="size-4 animate-spin" /> Searching enabled indexers…</p>
           <Loading />
@@ -308,16 +322,16 @@ export function SearchPage() {
           <Button size="sm" variant="outline" onClick={() => document.getElementById("newznab-query")?.focus()}>Change search</Button>
         </div>
       )}
-      {search.phase === "ready" && (
-        <div className="space-y-6">
+      {shown && (
+        <div className={refreshing ? "space-y-6 opacity-80" : "space-y-6"} aria-busy={refreshing}>
           <section aria-label="Indexer status">
             <h2 className="mb-3 text-sm font-medium">Indexer status</h2>
-            {search.data.indexers.length === 0 ? (
+            {shown.data.indexers.length === 0 ? (
               <Alert><TriangleAlert className="text-warning-text" /><AlertDescription>No enabled indexers. <Link to="/settings/indexers" className="text-primary underline underline-offset-2">Enable or add an indexer in settings</Link> to start searching.</AlertDescription></Alert>
             ) : (
               <Panel>
                 <ul className="divide-y">
-                  {search.data.indexers.map((indexer) => (
+                  {shown.data.indexers.map((indexer) => (
                     <li key={indexer.indexer_id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 px-3 py-2.5">
                       <span className="min-w-0 font-medium break-words">{indexer.indexer_name}</span>
                       <div className="flex min-w-0 flex-col items-start gap-1 sm:items-end">
@@ -333,11 +347,11 @@ export function SearchPage() {
             )}
           </section>
 
-          {search.data.indexers.length > 0 && (
+          {shown.data.indexers.length > 0 && (
             <section aria-label="Search results">
               <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                 <h2 className="text-sm font-medium">Results</h2>
-                <span className="text-muted-foreground text-xs tabular-nums wrap-anywhere">{count(results.length, "result")} for “{search.term}”</span>
+                <span className="text-muted-foreground text-xs tabular-nums wrap-anywhere">{count(results.length, "result")} for “{shown.term}”</span>
               </div>
               <Panel>
                 <div className="hidden md:block">

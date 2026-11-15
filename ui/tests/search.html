@@ -142,6 +142,14 @@
     await act(async () => finishLate());
     await waitFor(() => !queueButton("late").disabled, "Delayed queue request did not finish");
     check(!row("late").textContent.includes("Added to queue"), "Old queue result polluted new search");
+    await type("slow");
+    await submit();
+    await waitFor(() => searches.filter((query) => query === "slow").length === 2, "Refresh search did not start");
+    check(!!row("late"), "A new search removed the previous results before its answer");
+    check(!document.querySelector('[aria-label="Searching indexers"]'), "A new search swapped results for a skeleton");
+    check(document.querySelector('[aria-busy="true"] [aria-label="Search results"]') !== null, "Kept results are not marked busy");
+    await act(async () => finishSlow(response(found("slow"))));
+    await waitFor(() => !!row("slow") && !row("late"), "New results did not replace the kept ones");
     await type("fast");
     await submit();
     await waitFor(() => !!row("created"), "Search results missing after replacement");
