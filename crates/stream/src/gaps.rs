@@ -68,6 +68,12 @@ impl Gaps {
         state.last_event = Some(Instant::now());
     }
 
+    pub(crate) fn repaired(&self, index: usize) {
+        let mut state = self.lock();
+        state.known.remove(&index);
+        state.found.remove(&index);
+    }
+
     /// The reader moved onto a good segment.
     pub(crate) fn good(&self) {
         let mut state = self.lock();

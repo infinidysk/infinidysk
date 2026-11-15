@@ -7,7 +7,7 @@ use std::hash::BuildHasher as _;
 use bytes::Bytes;
 use futures_util::{StreamExt as _, stream};
 use infinidysk_core::media::{self, Exceeded};
-use infinidysk_core::{FileMeta, Segment, Segments};
+use infinidysk_core::{BlobId, FileMeta, Par2Proof, Segment, Segments, repair::Omitted};
 use infinidysk_nntp::{ArticleFuture, Articles, Client, Error as NntpError, Workload};
 
 const MP4: &[&str] = &["mp4", "m4v", "mov"];
@@ -33,26 +33,47 @@ pub struct Options {
 }
 
 /// A routine check's own requests, outside any import's budget.
-pub struct Direct<'a>(pub &'a Client);
+pub struct Direct<'a> {
+    pub client: &'a Client,
+    pub source: Option<(BlobId, i64)>,
+    pub meter: Option<&'a infinidysk_core::trace::Probe>,
+}
 
 impl Articles for Direct<'_> {
     fn stat<'a>(&'a self, id: &'a str) -> ArticleFuture<'a, ()> {
-        Box::pin(self.0.stat(id, Workload::Health, None))
+        Box::pin(self.client.stat(id, Workload::Health, None))
     }
 
     fn body<'a>(&'a self, id: &'a str, begin: Option<u64>) -> ArticleFuture<'a, Bytes> {
         Box::pin(async move {
             let body = self
-                .0
-                .body_with(id, Workload::Health, None, None, begin)
+                .client
+                .body_with(id, Workload::Health, self.meter, None, begin)
                 .await?;
             Ok(body.data)
+        })
+    }
+
+    fn repair_source(&self) -> Option<(BlobId, i64)> {
+        self.source
+    }
+
+    fn omitted<'a>(&'a self, key: &'a Omitted) -> ArticleFuture<'a, Bytes> {
+        Box::pin(async move {
+            if self.source != Some((key.nzb, key.generation)) {
+                return Err(NntpError::NotFound);
+            }
+            self.client
+                .repaired_omitted(key)
+                .await?
+                .map(|body| body.data)
+                .ok_or(NntpError::NotFound)
         })
     }
 }
 
 #[derive(Debug)]
-enum Probe {
+pub(super) enum Probe {
     Present,
     Missing,
     Corrupt,
@@ -79,6 +100,12 @@ pub async fn run(
     let sample = media::sample(n, opts.percent);
     // Known holes are re-probed with BODY so a recovery is noticed.
     let mut bodies: BTreeSet<usize> = old_missing.union(&old_corrupt).copied().collect();
+    bodies.extend(
+        segments
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (s, _, _))| s.id.is_empty().then_some(i)),
+    );
     if n > 0 {
         bodies.insert(0);
         for _ in 0..RANDOM_BODIES {
@@ -154,24 +181,29 @@ pub fn mark(meta: &mut FileMeta, missing: &[usize], corrupt: &[usize]) -> bool {
 }
 
 /// A segment with its expected `=ypart` offset when sizes are trusted.
-type Placed<'a> = (&'a Segment, Option<u64>);
+pub(super) type Placed<'a> = (&'a Segment, Option<u64>, Option<&'a Par2Proof>);
 
 /// Every segment in file order, with the recorded missing and corrupt flat indices.
-fn flatten(meta: &FileMeta) -> (Vec<Placed<'_>>, BTreeSet<usize>, BTreeSet<usize>) {
-    let starts: Vec<u64> = match meta {
-        FileMeta::Nzb(_) => vec![0],
-        FileMeta::Multipart(f) => f.parts.iter().map(|p| p.offset).collect(),
+pub(super) fn flatten(meta: &FileMeta) -> (Vec<Placed<'_>>, BTreeSet<usize>, BTreeSet<usize>) {
+    let starts: Vec<_> = match meta {
+        FileMeta::Nzb(f) => vec![(0, f.proof.as_ref())],
+        FileMeta::Multipart(f) => f
+            .parts
+            .iter()
+            .map(|p| (p.offset, p.proof.as_ref()))
+            .collect(),
     };
     let (mut all, mut missing, mut corrupt) = (Vec::new(), BTreeSet::new(), BTreeSet::new());
-    for (part, start) in parts(meta).into_iter().zip(starts) {
+    for (part, (start, proof)) in parts(meta).into_iter().zip(starts) {
         let base = all.len();
         let flat = |i: &u32| base + usize::try_from(*i).unwrap_or(usize::MAX);
         missing.extend(part.missing.iter().map(flat));
         corrupt.extend(part.corrupt.iter().map(flat));
         all.extend(part.items.iter().scan(start, |at, s| {
             let begin = part.sizes_trusted.then_some(*at);
-            *at += u64::from(s.size);
-            Some((s, begin))
+            // Preserve invalid posted offsets for the strict read to reject.
+            *at = at.saturating_add(u64::from(s.size));
+            Some((s, begin, proof))
         }));
     }
     (all, missing, corrupt)
@@ -213,10 +245,10 @@ async fn probe(
 ) -> (BTreeMap<usize, Probe>, Option<Vec<u8>>) {
     let mut runs = stream::iter(jobs)
         .map(|(i, body)| async move {
-            let (segment, begin) = segments[i];
-            if body {
-                let (probe, data) = fetch(articles, segment, begin).await;
-                (i, probe, data.filter(|_| i == 0))
+            let (segment, begin, proof) = segments[i];
+            if body || segment.id.is_empty() {
+                let (probe, data) = fetch(articles, segment, begin, proof).await;
+                (i, probe, data.filter(|_| i == 0).map(|data| data.to_vec()))
             } else {
                 (i, stat(articles, segment).await, None)
             }
@@ -230,7 +262,7 @@ async fn probe(
     (results, head)
 }
 
-async fn stat(articles: &dyn Articles, segment: &Segment) -> Probe {
+pub(super) async fn stat(articles: &dyn Articles, segment: &Segment) -> Probe {
     match articles.stat(&segment.id).await {
         Ok(()) => Probe::Present,
         Err(NntpError::NotFound) => Probe::Missing,
@@ -240,14 +272,15 @@ async fn stat(articles: &dyn Articles, segment: &Segment) -> Probe {
 
 /// BODY-reads `segment`; with `begin` (trusted sizes) it must be the part posted there,
 /// as playback requires.
-async fn fetch(
+pub(super) async fn fetch(
     articles: &dyn Articles,
     segment: &Segment,
     begin: Option<u64>,
-) -> (Probe, Option<Vec<u8>>) {
-    let probe = match articles.body(&segment.id, begin).await {
+    proof: Option<&Par2Proof>,
+) -> (Probe, Option<Bytes>) {
+    let probe = match articles.read(segment, begin, proof).await {
         Ok(data) if begin.is_some() && data.len() != segment.size as usize => Probe::Corrupt,
-        Ok(data) => return (Probe::Present, Some(data.into())),
+        Ok(data) => return (Probe::Present, Some(data)),
         Err(NntpError::NotFound) => Probe::Missing,
         Err(NntpError::CrcMismatch { .. } | NntpError::Yenc(_) | NntpError::TooLarge) => {
             Probe::Corrupt
