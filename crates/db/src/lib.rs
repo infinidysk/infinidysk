@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use infinidysk_core::{BlobId, ItemId, ItemKind, JobId};
@@ -20,7 +20,10 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, br
 use uuid::Uuid;
 
 mod backup;
+pub mod legacy_repairs;
 pub mod metrics;
+pub mod repair;
+pub mod repair_jobs;
 pub mod transfer;
 
 pub use backup::{FileCheck, check_file, latest_sqlite_schema};
@@ -146,6 +149,12 @@ pub enum Error {
     Mismatch(&'static str),
     #[error("column {0} has a type the copy does not handle")]
     UnsupportedColumn(String),
+    #[error("repair descriptor failed validation")]
+    RepairDescriptor(#[from] infinidysk_core::repair::Error),
+    #[error("repair publication exceeds its {0} bound")]
+    RepairBounds(&'static str),
+    #[error("repair publication conflicts with an immutable reference")]
+    RepairConflict,
 }
 
 impl Error {
@@ -186,6 +195,7 @@ pub struct Db {
     writes: Arc<RwLock<()>>,
     /// See [`Db::blob_epoch`].
     blob_epoch: Arc<AtomicU64>,
+    repair_present: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -211,6 +221,8 @@ macro_rules! on {
         }
     };
 }
+
+pub(crate) use on;
 
 /// A file or directory in the virtual tree.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -920,7 +932,9 @@ macro_rules! unreferenced {
             ") \
              AND NOT EXISTS (SELECT 1 FROM history WHERE nzb_blob = ",
             $id,
-            ")"
+            ") AND NOT EXISTS (SELECT 1 FROM repair_jobs WHERE nzb_blob = ",
+            $id,
+            " AND state IN (0, 1, 4))"
         )
     };
 }
@@ -961,6 +975,7 @@ macro_rules! release_nzb {
         }
     };
 }
+pub(crate) use release_nzb;
 
 /// Deletes item `$id` (a `Uuid`), its subtree, the job folders this leaves empty, and the
 /// blobs nothing references anymore, in `$tx`. Evaluates to how many of `$id` and the
@@ -1055,6 +1070,11 @@ impl Db {
             Pool::Sqlite(pool) => SQLITE_MIGRATOR.run(pool).await,
             Pool::Postgres(pool) => sqlx::migrate!("./migrations/postgres").run(pool).await,
         })?;
+        let repair_query = "SELECT EXISTS (SELECT 1 FROM repair_patches)";
+        let repair_present: bool = match &pool {
+            Pool::Sqlite(pool) => sqlx::query_scalar(repair_query).fetch_one(pool).await?,
+            Pool::Postgres(pool) => sqlx::query_scalar(repair_query).fetch_one(pool).await?,
+        };
         Ok(Self {
             pool,
             changes: broadcast::channel(CHANGES).0,
@@ -1062,6 +1082,7 @@ impl Db {
             nzb_retention_ms: Arc::new(AtomicI64::new(30 * DAY_MS)),
             writes: Arc::default(),
             blob_epoch: Arc::default(),
+            repair_present: Arc::new(AtomicBool::new(repair_present)),
         })
     }
 
@@ -1070,6 +1091,11 @@ impl Db {
     /// lock is write-preferring, so a nested permit deadlocks behind a waiting pause.
     pub async fn write_permit(&self) -> OwnedRwLockReadGuard<()> {
         Arc::clone(&self.writes).read_owned().await
+    }
+
+    /// Clones share publication/maintenance admission; independent owners do not.
+    pub fn same_owner(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.writes, &other.writes)
     }
 
     /// Waits for every [`Db::write_permit`] to drop and holds new ones back until the
@@ -2049,7 +2075,7 @@ impl Db {
     /// Replaces a blob's bytes, e.g. after health checks record missing segments.
     pub async fn update_blob(&self, id: BlobId, data: &[u8]) -> Result<(), Error> {
         on!(self, pool => {
-            sqlx::query("UPDATE blobs SET data = $2 WHERE id = $1")
+            sqlx::query("UPDATE blobs SET data = $2, generation = generation + 1 WHERE id = $1")
                 .bind(id.0)
                 .bind(data)
                 .execute(pool)
@@ -2059,8 +2085,8 @@ impl Db {
         Ok(())
     }
 
-    /// Changes after every [`Db::update_blob`] in this process, so a blob read under one
-    /// epoch may be cached under it. Blobs are otherwise immutable.
+    /// Changes after blob updates or repair publication in this process. Cached metadata
+    /// and health observations must be refreshed when their epoch changes.
     pub fn blob_epoch(&self) -> u64 {
         self.blob_epoch.load(Ordering::Acquire)
     }
@@ -2179,7 +2205,8 @@ impl Db {
         let sql = "UPDATE items SET health_state = $2, last_health_check = $3, \
                    next_health_check = $4, repair_attempts = $5, hidden_until = $6, \
                    recheck_requested = CASE WHEN recheck_requested = $7 THEN 0 \
-                   ELSE recheck_requested END, suspect_since = $8 WHERE id = $1";
+                   ELSE recheck_requested END, suspect_since = $8, \
+                   arr_replacement_requested = CASE WHEN $2 IN (1, 2) THEN FALSE ELSE arr_replacement_requested END WHERE id = $1";
         let suspect_since = status
             .suspect_since
             .filter(|_| status.state == HealthState::Suspect);

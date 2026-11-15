@@ -933,6 +933,7 @@ async fn read_par2(
 
 fn proof(slice_size: u64, f: &infinidysk_par2::File) -> Option<Par2Proof> {
     Some(Par2Proof {
+        set_id: None,
         file_length: f.length,
         slice_size: u32::try_from(slice_size).ok()?,
         slice_md5: f.slices.iter().map(|s| s.md5).collect(),
