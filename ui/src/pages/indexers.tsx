@@ -13,6 +13,14 @@ import { MASK, notAPassword, useSettings } from "../settings";
 type Indexer = Schemas["IndexerRead"];
 type ConnectionResult = Schemas["IndexerTest"];
 
+function origin(url: string) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
 export function Indexers({ title, description }: { title: string; description: string }) {
   const settings = useSettings();
   const client = useQueryClient();
@@ -63,9 +71,11 @@ export function Indexers({ title, description }: { title: string; description: s
         ? client.getQueryData<Indexer[]>(["indexers"])?.find((i) => i.id === value.id)
         : undefined;
       if (fresh) {
+        // A key typed for the old origin must not move to an origin the other session chose.
+        const movedAway = value.base_url === base.base_url && origin(fresh.base_url) !== origin(base.base_url);
         const edits = Object.fromEntries(
           (Object.keys(value) as (keyof Indexer)[])
-            .filter((key) => key !== "revision" && value[key] !== base[key])
+            .filter((key) => key !== "revision" && value[key] !== base[key] && !(movedAway && key === "api_key"))
             .map((key) => [key, value[key]]),
         );
         setEditing(fresh);
@@ -93,13 +103,6 @@ export function Indexers({ title, description }: { title: string; description: s
   const managed = settings.data?.locked.some((path) => path === "indexers" || path.startsWith("indexers."));
   const locked = !settings.data || managed === true;
   const list = indexers.data ?? [];
-  const origin = (url: string) => {
-    try {
-      return new URL(url).origin;
-    } catch {
-      return "";
-    }
-  };
   const keyRequired = !!(editing?.id && draft && origin(editing.base_url) !== origin(draft.base_url));
   const openEditor = (item: Indexer) => {
     session.current += 1;
