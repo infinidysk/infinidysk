@@ -118,6 +118,7 @@ fn decompress_limited(raw: &[u8], limit: u64) -> Result<Cow<'_, [u8]>, Error> {
         return Err(Error::TooLarge);
     }
     if !raw.starts_with(&[0x1f, 0x8b]) {
+        // ponytail: bzip2 NZBs are not handled; add a bz2 decoder here if indexers serve them.
         return Ok(Cow::Borrowed(raw));
     }
     let mut out = Vec::new();
@@ -132,45 +133,73 @@ fn decompress_limited(raw: &[u8], limit: u64) -> Result<Cow<'_, [u8]>, Error> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Element {
-    Nzb,
+    Root,
     Head,
     Meta,
     File,
-    Groups,
-    Group,
     Segments,
     Segment,
     Extension,
 }
 
-fn element(name: &str, parent: Option<Element>, root_seen: bool) -> Result<Element, Error> {
-    let node = match name {
-        "nzb" => Element::Nzb,
-        "head" => Element::Head,
-        "meta" => Element::Meta,
-        "file" => Element::File,
-        "groups" => Element::Groups,
-        "group" => Element::Group,
-        "segments" => Element::Segments,
-        "segment" => Element::Segment,
-        _ => Element::Extension,
-    };
-    let valid = match node {
-        Element::Nzb => parent.is_none() && !root_seen,
-        Element::Head | Element::File => parent == Some(Element::Nzb),
-        Element::Meta => parent == Some(Element::Head),
-        Element::Groups | Element::Segments => parent == Some(Element::File),
-        Element::Group => parent == Some(Element::Groups),
-        Element::Segment => parent == Some(Element::Segments),
-        Element::Extension => {
-            parent.is_some() && !matches!(parent, Some(Element::Meta | Element::Segment))
+/// Which elements with a meaning are open, one bit each. Each one is open at most once,
+/// because [`element`] never opens one inside itself.
+#[derive(Clone, Copy, Default)]
+struct Open(u8);
+
+impl Open {
+    fn set(&mut self, node: Element, open: bool) {
+        if matches!(node, Element::Root | Element::Extension) {
+            return;
         }
-    };
-    if valid {
-        Ok(node)
-    } else {
-        Err(Error::Structure)
+        let bit = 1 << node as u8;
+        if open {
+            self.0 |= bit;
+        } else {
+            self.0 &= !bit;
+        }
     }
+
+    const fn has(self, node: Element) -> bool {
+        self.0 & (1 << node as u8) != 0
+    }
+}
+
+/// Classifies an element the way SABnzbd's `ElementTree` walk finds it: any root name, a
+/// `file` or `head` at any depth (any case), `segments` directly in a file, a `segment`
+/// anywhere below it and a `meta` anywhere in a head. Anything else is ignored. Only a
+/// second root is an error, as in `ElementTree`.
+fn element(
+    name: &str,
+    parent: Option<Element>,
+    open: Open,
+    root_seen: bool,
+) -> Result<Element, Error> {
+    let Some(parent) = parent else {
+        return if root_seen {
+            Err(Error::Structure)
+        } else {
+            Ok(Element::Root)
+        };
+    };
+    Ok(
+        if name.eq_ignore_ascii_case("file") && !open.has(Element::File) {
+            Element::File
+        } else if name.eq_ignore_ascii_case("head")
+            && !open.has(Element::Head)
+            && !open.has(Element::File)
+        {
+            Element::Head
+        } else if name == "meta" && open.has(Element::Head) && !open.has(Element::Meta) {
+            Element::Meta
+        } else if name == "segments" && parent == Element::File {
+            Element::Segments
+        } else if name == "segment" && open.has(Element::Segments) && !open.has(Element::Segment) {
+            Element::Segment
+        } else {
+            Element::Extension
+        },
+    )
 }
 
 fn count_element(
@@ -202,11 +231,20 @@ fn append_text(text: &mut Option<String>, value: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Parses bounded NZB XML, preserving SAB-style handling of malformed part attributes.
+/// Parses NZB XML within the resource limits.
+///
+/// Like SABnzbd: namespaces are ignored, elements are found where [`element`] says,
+/// segments with a missing or bad `number` or `bytes` (or `bytes` outside `1..8 MiB`) are
+/// dropped, a repeated part number keeps the first segment, a segment or meta value is
+/// its text before any child element, files without segments are dropped, and only an
+/// NZB with no files left fails. Malformed XML, text outside the root and a second root
+/// fail, as they do in `ElementTree`.
 pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
     if xml.len() as u64 > MAX_NZB {
         return Err(Error::TooLarge);
     }
+    // ponytail: non-UTF-8 NZBs are read as Latin-1 instead of honouring the declared
+    // encoding; enable quick-xml's `encoding` feature if other encodings show up.
     let xml = std::str::from_utf8(xml).map_or_else(
         |_| Cow::Owned(xml.iter().map(|&b| char::from(b)).collect()),
         Cow::Borrowed,
@@ -215,12 +253,16 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
     reader.config_mut().check_end_names = true;
     let mut nzb = Nzb::default();
     let mut stack = Vec::new();
+    let mut open = Open::default();
     let mut root_seen = false;
     let mut finished = false;
     let (mut elements, mut file_count, mut segment_count) = (0, 0, 0);
-    let mut file: Option<(File, BTreeMap<u64, Segment>)> = None;
+    let mut file: Option<(File, BTreeMap<i64, Segment>)> = None;
+    // Raw (still escaped) text of the open `<segment>` or `<meta>`; `text_open` turns off at
+    // its first child element, like `ElementTree`'s `.text`.
     let mut text: Option<String> = None;
-    let mut segment: Option<(Option<u64>, Option<u32>)> = None;
+    let mut text_open = false;
+    let mut segment: Option<(Option<i64>, Option<u32>)> = None;
     let mut meta: Option<String> = None;
     loop {
         match reader.read_event()? {
@@ -228,20 +270,26 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
                 if stack.len() >= MAX_DEPTH {
                     return Err(Error::Resource);
                 }
-                let node = element(e.local_name().as_ref(), stack.last().copied(), root_seen)?;
+                let node = element(
+                    e.local_name().as_ref(),
+                    stack.last().copied(),
+                    open,
+                    root_seen,
+                )?;
                 count_element(node, &mut elements, &mut file_count, &mut segment_count)?;
+                text_open = false;
                 match node {
-                    Element::Nzb => root_seen = true,
+                    Element::Root => root_seen = true,
                     Element::File => file = Some((file_start(&e)?, BTreeMap::new())),
                     Element::Segment => {
-                        let number = attr(&e, "number")?
-                            .and_then(|v| v.trim().parse::<u64>().ok())
-                            .filter(|n| *n > 0);
+                        // Any integer, like SABnzbd's `int()`.
+                        let number = attr(&e, "number")?.and_then(|v| v.trim().parse().ok());
                         let bytes = attr(&e, "bytes")?
                             .and_then(|v| v.trim().parse::<u32>().ok())
                             .filter(|b| (1..MAX_SEGMENT).contains(b));
                         segment = Some((number, bytes));
                         text = Some(String::new());
+                        text_open = true;
                     }
                     Element::Meta => {
                         meta = attr(&e, "type")?.map(Cow::into_owned);
@@ -249,15 +297,23 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
                             return Err(Error::Resource);
                         }
                         text = Some(String::new());
+                        text_open = true;
                     }
                     _ => {}
                 }
+                open.set(node, true);
                 stack.push(node);
             }
             Event::Empty(e) => {
-                let node = element(e.local_name().as_ref(), stack.last().copied(), root_seen)?;
+                let node = element(
+                    e.local_name().as_ref(),
+                    stack.last().copied(),
+                    open,
+                    root_seen,
+                )?;
                 count_element(node, &mut elements, &mut file_count, &mut segment_count)?;
-                if node == Element::Nzb {
+                text_open = false;
+                if node == Element::Root {
                     root_seen = true;
                     finished = true;
                 }
@@ -267,14 +323,16 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
                 if stack.is_empty() && !value.trim().is_empty() {
                     return Err(Error::Structure);
                 }
-                append_text(&mut text, &value)?;
+                if text_open {
+                    append_text(&mut text, &value)?;
+                }
             }
             Event::CData(t) => {
                 let value = t.xml10_content();
                 if stack.is_empty() && !value.trim().is_empty() {
                     return Err(Error::Structure);
                 }
-                if text.is_some() {
+                if text_open {
                     if value.len() > MAX_TEXT {
                         return Err(Error::Resource);
                     }
@@ -285,7 +343,7 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
                 if stack.is_empty() {
                     return Err(Error::Structure);
                 }
-                if text.is_some() {
+                if text_open {
                     append_text(&mut text, "&")?;
                     append_text(&mut text, &r.xml10_content())?;
                     append_text(&mut text, ";")?;
@@ -293,6 +351,8 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
             }
             Event::End(_) => {
                 let node = stack.pop().ok_or(Error::Structure)?;
+                open.set(node, false);
+                text_open = false;
                 match node {
                     Element::Segment => {
                         let id = unescape(text.take().unwrap_or_default());
@@ -326,12 +386,12 @@ pub fn parse(xml: &[u8]) -> Result<Nzb, Error> {
                             && let (Some(&first), Some(&last)) =
                                 (segments.keys().next(), segments.keys().next_back())
                         {
-                            f.gap = first > 1 || last - first >= segments.len() as u64;
+                            f.gap = first > 1 || last.abs_diff(first) >= segments.len() as u64;
                             f.segments = segments.into_values().collect();
                             nzb.files.push(f);
                         }
                     }
-                    Element::Nzb => finished = true,
+                    Element::Root => finished = true,
                     _ => {}
                 }
             }
@@ -423,13 +483,13 @@ mod tests {
     }
 
     #[test]
-    fn malformed_roots_hierarchy_and_incomplete_documents_are_rejected() {
+    fn second_roots_incomplete_documents_and_segments_outside_segments_are_rejected() {
         let file = one_file(&one_segment("1"));
         for xml in [
-            format!("<other>{file}</other>"),
-            format!("<nzb><other>{file}</other></nzb>"),
             format!("<nzb>{file}</nzb><extra/>"),
             format!("<nzb>{file}"),
+            format!("<nzb>{file}</nzb>text"),
+            // SABnzbd reads segments only below a `<segments>` child of the file.
             "<nzb><file subject=\"sample\"><segment bytes=\"100\" number=\"1\">a@b</segment></file></nzb>".to_owned(),
         ] {
             assert!(parse(xml.as_bytes()).is_err(), "{xml}");
@@ -437,7 +497,30 @@ mod tests {
     }
 
     #[test]
-    fn extreme_segment_numbers_do_not_overflow_or_accept_negative_parts() {
+    fn layouts_sabnzbd_accepts_are_accepted() {
+        let file = one_file(&one_segment("1"));
+        for xml in [
+            format!("<other>{file}</other>"),
+            format!("<nzb><other>{file}</other></nzb>"),
+            "<nzb><FILE subject=\"sample\"><group>a.b</group><segments><x><segment bytes=\"100\" number=\"1\">a@b</segment></x></segments></FILE></nzb>".to_owned(),
+        ] {
+            let parsed = parse(xml.as_bytes()).unwrap_or_else(|e| panic!("{xml}: {e}"));
+            assert_eq!(parsed.files.len(), 1, "{xml}");
+            assert_eq!(parsed.files[0].segments[0].id, "a@b", "{xml}");
+        }
+
+        // A value is the text before the first child element, like `ElementTree`'s `.text`.
+        let xml = format!(
+            "<nzb><x><head><meta type=\"password\">value<i>child</i>tail</meta></head></x>{}</nzb>",
+            one_file("<segment bytes=\"100\" number=\"0\">a@b<i>child</i>tail</segment>")
+        );
+        let parsed = parse(xml.as_bytes()).unwrap();
+        assert_eq!(parsed.meta("password").collect::<Vec<_>>(), ["value"]);
+        assert_eq!(parsed.files[0].segments[0].id, "a@b");
+    }
+
+    #[test]
+    fn extreme_segment_numbers_do_not_overflow() {
         let segments = format!(
             "{}{}{}",
             one_segment("-9223372036854775808"),
@@ -446,7 +529,8 @@ mod tests {
         );
         let xml = format!("<nzb>{}</nzb>", one_file(&segments));
         let parsed = parse(xml.as_bytes()).unwrap();
-        assert_eq!(parsed.files[0].segments.len(), 2);
+        // SABnzbd's `int()` keeps zero and negative parts too.
+        assert_eq!(parsed.files[0].segments.len(), 3);
         assert!(parsed.files[0].gap);
     }
 
