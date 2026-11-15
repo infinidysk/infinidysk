@@ -7,11 +7,19 @@ use crate::{Db, Error, Pool, on};
 impl Db {
     /// Keep a durable failure report separate from staged, usable candidate bytes.
     /// Original C# files remain untouched in their source directory.
-    pub async fn mark_legacy_repair_unusable(&self, hash: &str, reason: &str) -> Result<(), Error> {
+    /// Preserve a staged copy only after independently checking its header and bytes.
+    pub async fn mark_legacy_repair_unusable(
+        &self,
+        hash: &str,
+        reason: &str,
+        preserve_staged: bool,
+    ) -> Result<(), Error> {
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
-            sqlx::query("DELETE FROM legacy_repair_articles WHERE hash = $1")
-                .bind(hash).execute(&mut *tx).await?;
+            if !preserve_staged {
+                sqlx::query("DELETE FROM legacy_repair_articles WHERE hash = $1")
+                    .bind(hash).execute(&mut *tx).await?;
+            }
             sqlx::query("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
                 .bind(format!("legacy.repair.unusable.{hash}")).bind(reason).execute(&mut *tx).await?;
             tx.commit().await?;

@@ -53,6 +53,17 @@ fn body(header: &[u8], bytes: Vec<u8>) -> io::Result<Body> {
     })
 }
 
+fn checked_body(header: &[u8], data: Vec<u8>, checksum: &[u8]) -> io::Result<Body> {
+    if header.len() > 1_048_576 {
+        return Err(invalid());
+    }
+    let candidate = body(header, data)?;
+    if checksum != Sha256::digest(&candidate.data).as_slice() {
+        return Err(invalid());
+    }
+    Ok(candidate)
+}
+
 fn pair(root: &File, hash: &str) -> io::Result<(Vec<u8>, Vec<u8>)> {
     let dir = File::from(openat(
         root,
@@ -134,8 +145,11 @@ pub async fn stage(config: &Path, db: &Db) -> Result<(), crate::Error> {
                     Ok(candidate) => candidate,
                     Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotADirectory | std::io::ErrorKind::IsADirectory) || error.raw_os_error() == Some(nix::libc::ELOOP) => {
                         let reason = "legacy payload is missing, inaccessible, or inconsistent; original files retained";
-                        runtime.block_on(db.mark_legacy_repair_unusable(hash, reason))?;
-                        tracing::warn!(hash, reason, "C# repair candidate is unusable");
+                        let preserved = runtime.block_on(db.legacy_repair(hash))?
+                            .is_some_and(|(header, data, checksum)| checked_body(&header, data, &checksum).is_ok());
+                        runtime.block_on(db.mark_legacy_repair_unusable(hash, reason, preserved))?;
+                        copied += i32::from(preserved);
+                        tracing::warn!(hash, preserved, reason, "C# repair source is unusable");
                         continue;
                     }
                     Err(error) => return Err(crate::Error::LegacyRepairs(error)),
@@ -169,15 +183,10 @@ pub async fn read(db: &Db, id: &str) -> Result<Option<Body>, infinidysk_nntp::Er
     else {
         return Ok(None);
     };
-    let result = tokio::task::spawn_blocking(move || {
-        if checksum.as_slice() != Sha256::digest(&data).as_slice() {
-            return Err(invalid());
-        }
-        body(&header, data)
-    })
-    .await
-    .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair read stopped"))?
-    .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair candidate is corrupt"))?;
+    let result = tokio::task::spawn_blocking(move || checked_body(&header, data, &checksum))
+        .await
+        .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair read stopped"))?
+        .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair candidate is corrupt"))?;
     db.legacy_repair_used(&hash, id, infinidysk_db::now_ms())
         .await
         .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair usage could not be recorded"))?;
@@ -315,9 +324,56 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn retry_preserves_checked_staged_bytes_when_original_files_are_unusable() {
+        let root = std::env::temp_dir().join(format!("legacy-retry-{}", uuid::Uuid::new_v4()));
+        let url = format!("sqlite:{}", root.join("candidates.sqlite").display());
+        for hash in ["A".repeat(64), "B".repeat(64)] {
+            let shard = root.join("repair-segments").join(&hash[..2]);
+            std::fs::create_dir_all(&shard).unwrap();
+            // Only a header remains; the source payload became unavailable after staging.
+            std::fs::write(shard.join(format!("{hash}.h")), header()).unwrap();
+        }
+        let db = Db::connect(&url).await.unwrap();
+        for (hash, saved_header) in [("A".repeat(64), header()), ("B".repeat(64), b"{}".to_vec())] {
+            db.stage_legacy_repair(&hash, &saved_header, b"data", &Sha256::digest(b"data"))
+                .await
+                .unwrap();
+        }
+        let saved = db.legacy_repair(&"A".repeat(64)).await.unwrap();
+        db.close().await;
+        let db = Db::connect(&url).await.unwrap();
+        stage(&root, &db).await.unwrap();
+        assert_eq!(db.legacy_repair(&"A".repeat(64)).await.unwrap(), saved);
+        assert!(db.legacy_repair(&"B".repeat(64)).await.unwrap().is_none());
+        assert_eq!(db.article_repairs("staged@loopback").await.unwrap(), []);
+        for hash in ["A".repeat(64), "B".repeat(64)] {
+            assert!(
+                db.config()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|(key, _)| key == &format!("legacy.repair.unusable.{hash}"))
+            );
+            assert_eq!(
+                std::fs::read(
+                    root.join("repair-segments")
+                        .join(&hash[..2])
+                        .join(format!("{hash}.h"))
+                )
+                .unwrap(),
+                header()
+            );
+        }
+        db.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn invalid_or_incomplete_legacy_headers_never_yield_a_candidate() {
         assert!(body(&header(), b"short".to_vec()).is_err());
+        assert!(checked_body(&header(), b"data".to_vec(), &[0; 32]).is_err());
+        assert!(checked_body(&header(), b"data".to_vec(), &Sha256::digest(b"data")).is_ok());
         let mut fields: serde_json::Value = serde_json::from_slice(&header()).unwrap();
         fields["PartOffset"] = serde_json::json!(99);
         assert!(body(&serde_json::to_vec(&fields).unwrap(), b"data".to_vec()).is_err());
