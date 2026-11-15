@@ -2173,7 +2173,9 @@ struct IndexerEnabled {
 #[utoipa::path(patch, path = "/api/v1/indexers/{id}/enabled", tag = "indexer",
     params(("id" = Uuid, Path)),
     request_body = IndexerEnabled,
-    responses((status = 200, body = IndexerRead), (status = 404, body = ApiError)))]
+    responses((status = 200, body = IndexerRead),
+              (status = 400, body = ApiError, description = "Invalid or locked by the environment"),
+              (status = 404, body = ApiError)))]
 async fn patch_indexer_enabled(
     State(admin): State<Arc<Admin>>,
     Path(id): Path<Uuid>,
@@ -2195,8 +2197,9 @@ async fn patch_indexer_enabled(
 #[utoipa::path(put, path = "/api/v1/indexers/{id}", tag = "indexer",
     params(("id" = Uuid, Path)),
     request_body = IndexerUpdate,
-    responses((status = 200, body = IndexerRead), (status = 404, body = ApiError),
-              (status = 409, body = ApiError)))]
+    responses((status = 200, body = IndexerRead),
+              (status = 400, body = ApiError, description = "Invalid or locked by the environment"),
+              (status = 404, body = ApiError), (status = 409, body = ApiError)))]
 async fn put_indexer(
     State(admin): State<Arc<Admin>>,
     Path(id): Path<Uuid>,
@@ -2210,7 +2213,7 @@ async fn put_indexer(
     let current_revision = saved_indexer(&settings, id)?.revision;
     if current_revision != input.revision {
         return Err(Fail::Conflict(
-            "Indexer was updated in another session.".to_owned(),
+            "Indexer was updated in another session. Check the fields and save again.".to_owned(),
         ));
     }
     let indexer = Indexer {
@@ -2232,7 +2235,9 @@ async fn put_indexer(
 
 #[utoipa::path(delete, path = "/api/v1/indexers/{id}", tag = "indexer",
     params(("id" = Uuid, Path)),
-    responses((status = 204), (status = 404, body = ApiError)))]
+    responses((status = 204),
+              (status = 400, body = ApiError, description = "Locked by the environment"),
+              (status = 404, body = ApiError)))]
 async fn delete_indexer(
     State(admin): State<Arc<Admin>>,
     Path(id): Path<Uuid>,
@@ -2389,6 +2394,7 @@ impl SearchReferences {
                 result.download_url = None;
             }
         }
+        drop(entries);
         Ok(())
     }
 
@@ -2445,8 +2451,11 @@ struct SearchQueued {
               (status = 404, body = ApiError), (status = 503, body = ApiError)))]
 async fn post_indexer_search_queue(
     State(admin): State<Arc<Admin>>,
-    Json(request): Json<SearchQueueRequest>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<SearchQueued>), Fail> {
+    // A bad body is 400: 422 always carries a `SearchQueued` the queue rejected.
+    let request: SearchQueueRequest =
+        serde_json::from_value(body).map_err(|error| Fail::Bad(error.to_string()))?;
     let category = request.category.trim();
     let reference = admin.search_refs.resolve(&request.nzb_ref)?;
     let (endpoint, indexer_keys) = {
@@ -2486,7 +2495,15 @@ async fn post_indexer_search_queue(
         reference.source_dns.as_ref(),
     )
     .await
-    .map_err(|_| Fail::Unavailable("Could not retrieve the indexer NZB.".to_owned()))?;
+    .map_err(|reason| {
+        // The reason never contains the URL, so it carries no key.
+        tracing::warn!(
+            indexer = %reference.indexer_id,
+            reason = %reason,
+            "Indexer NZB download failed"
+        );
+        Fail::Unavailable("Could not retrieve the indexer NZB.".to_owned())
+    })?;
     drop(permit);
     let prepared = Queue::prepare(&fetched.body).await;
     let fallback_title = if indexer_keys
@@ -2530,19 +2547,22 @@ async fn commit_indexer_queue(
 ) -> Result<(StatusCode, Json<SearchQueued>), Fail> {
     let _writing = queue.db().write_permit().await;
     let store = config.read().await;
-    if !reference_is_current(store.settings(), reference, refs)?
-        || !store
-            .settings()
-            .sab
-            .categories()
-            .any(|known| known == job.category)
-    {
+    if !reference_is_current(store.settings(), reference, refs)? {
         return Err(Fail::NotFound);
+    }
+    // The same answer as the check before the download.
+    if !store
+        .settings()
+        .sab
+        .categories()
+        .any(|known| known == job.category)
+    {
+        return Err(Fail::Bad("Select a configured queue category.".to_owned()));
     }
     let prepared = match prepared {
         Ok(prepared) => prepared,
         Err(service::Error::Nzb(_)) => return Err(Fail::Bad("Invalid NZB data.".to_owned())),
-        Err(_) => return Err(Fail::Internal),
+        Err(error) => return Err(error.into()),
     };
     let (code, status, id) = match queue.enqueue_prepared(job, prepared).await {
         Ok(EnqueueOutcome::Created(id)) => (StatusCode::CREATED, SearchQueueStatus::Created, id),
@@ -2552,7 +2572,7 @@ async fn commit_indexer_queue(
             SearchQueueStatus::Rejected,
             id,
         ),
-        Err(_) => return Err(Fail::Internal),
+        Err(error) => return Err(error.into()),
     };
     drop(store);
     Ok((code, Json(SearchQueued { id: id.0, status })))
@@ -3051,7 +3071,7 @@ async fn post_indexer_test(
     let error = crate::newznab::test(&indexer).await.err();
     drop(permit);
     if let Some(reason) = error {
-        tracing::warn!(reason, "Indexer connection test failed");
+        tracing::warn!(indexer = %id, reason, "Indexer connection test failed");
     }
     Ok(Json(IndexerTest {
         success: error.is_none(),
@@ -3150,7 +3170,12 @@ mod indexer_commit_tests {
                 drop(store);
             }
             drop(pause);
-            assert!(matches!(task.await.unwrap(), Err(Fail::NotFound)));
+            let result = task.await.unwrap();
+            if disable_indexer {
+                assert!(matches!(result, Err(Fail::NotFound)));
+            } else {
+                assert!(matches!(result, Err(Fail::Bad(_))));
+            }
             assert_eq!(db.queue().await.unwrap().len(), 0);
             db.close().await;
         }

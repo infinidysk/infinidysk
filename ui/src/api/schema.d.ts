@@ -6465,6 +6465,15 @@ export interface operations {
                     "application/json": components["schemas"]["IndexerRead"];
                 };
             };
+            /** @description Invalid or locked by the environment */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6500,6 +6509,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Locked by the environment */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6531,6 +6549,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexerRead"];
+                };
+            };
+            /** @description Invalid or locked by the environment */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             404: {

@@ -1526,10 +1526,13 @@ async fn two_indexer_nzb_downloads_can_run_in_parallel() {
     let peak = Arc::new(AtomicUsize::new(0));
     let mock_active = Arc::clone(&active);
     let mock_peak = Arc::clone(&peak);
+    // Each download waits for the other, so only parallel downloads finish without the timeout.
+    let both = Arc::new(tokio::sync::Barrier::new(2));
     let mock = tokio::spawn(async move {
         while let Ok((mut socket, _)) = listener.accept().await {
             let active = Arc::clone(&mock_active);
             let peak = Arc::clone(&mock_peak);
+            let both = Arc::clone(&both);
             tokio::spawn(async move {
                 let mut buf = [0u8; 4096];
                 let length = socket.read(&mut buf).await.unwrap();
@@ -1544,7 +1547,7 @@ async fn two_indexer_nzb_downloads_can_run_in_parallel() {
                 } else if request.starts_with("GET /nzb/") {
                     let count = active.fetch_add(1, Ordering::SeqCst) + 1;
                     peak.fetch_max(count, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    let _ = tokio::time::timeout(Duration::from_secs(5), both.wait()).await;
                     active.fetch_sub(1, Ordering::SeqCst);
                     ("200 OK", NZB.to_owned())
                 } else {
@@ -1910,7 +1913,8 @@ async fn search_nzb_reference_queues_using_selected_categories() {
         ),
     )
     .await;
-    assert_eq!(code, "HTTP/1.1 422 Unprocessable Entity");
+    // 422 is reserved for a `SearchQueued` the queue rejected.
+    assert_eq!(code, "HTTP/1.1 400 Bad Request");
 
     let (code, queued) = send(
         addr,
