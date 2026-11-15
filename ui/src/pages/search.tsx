@@ -1,7 +1,8 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Loader2, Plus, Search as SearchIcon, TriangleAlert } from "lucide-react";
+import { Info, Loader2, Plus, Search as SearchIcon, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
+import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,16 +67,25 @@ function QueueControls({
             ))}
           </SelectContent>
         </Select>
-        <Button type="button" variant="outline" size="sm" disabled={locked || !categories.includes(category)} onClick={onQueue}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`${pending ? "Queuing" : "Queue"} ${item.title}`}
+          disabled={locked || !categories.includes(category)}
+          onClick={onQueue}
+        >
           {pending ? <Loader2 className="animate-spin" /> : <Plus />}
-          {pending ? "Queuing" : "Queue"}
+          {pending ? "Queuing…" : "Queue"}
         </Button>
       </div>
+      {/* A persistent live region, so outcomes that appear in it are announced. */}
+      <div aria-live="polite">
       {outcome ? (
         <p role={failed ? "alert" : "status"} className={failed ? "text-destructive text-xs" : "text-success-text text-xs"}>
           {outcome.message}
           {(outcome.kind === "created" || outcome.kind === "existing") && (
-            <> · <Link to="/queue" className="underline underline-offset-2">View queue</Link></>
+            <> · <Link to="/queue" className="text-primary underline underline-offset-2">View queue</Link></>
           )}
         </p>
       ) : unavailable ? (
@@ -85,6 +95,7 @@ function QueueControls({
       ) : categories.length === 0 ? (
         <p className="text-muted-foreground text-xs">No queue categories configured</p>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -199,7 +210,8 @@ export function SearchPage() {
             message: response.status === 403 ? "Queue access denied." :
               response.status === 400 ? failure?.error ?? "Category or request rejected. Check queue categories." :
               response.status === 503 ? "Indexer unavailable. Retry this item." :
-              failure?.error ?? "Could not queue this result.",
+              response.status >= 500 ? "Could not queue this result. Try again." :
+              failure?.error ?? "Could not queue this result. Try again.",
           };
         }
       } catch (error) {
@@ -214,12 +226,23 @@ export function SearchPage() {
       }
       if (version === searchVersion.current) {
         setOutcomes((current) => ({ ...current, [item.nzb_ref]: next }));
+      } else if (next.kind === "created" || next.kind === "existing") {
+        // The row is gone after a new search, so the late outcome is reported with a toast.
+        toast.success(next.message);
+      } else {
+        toast.error(next.message);
       }
     })();
   };
 
   const results = search.phase === "ready" ? search.data.results : [];
   const visible = results.slice(page, page + PAGE);
+  const size = (value: number) => (value > 0 ? bytes(value) : "–");
+  const term = search.phase === "idle" ? "" : search.term;
+  const noResults = `No results found for “${term}”. Try another search term, or check the indexer status above.`;
+  const announcement =
+    search.phase === "loading" ? "Searching enabled indexers…" :
+    search.phase === "ready" ? `${count(results.length, "result")} for “${term}”` : "";
 
   const controls = (item: SearchResult) => (
     <QueueControls
@@ -240,16 +263,19 @@ export function SearchPage() {
       <form onSubmit={runSearch} className="mb-6 space-y-2">
         <Label htmlFor="newznab-query">Search term</Label>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            id="newznab-query"
-            maxLength={500}
-            value={draft}
-            onChange={(event) => { setDraft(event.target.value); if (validation) setValidation(""); }}
-            placeholder="Search all enabled indexers"
-            className="min-w-0 flex-1"
-            aria-invalid={!!validation}
-            aria-describedby={validation ? "newznab-query-error" : "newznab-query-hint"}
-          />
+          <div className="relative min-w-0 flex-1">
+            <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+            <Input
+              id="newznab-query"
+              maxLength={500}
+              value={draft}
+              onChange={(event) => { setDraft(event.target.value); if (validation) setValidation(""); }}
+              placeholder="Search enabled indexers"
+              className="pl-8"
+              aria-invalid={!!validation}
+              aria-describedby={validation ? "newznab-query-error" : "newznab-query-hint"}
+            />
+          </div>
           <Button type="submit" className="w-full sm:w-auto">
             {search.phase === "loading" ? <Loader2 className="animate-spin" /> : <SearchIcon />}
             Search
@@ -259,10 +285,11 @@ export function SearchPage() {
           <p id="newznab-query-hint" className="text-muted-foreground text-xs">1–250 characters. Search starts when you select Search.</p>}
       </form>
 
-      {settings.isError && <Failure error={settings.error} className="mb-4" />}
+      <p aria-live="polite" className="sr-only">{announcement}</p>
+      {settings.isError && <Failure error={settings.error} className="mb-6" />}
       {readOnly && (
-        <Alert className="mb-4">
-          <CircleAlert />
+        <Alert className="mb-6">
+          <Info />
           <AlertDescription>Your account cannot queue search results. Search remains available.</AlertDescription>
         </Alert>
       )}
@@ -270,7 +297,7 @@ export function SearchPage() {
         <Empty title="No search yet">Enter a term and select Search to find NZBs across enabled indexers.</Empty>
       )}
       {search.phase === "loading" && (
-        <section aria-live="polite" aria-label="Searching indexers">
+        <section aria-label="Searching indexers">
           <p className="text-muted-foreground mb-3 flex items-center gap-2"><Loader2 className="size-4 animate-spin" /> Searching enabled indexers…</p>
           <Loading />
         </section>
@@ -286,7 +313,7 @@ export function SearchPage() {
           <section aria-label="Indexer status">
             <h2 className="mb-3 text-sm font-medium">Indexer status</h2>
             {search.data.indexers.length === 0 ? (
-              <Alert><TriangleAlert className="text-warning-text" /><AlertDescription>No enabled indexers. <Link to="/settings/indexers" className="text-primary underline underline-offset-2">Add an indexer in settings</Link> to start searching.</AlertDescription></Alert>
+              <Alert><TriangleAlert className="text-warning-text" /><AlertDescription>No enabled indexers. <Link to="/settings/indexers" className="text-primary underline underline-offset-2">Enable or add an indexer in settings</Link> to start searching.</AlertDescription></Alert>
             ) : (
               <Panel>
                 <ul className="divide-y">
@@ -306,59 +333,61 @@ export function SearchPage() {
             )}
           </section>
 
-          <section aria-label="Search results">
-            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-sm font-medium">Results</h2>
-              <span role="status" className="text-muted-foreground text-xs tabular-nums wrap-anywhere">{count(results.length, "result")} for “{search.term}”</span>
-            </div>
-            {results.length === 0 ? (
-              <Empty title="No results found">Try another search term, or check the indexer status above.</Empty>
-            ) : (
-              <>
-                <Panel>
-                  <div className="hidden md:block">
-                    <Table>
-                      <TableHeader><TableRow>
-                        <TableHead className="w-full">Title</TableHead>
-                        <TableHead className="w-28 text-right">Size</TableHead>
-                        <TableHead className="w-32">Indexer</TableHead>
-                        <TableHead className="w-56"><span className="sr-only">Category and queue action</span>Queue</TableHead>
-                      </TableRow></TableHeader>
-                      <TableBody>
-                        {visible.map((item) => (
-                          <TableRow key={item.nzb_ref}>
-                            <TableCell className="w-full max-w-0">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div tabIndex={0} className="truncate rounded-sm font-medium"><ReleaseName name={item.title} /></div>
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-md break-words">{item.title}</TooltipContent>
-                              </Tooltip>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">{bytes(item.size_bytes)}</TableCell>
-                            <TableCell className="max-w-32 truncate" title={item.indexer_name}>{item.indexer_name}</TableCell>
-                            <TableCell className="whitespace-normal">{controls(item)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <ul className="divide-y md:hidden">
-                    {visible.map((item) => (
-                      <li key={item.nzb_ref} className="space-y-2 p-3">
-                        <p className="font-medium break-words"><ReleaseName name={item.title} /></p>
-                        <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                          <span>{bytes(item.size_bytes)}</span><span className="break-words">{item.indexer_name}</span>
-                        </div>
-                        {controls(item)}
-                      </li>
-                    ))}
-                  </ul>
-                </Panel>
-                <Pager offset={page} more={page + PAGE < results.length} onChange={setPage} />
-              </>
-            )}
-          </section>
+          {search.data.indexers.length > 0 && (
+            <section aria-label="Search results">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-sm font-medium">Results</h2>
+                <span className="text-muted-foreground text-xs tabular-nums wrap-anywhere">{count(results.length, "result")} for “{search.term}”</span>
+              </div>
+              <Panel>
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader><TableRow>
+                      <TableHead className="w-full">Title</TableHead>
+                      <TableHead className="w-28 text-right">Size</TableHead>
+                      <TableHead className="w-32">Indexer</TableHead>
+                      <TableHead className="w-56">Queue</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {results.length === 0 && (
+                        <TableRow className="[&>td]:hover:bg-inherit">
+                          <TableCell colSpan={4} className="text-muted-foreground py-6 text-center whitespace-normal">{noResults}</TableCell>
+                        </TableRow>
+                      )}
+                      {visible.map((item) => (
+                        <TableRow key={item.nzb_ref}>
+                          <TableCell className="w-full max-w-0">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div tabIndex={0} className="truncate rounded-sm font-medium"><ReleaseName name={item.title} /></div>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-md break-words">{item.title}</TooltipContent>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{size(item.size_bytes)}</TableCell>
+                          <TableCell className="max-w-32 truncate" title={item.indexer_name}>{item.indexer_name}</TableCell>
+                          <TableCell className="whitespace-normal">{controls(item)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <ul className="divide-y md:hidden">
+                  {results.length === 0 && <li className="text-muted-foreground p-3 text-sm">{noResults}</li>}
+                  {visible.map((item) => (
+                    <li key={item.nzb_ref} className="space-y-2 p-3">
+                      <p className="font-medium break-words"><ReleaseName name={item.title} /></p>
+                      <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                        <span>{size(item.size_bytes)}</span><span className="break-words">{item.indexer_name}</span>
+                      </div>
+                      {controls(item)}
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+              {results.length > 0 && <Pager offset={page} more={page + PAGE < results.length} onChange={setPage} />}
+            </section>
+          )}
         </div>
       )}
     </>

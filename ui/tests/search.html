@@ -44,7 +44,7 @@
     ],
     results: term === "fast" ? [
       item("created"), item("existing"), item("rejected"), item("expired"),
-      item("offline"), item("forbidden"), item("unavailable", false), item("late"),
+      item("offline"), item("invalid"), item("forbidden"), item("unavailable", false), item("late"),
     ] : term === "repeat" ? [item("late")] : [item("slow")],
   });
   window.fetch = async (input, init) => {
@@ -74,6 +74,7 @@
       if (submitted.nzb_ref === "ref-existing") return response({ id: "existing-id", status: "existing" });
       if (submitted.nzb_ref === "ref-rejected") return response({ id: "rejected-id", status: "rejected" }, 422);
       if (submitted.nzb_ref === "ref-expired") return response({ error: "Not found" }, 404);
+      if (submitted.nzb_ref === "ref-invalid") return response({ error: "Invalid NZB data." }, 400);
       if (submitted.nzb_ref === "ref-forbidden") return response({ error: "Forbidden" }, 403);
       throw new TypeError("Network lost");
     }
@@ -111,8 +112,10 @@
 
   try {
     const { SearchPage } = await import("/src/pages/search.tsx");
+    // main.tsx wraps the app in TooltipProvider; result titles use tooltips.
+    const { TooltipProvider } = await import("/src/components/ui/tooltip.tsx");
     await act(async () => root.render(createElement(QueryClientProvider, { client },
-      createElement(MemoryRouter, null, createElement(SearchPage)),
+      createElement(TooltipProvider, null, createElement(MemoryRouter, null, createElement(SearchPage))),
     )));
     await type(" ");
     await submit();
@@ -174,6 +177,9 @@
     check(queueButton("expired").disabled, "Expired reference must stay disabled");
     await clickQueue("offline");
     await waitFor(() => row("offline").textContent.includes("Network lost"), "Network failure missing");
+    check(row("offline").querySelector('[role="alert"]') !== null, "Failed queue outcome is not an alert");
+    await clickQueue("invalid");
+    await waitFor(() => row("invalid").textContent.includes("Invalid NZB data."), "400 server message hidden");
     await clickQueue("forbidden");
     await waitFor(() => document.body.textContent.includes("Queue access is read-only"), "403 should disable queued actions");
 
