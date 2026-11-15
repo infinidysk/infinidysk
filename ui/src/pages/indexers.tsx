@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, PlugZap, Plus, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -22,12 +22,14 @@ export function Indexers({ title, description }: { title: string; description: s
   const [editing, setEditing] = useState<Indexer | null>(null);
   const [draft, setDraft] = useState<Indexer | null>(null);
   const [checked, setChecked] = useState<{ revision: string; result: ConnectionResult } | null>(null);
+  // Counts editor openings, so a save that finishes late cannot close a newer editor.
+  const session = useRef(0);
   const updated = () => {
     void client.invalidateQueries({ queryKey: ["indexers"] });
     void client.invalidateQueries({ queryKey: ["settings"] });
   };
   const save = useMutation({
-    mutationFn: (value: Indexer) =>
+    mutationFn: ({ value }: { value: Indexer; session: number }) =>
       value.id
         ? body(api.PUT("/api/v1/indexers/{id}", { params: { path: { id: value.id } }, body: value }))
         : body(api.POST("/api/v1/indexers", { body: {
@@ -36,10 +38,10 @@ export function Indexers({ title, description }: { title: string; description: s
             api_key: value.api_key,
             enabled: value.enabled,
           } })),
-    onSuccess: () => {
+    onSuccess: (_, { session: saved }) => {
       updated();
-      setEditing(null);
       setChecked(null);
+      if (saved === session.current) setEditing(null);
     },
     onError: updated,
   });
@@ -69,6 +71,7 @@ export function Indexers({ title, description }: { title: string; description: s
   };
   const keyRequired = !!(editing?.id && draft && origin(editing.base_url) !== origin(draft.base_url));
   const openEditor = (item: Indexer) => {
+    session.current += 1;
     save.reset();
     setEditing(item);
     setDraft(item);
@@ -175,7 +178,10 @@ export function Indexers({ title, description }: { title: string; description: s
         readOnly={locked}
         onSubmit={() => {
           if (!locked && !save.isPending && draft && draft.name.trim() && draft.base_url.trim() && draft.api_key && (!keyRequired || draft.api_key !== MASK)) {
-            save.mutate({ ...draft, name: draft.name.trim(), base_url: draft.base_url.trim() });
+            save.mutate({
+              value: { ...draft, name: draft.name.trim(), base_url: draft.base_url.trim() },
+              session: session.current,
+            });
           }
         }}
         onClose={() => setEditing(null)}

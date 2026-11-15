@@ -195,7 +195,7 @@ export function SearchPage() {
           next = {
             kind: "error",
             message: response.status === 403 ? "Queue access denied." :
-              response.status === 400 ? "Category or request rejected. Check queue categories." :
+              response.status === 400 ? failure?.error ?? "Category or request rejected. Check queue categories." :
               response.status === 503 ? "Indexer unavailable. Retry this item." :
               failure?.error ?? "Could not queue this result.",
           };
