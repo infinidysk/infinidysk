@@ -3091,7 +3091,7 @@ async fn an_nzb_inspection_reports_files_stores_nothing_and_runs_one_at_a_time()
     let provider = LoopbackServer::start(articles).await.unwrap();
     let (addr, cancel, server, _) = start().await;
     let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
-    let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
+    let mut settings = settings_from_view(&body);
     settings["providers"] = json!([{
         "hostname": "127.0.0.1", "port": provider.addr().port(), "tls": false,
     }]);
