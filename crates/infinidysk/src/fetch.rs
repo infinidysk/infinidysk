@@ -93,12 +93,20 @@ impl Fetcher {
     ///
     /// `api_keys` holds the key of every configured indexer at that origin: indexers may share
     /// one with different paths, and a redirect must not carry any of their keys elsewhere.
+    ///
+    /// With `enabled` false every indexer at that origin is disabled: the key checks stay,
+    /// but the download reaches only public addresses, like any other URL.
     pub(crate) async fn fetch_configured(
         url: Url,
         indexer_endpoint: &Url,
         api_keys: &[&str],
+        enabled: bool,
     ) -> Result<Fetched, String> {
         tokio::time::timeout(TOTAL, async {
+            if !enabled {
+                let policy = (indexer_endpoint, api_keys, false);
+                return Self::fetch_with_indexer_dns(url, None, Some(policy)).await;
+            }
             let source = IndexerDns::lookup(indexer_endpoint)
                 .await
                 .map_err(|_| "Could not safely resolve the configured indexer.".to_owned())?;
@@ -1125,6 +1133,29 @@ mod tests {
         }
         let own = Url::parse("https://indexer.example/second/api?apikey=second-key").unwrap();
         assert!(allowed_indexer_url_for(&own, &endpoint, &keys, false).is_ok());
+    }
+
+    #[tokio::test]
+    async fn disabled_indexers_keep_key_checks_but_lose_local_access() {
+        let endpoint = Url::parse("http://127.0.0.1:9/api").unwrap();
+        let keys = ["disabled-key"];
+        let local = Url::parse("http://127.0.0.1:9/get?apikey=disabled-key").unwrap();
+        assert_eq!(
+            Fetcher::fetch_configured(local, &endpoint, &keys, false)
+                .await
+                .err()
+                .as_deref(),
+            Some("The indexer download URL targets a non-public address.")
+        );
+        let endpoint = Url::parse("https://indexer.example/api").unwrap();
+        let foreign = Url::parse("https://other.example/get?apikey=disabled-key").unwrap();
+        assert_eq!(
+            Fetcher::fetch_configured(foreign, &endpoint, &keys, false)
+                .await
+                .err()
+                .as_deref(),
+            Some("The indexer download URL would expose credentials.")
+        );
     }
 
     #[tokio::test]
