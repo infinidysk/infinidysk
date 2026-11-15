@@ -107,6 +107,26 @@ Some 1.x features are still missing. The [feature comparison](https://www.infini
 
 Compressed archives cannot be streamed. infinidysk detects them and fails the import with a clear reason.
 
+PAR2 repair is an experiment: enable it in **Settings → Experiments**, then restart. **Settings → PAR2 repair** contains worker limits, storage use, live article progress and an existing-library backlog. Health shows the same backlog immediately before **Rejected releases**. Overview shows current work and progress in **Right now**. Its **History** tile shows the latest repair outcomes updated within the selected window; retries replace earlier results, and availability checks are excluded. Both tiles link to Health for details. Choose **Check existing library** to check every stored article for availability, or **Check and repair existing library** to queue PAR2 reconstruction when damage is found. Both queue small, resumable batches. Repair mode skips files without an original NZB; files from the same source set share one repair job. Stop adding files to end enumeration, then cancel individual pending jobs from the backlog if needed. Explorer file details offer **Check availability** and **Repair with PAR2**, separately from **Repair via Arr**.
+
+Availability checks use small NNTP STAT requests plus first, middle and last article body spot checks. They need no PAR2 proof and do not download a whole file to hash it. Queued verification jobs from earlier experiment builds resume as availability checks. An available result does not prove every byte is intact. Jobs in one scan share bounded article observations; a later manual check is fresh. Manual requests get priority, with every fourth turn reserved for waiting scan work. Availability and repair have separate workers, so reconstruction does not block cheap checks. Each worker can use its per-attempt memory allowance. Availability leaves provider connections free and yields when playback starts, then resumes without consuming a retry. Playback keeps priority over repair.
+
+When enabled, confirmed health damage tries local repair before Arr replacement. Damaged imports wait for repair, then retry through verified saved articles. Unsupported compression and missing passwords still fail directly. Reconstruction still reads and verifies source data before publishing repairs. One repair runs at a time. Defaults are 64 concurrent availability requests while idle, 256 MB working memory per attempt (including metadata), 100 GB decoded source reads per attempt, one hour per attempt, three attempts and 10 GB saved repair capacity. Change these in **Settings → PAR2 repair**, then save; the next attempt uses the new limits. Environment overrides use `INFINIDYSK__REPAIR__CHECK_CONCURRENCY`, `MEMORY_MB`, `TRANSFER_GB`, `TIMEOUT_MINUTES`, `ATTEMPTS` and `STORAGE_GB` under the same prefix. Playback pauses availability checks. Body spot checks have a separate memory bound. Transport overhead and provider retries can add traffic. Referenced articles are never evicted to make room. Lowering capacity preserves existing repairs and blocks new writes when full; backups need additional disk space. Throughput release checks remain pending.
+
+Saved repair articles live in `repairs/` inside your config folder (`/config/repairs` by default) for SQLite and PostgreSQL. Built-in backup and restore supports SQLite only. Those backups include verified repair bytes and pending C# repair candidates. For PostgreSQL, stop infinidysk, take a database dump with `pg_dump` and copy that repair directory as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Older database-only backups stay readable, and missing repairs trigger health rechecks. Cleanup waits while a restore undo or the SQLite copy from a PostgreSQL switch remains available. Back up config before upgrading.
+
+To move an install, stop infinidysk and copy the whole config directory, including `repairs/`, before starting it at the new location.
+
+Repairs for articles omitted from an NZB require a saved PAR2 recovery-set identity and trusted byte ranges. Older metadata stays readable; repair recovers missing proofs lazily from the original NZB when possible. Availability checks need stored article metadata; reconstruction needs the original NZB. C# repair files are preserved as candidates and become normal saved repairs only after full PAR2 verification. The importer retires its old reader after a complete rewrite pass and seven days without use; original C# files are retained.
+
+Health and import checks use saved repairs when their source identity is known. A repair counts as available only after its bytes pass verification.
+
+Repair progress shows completed provider reads and missing results, including repeated reads and cached misses. Missing replies do not consume the decoded source-byte allowance; uncertain transfer failures still reserve the maximum article size. Request, time and memory limits still apply. Back up config before upgrading for the additive request-progress migration.
+
+The backlog separates files found damaged from checks that could not finish and unsuccessful repair attempts. Totals count jobs, so a file can appear in both checks and repairs. A failed attempt does not prove a file is unrecoverable. Old archive/proof or memory failures can be retried with **Check availability**. Shutdown resumes unfinished work without consuming a retry; explicit cancellation remains cancelled. Back up config before upgrading: the cancellation migration corrects old checks recorded as failed cancellations.
+
+Repair reads PAR2 metadata even when checksums follow recovery packets. Saved, trusted article ranges can resolve adjacent missing parts, and a saved identity matching fresh PAR2 metadata can identify a fully missing source. Every reconstructed source still passes full checksum verification before publication. Without trustworthy byte boundaries or enough recovery data, repair stops with an explanation. Memory-limit errors include the failed phase, requested bytes, available allowance and retry instructions; changing limits applies to the next attempt.
+
 ## Reporting problems
 
 See [Reporting a bug](https://www.infinidysk.com/v2/help/reporting/): the image tag, a support pack from the System page, and for playback problems a read trace. Never post provider passwords or API keys. Release names are not needed; describe the file instead (for example "stored RAR5 episode").
@@ -122,6 +142,10 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+With `/dev/fuse` and mount permission, run `cargo test -p infinidysk --test repair_mount -- --ignored` to check repair publication through the kernel.
+
+With `par2` installed, run `cargo run --release --locked -p infinidysk-bench -- --scenario par2-` to measure playback with idle, active, cancelled, and failed repairs on loopback NNTP. The benchmark uses `par2` to generate the fixture before timing.
 
 The workspace is a set of crates under [`crates/`](crates/). The product binary is [`crates/infinidysk`](crates/infinidysk); it embeds the web UI from `ui/dist`. The other crates are libraries (NNTP, yEnc, streaming, archives, PAR2, queue, health, VFS, FUSE, WebDAV, database), and dependencies point downward only.
 
