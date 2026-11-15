@@ -293,8 +293,10 @@ pub(crate) fn url_contains_key(url: &Url, api_key: &str) -> bool {
         return false;
     }
     if url.host_str().is_some_and(|host| {
+        // The decoded host is checked for ASCII keys too: a dotted key can span labels
+        // that only spell it out once the punycode is decoded.
         host.contains(&api_key.to_lowercase())
-            || (!api_key.is_ascii() && url.domain().is_some() && {
+            || (url.domain().is_some() && {
                 let (key, valid) = idna::domain_to_unicode(api_key);
                 valid.is_ok() && !key.is_empty() && idna::domain_to_unicode(host).0.contains(&key)
             })
@@ -568,6 +570,11 @@ mod tests {
         assert!(url.host_str().unwrap().starts_with("xn--"));
         assert!(allowed_indexer_url(&url, &source, "M\u{00c9}TA-KEY", false).is_err());
         assert!(allowed_indexer_url(&url, &source, "unrelated-key", false).is_ok());
+
+        // An ASCII key across a label boundary shows only in the decoded host.
+        let url = Url::parse("https://b\u{00fc}cher.tld.cdn.example/nzb").unwrap();
+        assert!(!url.host_str().unwrap().contains("cher.tld"));
+        assert!(allowed_indexer_url(&url, &source, "cher.tld", false).is_err());
     }
 
     #[test]
