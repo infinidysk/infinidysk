@@ -39,6 +39,10 @@ async fn setup() -> (Router, Db) {
 }
 
 async fn setup_with_local_indexer(indexer_url: Option<&str>) -> (Router, Db) {
+    setup_with_indexer(indexer_url, true).await
+}
+
+async fn setup_with_indexer(indexer_url: Option<&str>, enabled: bool) -> (Router, Db) {
     let path = std::env::temp_dir().join(format!("infinidysk-sab-{}.sqlite", ItemId::new()));
     let db = Db::connect(&format!("sqlite:{}", path.display()))
         .await
@@ -55,7 +59,7 @@ async fn setup_with_local_indexer(indexer_url: Option<&str>) -> (Router, Db) {
             name: "trusted local indexer".to_owned(),
             base_url: base_url.to_owned(),
             api_key: infinidysk::config::Secret("secret".to_owned()),
-            enabled: true,
+            enabled,
         });
         config.save(settings).await.unwrap();
     }
@@ -388,14 +392,14 @@ async fn sab_form_keys_work_with_bounded_preauthentication() {
 }
 
 #[tokio::test]
-async fn addurl_unconfigured_local_target_keeps_sab_failure_history_without_connecting() {
+async fn addurl_fetches_unconfigured_lan_targets_like_sabnzbd() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let served = tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let Ok(Ok((mut socket, _))) =
-            tokio::time::timeout(Duration::from_millis(700), listener.accept()).await
+            tokio::time::timeout(Duration::from_secs(5), listener.accept()).await
         else {
             return false;
         };
@@ -421,23 +425,50 @@ async fn addurl_unconfigured_local_target_keeps_sab_failure_history_without_conn
         )),
     )
     .await;
-    assert_eq!(code, StatusCode::OK);
+    assert_eq!(code, StatusCode::OK, "{body}");
     assert_eq!(body["status"], true);
+    let queued = db.queue().await.unwrap();
+    assert_eq!(
+        (queued.len(), queued[0].file_name.as_str()),
+        (1, "sample.nzb")
+    );
+    assert!(served.await.unwrap());
+}
+
+#[tokio::test]
+async fn addurl_keeps_key_checks_for_disabled_indexers() {
+    use axum::response::Redirect;
+    use axum::routing::get as route;
+
+    // A redirect that would hand the disabled indexer's key to another host.
+    let indexer = Router::new().route(
+        "/get",
+        route(|| async { Redirect::to("http://other.invalid/nzb?apikey=secret") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, indexer).await });
+    let (app, db) = setup_with_indexer(Some(&base), false).await;
+
+    let (code, body) = send(
+        &app,
+        get(&format!("mode=addurl&name={base}/get&apikey=key")),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
     let id = body["nzo_ids"][0].as_str().unwrap();
-    assert_eq!(db.queue().await.unwrap().len(), 0);
-    let entries = db.history().await.unwrap();
-    let (failed, _) = entries
+    let history = db.history().await.unwrap();
+    let (failed, _) = history
         .iter()
         .find(|(h, _)| h.id.to_string() == id)
         .unwrap();
-    assert_eq!(failed.status, JobStatus::Failed);
-    assert!(
-        failed
-            .fail_message
-            .as_deref()
-            .is_some_and(|reason| reason.contains("non-public"))
+    assert_eq!(
+        (failed.status, failed.fail_message.as_deref()),
+        (
+            JobStatus::Failed,
+            Some("The indexer download URL would expose credentials.")
+        )
     );
-    assert!(!served.await.unwrap());
 }
 
 #[tokio::test]

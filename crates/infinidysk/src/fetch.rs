@@ -1,5 +1,6 @@
 //! Fetches NZBs over HTTP(S) with time, redirect and size limits.
-//! General SAB downloads require public addresses. Local indexers use a checked origin.
+//! General SAB downloads reach any address except link-local and cloud-metadata ones, like
+//! SABnzbd, since indexer proxies live on the LAN. Configured indexers use a checked origin.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
@@ -93,20 +94,13 @@ impl Fetcher {
     ///
     /// `api_keys` holds the key of every configured indexer at that origin: indexers may share
     /// one with different paths, and a redirect must not carry any of their keys elsewhere.
-    ///
-    /// With `enabled` false every indexer at that origin is disabled: the key checks stay,
-    /// but the download reaches only public addresses, like any other URL.
+    /// Disabled indexers count too, since their keys stay valid.
     pub(crate) async fn fetch_configured(
         url: Url,
         indexer_endpoint: &Url,
         api_keys: &[&str],
-        enabled: bool,
     ) -> Result<Fetched, String> {
         tokio::time::timeout(TOTAL, async {
-            if !enabled {
-                let policy = (indexer_endpoint, api_keys, false);
-                return Self::fetch_with_indexer_dns(url, None, Some(policy)).await;
-            }
             let source = IndexerDns::lookup(indexer_endpoint)
                 .await
                 .map_err(|_| "Could not safely resolve the configured indexer.".to_owned())?;
@@ -155,7 +149,7 @@ impl Fetcher {
             if let Some((endpoint, api_keys, local)) = indexer {
                 allowed_indexer_url_for(&url, endpoint, api_keys, local)?;
             } else {
-                allowed_public_url(&url)?;
+                allowed(&url)?;
             }
             let mut response = http.get(url.clone()).send().await.map_err(|e| reason(&e))?;
             let status = response.status();
@@ -203,18 +197,6 @@ fn redirect_target(current: &Url, location: &str) -> Result<Url, String> {
         return Err("An HTTPS download cannot redirect to HTTP.".to_owned());
     }
     Ok(next)
-}
-
-fn allowed_public_url(url: &Url) -> Result<(), String> {
-    allowed(url)?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| "The URL has no host.".to_owned())?;
-    let literal = host.trim_start_matches('[').trim_end_matches(']');
-    if literal.parse::<IpAddr>().is_ok_and(|ip| !public_ip(ip)) {
-        return Err(PRIVATE_REFUSED.to_owned());
-    }
-    Ok(())
 }
 
 /// Refuses other schemes and literal addresses we never fetch from; names are checked
@@ -397,14 +379,26 @@ fn denied(ip: IpAddr) -> bool {
     }
 }
 
-/// Resolves names and refuses the whole answer unless every address is public, so the
-/// connection only ever uses addresses checked here.
+/// Resolves names for general SAB downloads and refuses the whole answer if any address is
+/// link-local or cloud metadata, so the connection only ever uses addresses checked here.
 pub(crate) struct Guard;
 
 impl Resolve for Guard {
     fn resolve(&self, name: Name) -> Resolving {
-        resolve_checked(&name)
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            let resolved = tokio::net::lookup_host((host.as_str(), 0)).await?;
+            let addrs = allowed_addresses(resolved.collect())?;
+            Ok(Box::new(addrs.into_iter()) as Addrs)
+        })
     }
+}
+
+fn allowed_addresses(addrs: Vec<SocketAddr>) -> Result<Vec<SocketAddr>, &'static str> {
+    if addrs.iter().any(|a| denied(a.ip())) {
+        return Err(REFUSED);
+    }
+    Ok(addrs)
 }
 
 #[derive(Clone, Debug)]
@@ -489,6 +483,8 @@ impl Resolve for IndexerGuard {
     }
 }
 
+/// Resolves a host an indexer download was redirected to: public addresses only, so a
+/// redirect cannot reach other services next to a local indexer.
 fn resolve_checked(name: &Name) -> Resolving {
     let host = name.as_str().to_owned();
     Box::pin(async move {
@@ -1144,29 +1140,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_indexers_keep_key_checks_but_lose_local_access() {
-        let endpoint = Url::parse("http://127.0.0.1:9/api").unwrap();
-        let keys = ["disabled-key"];
-        let local = Url::parse("http://127.0.0.1:9/get?apikey=disabled-key").unwrap();
-        assert_eq!(
-            Fetcher::fetch_configured(local, &endpoint, &keys, false)
-                .await
-                .err()
-                .as_deref(),
-            Some("The indexer download URL targets a non-public address.")
-        );
-        let endpoint = Url::parse("https://indexer.example/api").unwrap();
-        let foreign = Url::parse("https://other.example/get?apikey=disabled-key").unwrap();
-        assert_eq!(
-            Fetcher::fetch_configured(foreign, &endpoint, &keys, false)
-                .await
-                .err()
-                .as_deref(),
-            Some("The indexer download URL would expose credentials.")
-        );
-    }
-
-    #[tokio::test]
     async fn downloaded_filenames_never_carry_indexer_credentials() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         for (path, header) in [
@@ -1337,7 +1310,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn general_sab_fetch_does_not_connect_to_untrusted_loopback_or_localhost() {
+    async fn general_sab_fetch_reaches_loopback_and_localhost_like_sabnzbd() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         for host in ["127.0.0.1", "localhost"] {
@@ -1345,7 +1318,7 @@ mod tests {
             let port = listener.local_addr().unwrap().port();
             let served = tokio::spawn(async move {
                 let Ok(Ok((mut socket, _))) =
-                    tokio::time::timeout(Duration::from_millis(600), listener.accept()).await
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept()).await
                 else {
                     return false;
                 };
@@ -1360,10 +1333,15 @@ mod tests {
                 true
             });
             let url = format!("http://{host}:{port}/sample.nzb");
-            assert!(Fetcher::new().unwrap().fetch(&url).await.is_err(), "{url}");
+            let fetched = Fetcher::new().unwrap().fetch(&url).await;
+            assert_eq!(
+                fetched.ok().map(|f| f.body).as_deref(),
+                Some(&b"okay"[..]),
+                "{url}"
+            );
             assert!(
-                !served.await.unwrap(),
-                "SAB requested an internal service via {host}"
+                served.await.unwrap(),
+                "SAB did not reach the LAN service via {host}"
             );
         }
     }
@@ -1379,7 +1357,8 @@ mod tests {
     }
 
     #[test]
-    fn iana_special_addresses_are_rejected_as_direct_sab_urls() {
+    fn iana_special_addresses_are_rejected_as_indexer_redirect_targets() {
+        let endpoint = Url::parse("https://indexer.example/api").unwrap();
         for ip in [
             "192.0.0.0",
             "192.0.0.1",
@@ -1410,7 +1389,8 @@ mod tests {
             };
             assert!(!public_ip(ip), "{ip}");
             assert!(
-                allowed_public_url(&Url::parse(&url).unwrap()).is_err(),
+                allowed_indexer_url(&Url::parse(&url).unwrap(), &endpoint, "secret", false)
+                    .is_err(),
                 "{url}"
             );
         }
@@ -1438,7 +1418,7 @@ mod tests {
             };
             assert!(public_ip(ip), "{ip}");
             assert!(
-                allowed_public_url(&Url::parse(&url).unwrap()).is_ok(),
+                allowed_indexer_url(&Url::parse(&url).unwrap(), &endpoint, "secret", false).is_ok(),
                 "{url}"
             );
         }
@@ -1480,7 +1460,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_sab_dns_denies_mixed_private_and_reserved_answers() {
+    fn indexer_redirect_dns_denies_mixed_private_and_reserved_answers() {
         let addresses = |ips: &[&str]| {
             ips.iter()
                 .map(|ip| SocketAddr::new(ip.parse().unwrap(), 0))
@@ -1502,20 +1482,44 @@ mod tests {
         assert!(
             checked_resolved_addresses(addresses(&["8.8.8.8", "2606:4700:4700::1111"])).is_ok()
         );
+    }
+
+    #[test]
+    fn generic_sab_allows_lan_and_loopback_but_not_link_local_or_metadata() {
+        let addresses = |ips: &[&str]| {
+            ips.iter()
+                .map(|ip| SocketAddr::new(ip.parse().unwrap(), 0))
+                .collect::<Vec<_>>()
+        };
+        for ips in [
+            vec!["127.0.0.1"],
+            vec!["192.168.1.2", "fd00::1"],
+            vec!["8.8.8.8", "10.0.0.1"],
+            vec!["::1"],
+        ] {
+            assert!(allowed_addresses(addresses(&ips)).is_ok(), "{ips:?}");
+        }
+        for ips in [
+            vec!["169.254.169.254"],
+            vec!["8.8.8.8", "fe80::1"],
+            vec!["192.168.1.2", "::ffff:169.254.169.254"],
+            vec!["fd00:ec2::254"],
+        ] {
+            assert!(allowed_addresses(addresses(&ips)).is_err(), "{ips:?}");
+        }
         for url in [
             "http://127.0.0.1/nzb",
             "http://10.0.0.1/nzb",
             "http://192.168.1.2/nzb",
             "http://100.64.1.2/nzb",
             "http://[::1]/nzb",
-            "http://[::ffff:127.0.0.1]/nzb",
+            "https://cdn.example/nzb",
         ] {
-            assert!(
-                allowed_public_url(&Url::parse(url).unwrap()).is_err(),
-                "{url}"
-            );
+            assert!(allowed(&Url::parse(url).unwrap()).is_ok(), "{url}");
         }
-        assert!(allowed_public_url(&Url::parse("https://cdn.example/nzb").unwrap()).is_ok());
+        for url in ["http://169.254.169.254/nzb", "http://[fe80::1]/nzb"] {
+            assert!(allowed(&Url::parse(url).unwrap()).is_err(), "{url}");
+        }
     }
 
     #[tokio::test]
@@ -1524,21 +1528,12 @@ mod tests {
 
         let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin_port = origin.local_addr().unwrap().port();
-        let internal = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let internal_port = internal.local_addr().unwrap().port();
         let origin_task = tokio::spawn(async move {
             let (mut stream, _) = origin.accept().await.unwrap();
             let mut buf = [0; 1024];
             let _ = stream.read(&mut buf).await.unwrap();
-            let response = format!(
-                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{internal_port}/private\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            );
+            let response = "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             stream.write_all(response.as_bytes()).await.unwrap();
-        });
-        let internal_task = tokio::spawn(async move {
-            tokio::time::timeout(Duration::from_millis(700), internal.accept())
-                .await
-                .is_ok()
         });
         let client = Client::builder()
             .no_proxy()
@@ -1553,10 +1548,10 @@ mod tests {
             .build()
             .unwrap();
         let url = Url::parse(&format!("http://cdn.example:{origin_port}/start")).unwrap();
+        // The metadata address is refused before any connection to it.
         let result = Fetcher::follow(url, &client, None).await;
-        assert!(result.is_err());
+        assert_eq!(result.err().as_deref(), Some(REFUSED));
         origin_task.await.unwrap();
-        assert!(!internal_task.await.unwrap());
     }
 
     #[tokio::test]

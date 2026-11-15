@@ -733,23 +733,18 @@ async fn add_url(state: &Sab, ctx: &Ctx, p: &Params) -> Result<Value, Fail> {
         reqwest::Url::parse(url).ok().and_then(|requested| {
             let indexers = &store.settings().indexers;
             // Disabled indexers count too: their keys stay valid and must not leak through
-            // a redirect. Only an enabled one lets the download reach a local address.
-            let at_origin: Vec<_> = indexers
+            // a redirect.
+            let endpoint = indexers
                 .iter()
-                .filter_map(|indexer| {
-                    let endpoint = crate::newznab::endpoint(indexer).ok()?;
-                    (endpoint.origin() == requested.origin()).then_some((indexer.enabled, endpoint))
-                })
-                .collect();
-            let enabled = at_origin.iter().any(|(enabled, _)| *enabled);
-            let (_, endpoint) = at_origin.into_iter().next()?;
+                .filter_map(|indexer| crate::newznab::endpoint(indexer).ok())
+                .find(|endpoint| endpoint.origin() == requested.origin())?;
             let keys = crate::newznab::origin_keys(indexers, &endpoint);
-            Some((requested, endpoint, keys, enabled))
+            Some((requested, endpoint, keys))
         })
     };
-    let fetched = if let Some((requested, endpoint, keys, enabled)) = configured {
+    let fetched = if let Some((requested, endpoint, keys)) = configured {
         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
-        Fetcher::fetch_configured(requested, &endpoint, &keys, enabled).await
+        Fetcher::fetch_configured(requested, &endpoint, &keys).await
     } else {
         state.fetcher.fetch(url).await
     };
