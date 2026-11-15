@@ -397,7 +397,7 @@ fn denied(ip: IpAddr) -> bool {
     }
 }
 
-/// Resolves names and refuses the whole answer if any address is denied, so the
+/// Resolves names and refuses the whole answer unless every address is public, so the
 /// connection only ever uses addresses checked here.
 pub(crate) struct Guard;
 
@@ -831,12 +831,13 @@ mod tests {
     async fn local_search_reference_rejects_private_ip_rebinding() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.2:0").await.unwrap();
+        // macOS has only 127.0.0.1 on loopback, so the search saw the other address.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let endpoint = Url::parse(&format!("http://{addr}/api")).unwrap();
         let searched_dns = IndexerDns {
-            host: "127.0.0.2".to_owned(),
-            addrs: vec![SocketAddr::new("127.0.0.1".parse().unwrap(), 0)],
+            host: "127.0.0.1".to_owned(),
+            addrs: vec![SocketAddr::new("127.0.0.2".parse().unwrap(), 0)],
         };
         assert!(searched_dns.is_local());
         let server = tokio::spawn(async move {
