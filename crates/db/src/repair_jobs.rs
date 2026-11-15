@@ -93,7 +93,11 @@ impl Db {
             let source: Option<(Uuid, i64, Option<i64>)> = sqlx::query_as(
                 "UPDATE repair_jobs SET state = 5, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $3 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) RETURNING nzb_blob, generation, scan_at")
                 .bind(claim.id).bind(now).bind(claim.generation).fetch_optional(&mut *tx).await?;
-            let Some((nzb, generation, scan_at)) = source else { return Ok(false) };
+            let Some((nzb, generation, scan_at)) = source else {
+                // Release the write lock before another claim can use a pooled connection.
+                tx.rollback().await?;
+                return Ok(false);
+            };
             let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = FALSE")
                 .bind(nzb).bind(generation).fetch_optional(&mut *tx).await?;
             if let Some(existing) = existing {
