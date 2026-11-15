@@ -648,12 +648,14 @@ impl Redactor {
             HTTP_URL
                 .replace_all(text, |m: &Captures| {
                     let raw = &m[0];
-                    if let Ok(url) = reqwest::Url::parse(raw)
-                        && self
-                            .indexer_keys
-                            .iter()
-                            .any(|key| crate::newznab::base_url_contains_key(raw, &url, key))
-                    {
+                    // The raw text first: a URL that does not parse can still carry a key.
+                    let url = reqwest::Url::parse(raw).ok();
+                    if self.indexer_keys.iter().any(|key| {
+                        crate::fetch::contains_api_key(raw, key)
+                            || url.as_ref().is_some_and(|url| {
+                                crate::newznab::base_url_contains_key(raw, url, key)
+                            })
+                    }) {
                         self.secrets_found += 1;
                         REDACTED.to_owned()
                     } else {
@@ -726,6 +728,8 @@ mod tests {
         for url in [
             "https://indexer.invalid/fake%2520key/api",
             "https://indexer.invalid/api?source=fake+key",
+            // An invalid port makes the URL unparsable; the raw text is still checked.
+            "https://indexer.invalid:bad/fake%20key",
         ] {
             let line = format!("log: {url}");
             assert_eq!(redactor.redact(&line), "log: [REDACTED]");
