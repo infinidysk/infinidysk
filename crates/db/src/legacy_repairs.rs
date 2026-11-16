@@ -27,12 +27,14 @@ impl Db {
         Ok(())
     }
 
+    /// The importer supplies the same header validation used for candidate reads.
     pub async fn stage_legacy_repair(
         &self,
         hash: &str,
         header: &[u8],
         bytes: &[u8],
         checksum: &[u8],
+        valid_header: impl Fn(&[u8], usize) -> bool,
     ) -> Result<(), Error> {
         if hash.len() != 64
             || !hash
@@ -42,13 +44,34 @@ impl Db {
             || bytes.is_empty()
             || bytes.len() > 33_554_432
             || checksum != Sha256::digest(bytes).as_slice()
+            || !valid_header(header, bytes.len())
         {
             return Err(Error::Corrupt("invalid legacy repair candidate"));
         }
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
-            sqlx::query("INSERT INTO legacy_repair_articles (hash, header, payload, sha256) VALUES ($1, $2, $3, $4) ON CONFLICT (hash) DO NOTHING")
-                .bind(hash).bind(header).bind(bytes).bind(checksum).execute(&mut *tx).await?;
+            let saved: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = sqlx::query_as(
+                if matches!(self.pool, Pool::Postgres(_)) {
+                    "SELECT header, payload, sha256 FROM legacy_repair_articles WHERE hash = $1 FOR UPDATE"
+                } else {
+                    "SELECT header, payload, sha256 FROM legacy_repair_articles WHERE hash = $1"
+                })
+                .bind(hash).fetch_optional(&mut *tx).await?;
+            if let Some((saved_header, saved_bytes, saved_checksum)) = saved {
+                if saved_header.len() > 1_048_576
+                    || saved_bytes.is_empty()
+                    || saved_bytes.len() > 33_554_432
+                    || !valid_header(&saved_header, saved_bytes.len())
+                    || saved_checksum != Sha256::digest(&saved_bytes).as_slice()
+                {
+                    sqlx::query("UPDATE legacy_repair_articles SET header = $2, payload = $3, sha256 = $4 WHERE hash = $1")
+                        .bind(hash).bind(header).bind(bytes).bind(checksum).execute(&mut *tx).await?;
+                }
+            } else {
+                // Another PostgreSQL insertion may win; its validated copy remains intact.
+                sqlx::query("INSERT INTO legacy_repair_articles (hash, header, payload, sha256) VALUES ($1, $2, $3, $4) ON CONFLICT (hash) DO NOTHING")
+                    .bind(hash).bind(header).bind(bytes).bind(checksum).execute(&mut *tx).await?;
+            }
             sqlx::query("DELETE FROM config WHERE key = $1")
                 .bind(format!("legacy.repair.unusable.{hash}")).execute(&mut *tx).await?;
             tx.commit().await?;

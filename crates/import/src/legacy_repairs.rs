@@ -159,7 +159,7 @@ pub async fn stage(config: &Path, db: &Db) -> Result<(), crate::Error> {
                     }
                     Err(error) => return Err(crate::Error::LegacyRepairs(error)),
                 };
-                runtime.block_on(db.stage_legacy_repair(hash, &header, &decoded.data, &Sha256::digest(&decoded.data)))?;
+                runtime.block_on(db.stage_legacy_repair(hash, &header, &decoded.data, &Sha256::digest(&decoded.data), |header, length| parse_header(header, length).is_ok()))?;
                 copied += 1;
             }
         }
@@ -241,6 +241,130 @@ pub async fn finish_rewrite(db: &Db, full_pass: bool) -> Result<(), infinidysk_d
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Copy)]
+    enum SavedCopy {
+        InvalidHeader,
+        InvalidChecksum,
+        Valid,
+    }
+
+    #[tokio::test]
+    async fn restaging_replaces_a_saved_candidate_with_an_invalid_header() {
+        restage_candidate(SavedCopy::InvalidHeader).await;
+    }
+
+    #[tokio::test]
+    async fn restaging_replaces_a_saved_candidate_with_an_invalid_checksum() {
+        restage_candidate(SavedCopy::InvalidChecksum).await;
+    }
+
+    #[tokio::test]
+    async fn restaging_preserves_a_valid_saved_candidate() {
+        restage_candidate(SavedCopy::Valid).await;
+    }
+
+    async fn restage_candidate(saved: SavedCopy) {
+        restage_candidate_in(saved, None).await;
+        if let Ok(url) = std::env::var("INFINIDYSK_TEST_POSTGRES_URL") {
+            let admin = sqlx::PgPool::connect(&url).await.unwrap();
+            let name = format!("infinidysk_restage_{}", uuid::Uuid::new_v4().simple());
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+                .execute(&admin)
+                .await
+                .unwrap();
+            let (base, _) = url.rsplit_once('/').unwrap();
+            restage_candidate_in(saved, Some(&format!("{base}/{name}"))).await;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE {name} WITH (FORCE)"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+            admin.close().await;
+        }
+    }
+
+    async fn restage_candidate_in(saved: SavedCopy, postgres_url: Option<&str>) {
+        let root = std::env::temp_dir().join(format!("legacy-restage-{}", uuid::Uuid::new_v4()));
+        let id = "restaged@loopback";
+        let hash = Sha256::digest(id.as_bytes())
+            .iter()
+            .fold(String::new(), |mut hash, byte| {
+                write!(hash, "{byte:02X}").unwrap();
+                hash
+            });
+        let shard = root.join("repair-segments").join(&hash[..2]);
+        std::fs::create_dir_all(&shard).unwrap();
+        std::fs::write(shard.join(&hash), b"data").unwrap();
+        std::fs::write(shard.join(format!("{hash}.h")), header()).unwrap();
+        let url = postgres_url.map_or_else(
+            || format!("sqlite:{}", root.join("candidates.sqlite").display()),
+            str::to_owned,
+        );
+        let db = Db::connect(&url).await.unwrap();
+        let saved_bytes = if matches!(saved, SavedCopy::Valid) {
+            &b"kept"[..]
+        } else {
+            &b"data"[..]
+        };
+        db.stage_legacy_repair(
+            &hash,
+            &header(),
+            saved_bytes,
+            &Sha256::digest(saved_bytes),
+            |header, length| parse_header(header, length).is_ok(),
+        )
+        .await
+        .unwrap();
+        let corruption = match saved {
+            SavedCopy::InvalidHeader => Some((
+                "UPDATE legacy_repair_articles SET header = $2 WHERE hash = $1",
+                b"{}".to_vec(),
+            )),
+            SavedCopy::InvalidChecksum => Some((
+                "UPDATE legacy_repair_articles SET sha256 = $2 WHERE hash = $1",
+                vec![0u8; 32],
+            )),
+            SavedCopy::Valid => None,
+        };
+        if let Some((query, corrupt_bytes)) = corruption {
+            if postgres_url.is_some() {
+                let pool = sqlx::PgPool::connect(&url).await.unwrap();
+                sqlx::query(query)
+                    .bind(&hash)
+                    .bind(corrupt_bytes)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                pool.close().await;
+            } else {
+                let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
+                sqlx::query(query)
+                    .bind(&hash)
+                    .bind(corrupt_bytes)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                pool.close().await;
+            }
+        }
+        let before = db.legacy_repair(&hash).await.unwrap().unwrap();
+        stage(&root, &db).await.unwrap();
+        db.close().await;
+        let db = Db::connect(&url).await.unwrap();
+        assert_eq!(
+            read(&db, id).await.unwrap().unwrap().data.as_ref(),
+            saved_bytes
+        );
+        if matches!(saved, SavedCopy::Valid) {
+            assert_eq!(db.legacy_repair(&hash).await.unwrap().unwrap(), before);
+        }
+        assert_eq!(db.article_repairs(id).await.unwrap(), []);
+        assert_eq!(std::fs::read(shard.join(&hash)).unwrap(), b"data");
+        db.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn header() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({ "FileSize": 100, "LineLength": 128,
@@ -352,9 +476,15 @@ mod tests {
         }
         let db = Db::connect(&url).await.unwrap();
         for (hash, saved_header) in [("A".repeat(64), header()), ("B".repeat(64), b"{}".to_vec())] {
-            db.stage_legacy_repair(&hash, &saved_header, b"data", &Sha256::digest(b"data"))
-                .await
-                .unwrap();
+            db.stage_legacy_repair(
+                &hash,
+                &saved_header,
+                b"data",
+                &Sha256::digest(b"data"),
+                |_, _| true,
+            )
+            .await
+            .unwrap();
         }
         let saved = db.legacy_repair(&"A".repeat(64)).await.unwrap();
         db.close().await;

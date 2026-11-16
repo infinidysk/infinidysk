@@ -294,6 +294,7 @@ async fn seed(s: &Sqlite) -> Seeded {
             b"{}",
             b"candidate",
             &Sha256::digest(b"candidate"),
+            |_, _| true,
         )
         .await
         .expect("legacy candidate");

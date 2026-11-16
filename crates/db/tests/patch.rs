@@ -161,7 +161,9 @@ async fn legacy_retirement_requires_the_whole_candidate_range() {
             let hash = "A".repeat(64);
             fixture
                 .db
-                .stage_legacy_repair(&hash, b"header", b"abc", &Sha256::digest(b"abc"))
+                .stage_legacy_repair(&hash, b"header", b"abc", &Sha256::digest(b"abc"), |_, _| {
+                    true
+                })
                 .await
                 .unwrap();
             fixture

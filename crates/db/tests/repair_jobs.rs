@@ -653,6 +653,7 @@ async fn legacy_candidates_are_durable_and_not_visible_as_committed_repairs() {
         b"header",
         b"candidate",
         &Sha256::digest(b"candidate"),
+        |_, _| true,
     )
     .await
     .unwrap();
