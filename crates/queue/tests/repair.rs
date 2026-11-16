@@ -241,6 +241,86 @@ fn metadata() -> Reader {
 }
 
 #[tokio::test]
+async fn discovery_survives_an_unavailable_first_obfuscated_article() {
+    for oversized in [false, true] {
+        let mut articles = post("discovery", "obfuscated", INDEX, INDEX.len());
+        let mut bad = articles[0].clone();
+        bad.message_id = "damaged-first@loopback".into();
+        if oversized {
+            let bytes = vec![0; infinidysk_nntp::MAX_DECODED_LEN + 1];
+            bad.wire = post("oversized", "obfuscated", &bytes, bytes.len())
+                .remove(0)
+                .wire;
+        }
+        articles.insert(0, bad);
+        let nzb = document(&[("obfuscated", &articles)]);
+        let available = articles.into_iter().skip(usize::from(!oversized));
+        let server = LoopbackServer::start(available).await.unwrap();
+        let (reader, _, _) = infinidysk_queue::repair::discover(
+            &client(&server),
+            &nzb,
+            limits(),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            panic!("surviving metadata remains discoverable (oversized={oversized}): {error:?}")
+        });
+        assert_eq!(reader.sets().len(), 1);
+        assert_eq!(server.body_commands(), 2);
+    }
+}
+
+#[tokio::test]
+async fn reconstruction_replaces_crc_valid_corruption_beside_a_missing_article() {
+    let original = data(100_000);
+    let a = post("mixed-a", "a.bin", &original, 1024);
+    let mut corrupt = original.clone();
+    corrupt[2048] ^= 1;
+    let altered = post("mixed-a", "a.bin", &corrupt, 1024);
+    let b = post("mixed-b", "b.bin", &data(8192), 3000);
+    let nzb = Arc::new(document(&[("one", &a), ("two", &b)]));
+    let server = LoopbackServer::start(
+        a.iter()
+            .enumerate()
+            .filter_map(|(i, article)| match i {
+                1 => None,
+                2 => Some(altered[i].clone()),
+                _ => Some(article.clone()),
+            })
+            .chain(b),
+    )
+    .await
+    .unwrap();
+    let reader = metadata();
+    let result = infinidysk_queue::repair::execute(
+        &client(&server),
+        nzb,
+        Arc::new(reader),
+        infinidysk_par2::read(INDEX).set_id.unwrap(),
+        Limits {
+            requests: 1000,
+            ..limits()
+        },
+        false,
+        infinidysk_queue::repair::Context::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("both damaged articles in one slice are reconstructed");
+    for index in [1, 2] {
+        let (_, bytes) = result
+            .patches
+            .iter()
+            .find(|(patch, _)| {
+                patch.source.message_id.as_deref() == Some(a[index].message_id.as_str())
+            })
+            .expect("every damaged article is published");
+        assert_eq!(bytes, &original[index * 1024..(index + 1) * 1024]);
+    }
+}
+
+#[tokio::test]
 async fn discovery_uses_the_index_before_downloading_recovery_volumes() {
     let index = post("index", "set.par2", INDEX, 7000);
     let volume = post(
@@ -424,11 +504,19 @@ async fn bounded_execution_verifies_whole_sources_before_returning_replacement_a
     )
     .await
     .unwrap();
-    assert_eq!(result.patches.len(), 1);
+    assert_eq!(
+        result.patches.len(),
+        3,
+        "all articles intersecting damaged slices are covered"
+    );
     let (completed, missing) = progress.requests();
     assert!(completed > missing && missing > 0);
-    assert_eq!(result.patches[0].0.source.range.start, 21_000);
-    assert_eq!(result.patches[0].1, data(100_000)[21_000..28_000]);
+    let (_, repaired) = result
+        .patches
+        .iter()
+        .find(|(patch, _)| patch.source.range.start == 21_000)
+        .unwrap();
+    assert_eq!(repaired, &data(100_000)[21_000..28_000]);
     assert!(result.transferred_bytes > 108_192);
     assert_eq!(
         result.remaining.decoded_bytes + result.transferred_bytes,
@@ -741,6 +829,80 @@ async fn adjacent_missing_parts_do_not_get_guessed_boundaries() {
 }
 
 #[tokio::test]
+async fn trusted_metadata_restores_trailing_omitted_parts_after_identity_checks() {
+    use infinidysk_core::{FileMeta, NzbFile, Segment, Segments};
+    let a = post("trailing-a", "a.bin", &data(100_000), 7000);
+    let b = post("trailing-b", "b.bin", &data(8192), 2000);
+    let nzb = Arc::new(document(&[("one", &a), ("two", &b[..3])]));
+    let meta = FileMeta::Nzb(NzbFile {
+        segments: Segments {
+            items: b
+                .iter()
+                .enumerate()
+                .map(|(i, article)| Segment {
+                    id: if i < 3 {
+                        article.message_id.clone()
+                    } else {
+                        String::new()
+                    },
+                    size: u32::try_from((8192 - i * 2000).min(2000)).unwrap(),
+                    fallbacks: vec![],
+                })
+                .collect(),
+            sizes_trusted: true,
+            ..Segments::default()
+        },
+        proof: None,
+    });
+    let server = LoopbackServer::start(a.into_iter().chain(b.into_iter().take(3)))
+        .await
+        .unwrap();
+    for matching in [false, true] {
+        let mut hint = meta.clone();
+        if !matching && let FileMeta::Nzb(file) = &mut hint {
+            file.segments.items[0].id = "unrelated@loopback".into();
+        }
+        let reader = metadata();
+        let result = infinidysk_queue::repair::execute(
+            &client(&server),
+            nzb.clone(),
+            Arc::new(reader),
+            infinidysk_par2::read(INDEX).set_id.unwrap(),
+            limits(),
+            false,
+            infinidysk_queue::repair::Context {
+                metadata: Some(Arc::new(hint)),
+                ..infinidysk_queue::repair::Context::default()
+            },
+            &CancellationToken::new(),
+        )
+        .await;
+        if matching {
+            let result = result.expect("trusted trailing boundaries allow reconstruction");
+            assert_eq!(result.patches.len(), 3);
+            assert_eq!(
+                result
+                    .patches
+                    .iter()
+                    .filter(|(patch, _)| patch.source.message_id.is_none())
+                    .count(),
+                2
+            );
+            assert!(result.patches.iter().all(|(patch, bytes)| {
+                bytes.as_slice()
+                    == &data(8192)[usize::try_from(patch.source.range.start).unwrap()
+                        ..usize::try_from(patch.source.range.end).unwrap()]
+            }));
+        } else {
+            assert!(
+                result.is_err(),
+                "unrelated metadata cannot supply missing boundaries"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn trusted_stored_ranges_allow_adjacent_or_entirely_missing_source_parts() {
     use infinidysk_core::{FileMeta, NzbFile, Par2Proof, Segment, Segments};
     for whole_file in [false, true] {
@@ -841,7 +1003,7 @@ async fn trusted_stored_ranges_allow_adjacent_or_entirely_missing_source_parts()
             let result =
                 result.expect("trusted identities/ranges allow reconstruction without guessing");
             assert_eq!(result.verified_bytes, 108_192);
-            assert_eq!(result.patches.len(), if whole_file { 3 } else { 2 });
+            assert_eq!(result.patches.len(), 3);
             for (patch, bytes) in result.patches {
                 assert_eq!(
                     bytes,

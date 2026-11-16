@@ -129,7 +129,12 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
         } else {
             body.write().unwrap().1 = after.clone();
         }
-        publication.retire().unwrap();
+        publication
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
         drop(publication);
         let mut expected = after.clone();
         if mode % 3 == 2 {
@@ -146,14 +151,24 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
         if mode == 2 {
             let mut publication = fence.write().await;
             db.update_blob(metadata, b"invalid metadata").await.unwrap();
-            publication.retire().unwrap();
+            publication
+                .retire()
+                .unwrap()
+                .acknowledge_after(async { Ok(()) })
+                .await
+                .unwrap();
             drop(publication);
             assert!(reader.read_exact(&mut next).await.is_err());
             let mut publication = fence.write().await;
             db.update_blob(metadata, &blob::encode_meta(&meta).unwrap())
                 .await
                 .unwrap();
-            publication.retire().unwrap();
+            publication
+                .retire()
+                .unwrap()
+                .acknowledge_after(async { Ok(()) })
+                .await
+                .unwrap();
             drop(publication);
             reader.read_exact(&mut next).await.unwrap();
             assert_eq!(next, expected[51..82]);

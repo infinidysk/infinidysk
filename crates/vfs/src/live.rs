@@ -350,7 +350,14 @@ mod tests {
         let mut first = [0; 2];
         reader.read_exact(&mut first).await.unwrap();
         assert_eq!(first, [1; 2]);
-        fence.write().await.retire().unwrap();
+        fence
+            .write()
+            .await
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
         let reading = tokio::spawn(async move {
             let mut bytes = [0; 3];
             reader.read_exact(&mut bytes).await.unwrap();
@@ -359,7 +366,14 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), started.notified())
             .await
             .unwrap();
-        fence.write().await.retire().unwrap();
+        fence
+            .write()
+            .await
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
         let (mut reader, bytes) = tokio::time::timeout(Duration::from_secs(1), reading)
             .await
             .unwrap()

@@ -175,13 +175,10 @@ async fn run(
                 .find(|l| l.source() == source)
                 .ok_or(Error::Unavailable("source layout"))?;
             let spans = layout.spans(&set, index)?;
-            let known = spans
-                .iter()
-                .any(|(article, _)| layout.articles()[*article].damage.is_some());
+            // A known missing article does not exonerate its neighbours. Their
+            // yEnc CRCs establish transport integrity, not the PAR2 slice hash.
             for (article, _) in spans {
-                if !known || layout.articles()[article].damage.is_some() {
-                    damaged.insert((source, article));
-                }
+                damaged.insert((source, article));
             }
         }
     }

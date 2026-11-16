@@ -203,6 +203,30 @@ async fn reads_the_tree_through_the_kernel() {
         let meta = std::fs::metadata(&path).unwrap();
         assert_eq!(meta.len(), data.len() as u64);
         assert_eq!(std::os::unix::fs::MetadataExt::uid(&meta), 1234);
+        // No bytes of this inode have been read. A READ admitted after the writer
+        // must reply before invalidation, which can wait for outstanding READs.
+        let uncached = std::fs::File::open(&path).unwrap();
+        let fence = read_vfs.read_fence(file.id);
+        let mut writers = [rt.block_on(fence.write())];
+        let publication = invalidator.prepare(&mut writers).unwrap();
+        let (sent, received) = std::sync::mpsc::channel();
+        let reading = std::thread::spawn(move || {
+            let result = std::os::unix::fs::FileExt::read_at(&uncached, &mut [0; 1], 0);
+            sent.send(result).unwrap();
+        });
+        let reply = received.recv_timeout(Duration::from_secs(2));
+        rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), publication.apply())
+                .await
+                .expect("publication cannot deadlock a READ")
+                .unwrap();
+        });
+        drop(writers);
+        let error = reply
+            .expect("uncached READ must finish while the writer is held")
+            .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(nix::libc::EIO));
+        reading.join().unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), data, "whole file");
         let mut f = std::fs::File::open(&path).unwrap();
         f.seek(SeekFrom::Start(4090)).unwrap();

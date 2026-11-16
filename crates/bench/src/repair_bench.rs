@@ -128,6 +128,25 @@ impl Fixture {
     }
 }
 
+fn scenarios(filter: &str) -> impl Iterator<Item = super::Scenario> + '_ {
+    MODES
+        .into_iter()
+        .filter(move |mode| mode.contains(filter))
+        .map(move |mode| super::Scenario {
+            impairment: Impairment {
+                response_delay: Duration::from_millis(
+                    if mode == "par2-verify" || mode.starts_with("par2-availability") {
+                        20
+                    } else {
+                        3
+                    },
+                ),
+                ..super::PLAIN
+            },
+            ..plain(mode, 128, ARTICLE, 8, 4, 32, None)
+        })
+}
+
 pub(super) fn run(
     filter: &str,
     json_path: Option<&str>,
@@ -138,22 +157,10 @@ pub(super) fn run(
         Scratch(std::env::temp_dir().join(format!("infinidysk-par2-bench-{}", ItemId::new())));
     std::fs::create_dir(&root.0)?;
     let fixture = Fixture::generate(&root.0)?;
-    let scenario = super::Scenario {
-        impairment: Impairment {
-            response_delay: Duration::from_millis(
-                if filter == "par2-verify" || filter.starts_with("par2-availability") {
-                    20
-                } else {
-                    3
-                },
-            ),
-            ..super::PLAIN
-        },
-        ..plain("par2", 128, ARTICLE, 8, 4, 32, None)
-    };
-    let (playback, layout) = generate(&scenario);
     let mut report = Map::new();
-    for mode in MODES.into_iter().filter(|mode| mode.contains(filter)) {
+    for scenario in scenarios(filter) {
+        let mode = scenario.name;
+        let (playback, layout) = generate(&scenario);
         let (articles, nzb) = fixture.posting(mode)?;
         let mut runs = Vec::new();
         for _ in 0..REPETITIONS {
@@ -372,4 +379,21 @@ fn persist(path: &Path, patches: &[(infinidysk_core::repair::Patch, Vec<u8>)]) -
     drop(store);
     std::fs::remove_dir_all(path)?;
     Ok(retained)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn suite_and_individual_modes_have_identical_provider_delays() {
+        for scenario in super::scenarios("par2") {
+            let individual = super::scenarios(scenario.name)
+                .find(|selected| selected.name == scenario.name)
+                .unwrap();
+            assert_eq!(
+                scenario.impairment.response_delay, individual.impairment.response_delay,
+                "{}",
+                scenario.name
+            );
+        }
+    }
 }

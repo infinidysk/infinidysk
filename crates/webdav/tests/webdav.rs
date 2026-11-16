@@ -40,8 +40,20 @@ async fn setup_timed(
     data: &[u8],
     timeout: Duration,
 ) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2], Arc<Vfs>) {
+    setup_published(data, timeout, None).await
+}
+
+async fn setup_published(
+    data: &[u8],
+    timeout: Duration,
+    replacement: Option<&[u8]>,
+) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2], Arc<Vfs>) {
     let articles = post("a", "a.mkv", data, ARTICLE);
-    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let replacements =
+        replacement.map_or_else(Vec::new, |bytes| post("published", "a.mkv", bytes, ARTICLE));
+    let server = LoopbackServer::start(articles.iter().cloned().chain(replacements))
+        .await
+        .unwrap();
     let endpoint = Endpoint::new(
         "127.0.0.1",
         server.addr().port(),
@@ -168,7 +180,9 @@ async fn body(response: Response) -> Vec<u8> {
 #[tokio::test]
 async fn publication_waits_for_http_bytes_then_refreshes_the_remaining_response() {
     let data = vec![23; 4 * ARTICLE];
-    let (_server, app, file, _, vfs) = setup(&data).await;
+    let replacement = vec![47; data.len()];
+    let (_server, app, file, _, vfs) =
+        setup_published(&data, Duration::from_secs(5), Some(&replacement)).await;
     let fence = vfs.read_fence(file.id);
     let response = send(
         &app,
@@ -193,6 +207,10 @@ async fn publication_waits_for_http_bytes_then_refreshes_the_remaining_response(
         .into_data()
         .unwrap();
     let received = first.len();
+    assert!(
+        received > 0 && received < data.len(),
+        "first frame leaves unread bytes"
+    );
     let held = first.slice(1..3);
     drop(first);
     assert!(
@@ -201,12 +219,36 @@ async fn publication_waits_for_http_bytes_then_refreshes_the_remaining_response(
             .is_err()
     );
     drop(held);
-    let mut publication = fence.write().await;
-    publication.retire().unwrap();
-    drop(publication);
+    let mut writers = [fence.write().await];
+    let publication = infinidysk_vfs::WriteLease::arm(&mut writers);
+    let metadata = file.meta_blob.unwrap();
+    let mut updated = blob::decode_meta(&vfs.db().blob(metadata).await.unwrap().unwrap()).unwrap();
+    let FileMeta::Nzb(updated_file) = &mut updated else {
+        panic!("plain file")
+    };
+    for (segment, article) in updated_file.segments.items.iter_mut().zip(post(
+        "published",
+        "a.mkv",
+        &replacement,
+        ARTICLE,
+    )) {
+        segment.id = article.message_id;
+    }
+    vfs.db()
+        .update_blob(metadata, &blob::encode_meta(&updated).unwrap())
+        .await
+        .unwrap();
+    // This fixture has no native mount aliases.
+    publication
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(writers);
     assert_eq!(
         response.collect().await.unwrap().to_bytes().as_ref(),
-        &data[received..]
+        &replacement[received..]
     );
     drop(fence.write().await);
 }

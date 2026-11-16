@@ -15,6 +15,8 @@ type Entries = Mutex<State>;
 #[derive(Default)]
 struct State {
     entries: HashMap<ItemId, Weak<Inner>>,
+    // Failed or cancelled publications outlive their delivery handles.
+    blocked: HashMap<ItemId, Arc<Inner>>,
     stamp: u64,
     active: Option<Active>,
 }
@@ -79,6 +81,19 @@ pub struct ReadLease {
 pub struct WriteLease {
     _guard: OwnedRwLockWriteGuard<()>,
     fence: ReadFence,
+}
+
+/// Armed before bytes change. Dropping this stage keeps delivery blocked.
+#[must_use = "abort before committing, or retire and confirm invalidation"]
+pub struct ArmedWrites<'a> {
+    writers: &'a mut [WriteLease],
+    previously_blocked: Vec<bool>,
+}
+
+/// All reader revisions advanced; native invalidation must still succeed.
+#[must_use = "confirm native invalidation before reopening delivery"]
+pub struct RetiredWrites<'a> {
+    writers: &'a mut [WriteLease],
 }
 
 impl Fences {
@@ -268,6 +283,21 @@ impl ReadFence {
         Ok(lease)
     }
 
+    /// Native READ replies must not wait behind a writer that is invalidating
+    /// kernel pages: the kernel can be waiting for that same READ to finish.
+    pub fn try_read(&self) -> io::Result<ReadLease> {
+        let guard = Arc::clone(&self.inner.gate)
+            .try_read_owned()
+            .map_err(|_| io::Error::other("repair publication is in progress"))?;
+        if self.inner.blocked.load(Ordering::Acquire) {
+            return Err(io::Error::other("repair publication needs reconciliation"));
+        }
+        Ok(ReadLease {
+            _guard: guard,
+            _fence: self.clone(),
+        })
+    }
+
     /// Wait for previously admitted reads, then block new reads of this item.
     /// A coordinator must retire buffered data and complete kernel invalidation before
     /// releasing this lease. This is admission, not a publication acknowledgement.
@@ -393,21 +423,97 @@ impl WriteLease {
     /// Arm before COMMIT. Dropping a failed publication must not expose old buffers.
     pub fn block(&mut self) {
         self.fence.inner.blocked.store(true, Ordering::Release);
+        if let Some(entries) = self.fence.inner.entries.upgrade() {
+            entries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .blocked
+                .insert(self.item(), Arc::clone(&self.fence.inner));
+        }
     }
 
-    /// Clear only after reader retirement and every native alias acknowledgement.
-    pub fn acknowledge(&mut self) {
+    fn acknowledge(&mut self) {
         self.fence.inner.blocked.store(false, Ordering::Release);
+        if let Some(entries) = self.fence.inner.entries.upgrade() {
+            entries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .blocked
+                .remove(&self.item());
+        }
+    }
+
+    /// Arm the entire batch before SQL publication.
+    pub fn arm(writers: &mut [Self]) -> ArmedWrites<'_> {
+        let previously_blocked = writers
+            .iter()
+            .map(|writer| writer.fence.inner.blocked.load(Ordering::Acquire))
+            .collect();
+        for writer in writers.iter_mut() {
+            writer.block();
+        }
+        ArmedWrites {
+            writers,
+            previously_blocked,
+        }
     }
 
     /// Retire userspace buffers after publication. The caller must still confirm
     /// native invalidation before releasing exclusive admission.
-    pub fn retire(&mut self) -> io::Result<()> {
+    pub fn retire(&mut self) -> io::Result<RetiredWrites<'_>> {
+        Self::arm(std::slice::from_mut(self)).retire()
+    }
+
+    fn advance(&mut self) -> io::Result<()> {
         let version = &self.fence.inner.version;
         let next = (*version.borrow())
             .checked_add(1)
             .ok_or_else(|| io::Error::other("file revision exhausted"))?;
         version.send_replace(next);
+        Ok(())
+    }
+}
+
+impl ArmedWrites<'_> {
+    /// Only for a publication that did not commit or change delivery bytes.
+    /// An earlier unfinished publication remains blocked.
+    pub fn abort(self) {
+        for (writer, blocked) in self.writers.iter_mut().zip(self.previously_blocked) {
+            if !blocked {
+                writer.acknowledge();
+            }
+        }
+    }
+
+    pub fn block(&mut self) {
+        for writer in self.writers.iter_mut() {
+            writer.block();
+        }
+    }
+}
+
+impl<'a> ArmedWrites<'a> {
+    pub fn retire(self) -> io::Result<RetiredWrites<'a>> {
+        for writer in self.writers.iter_mut() {
+            writer.advance()?;
+        }
+        Ok(RetiredWrites {
+            writers: self.writers,
+        })
+    }
+}
+
+impl RetiredWrites<'_> {
+    /// Acknowledgement is reachable only after retirement and successful native
+    /// invalidation of the whole batch. Errors and cancellation retain the block.
+    pub async fn acknowledge_after(
+        self,
+        invalidation: impl std::future::Future<Output = io::Result<()>>,
+    ) -> io::Result<()> {
+        invalidation.await?;
+        for writer in self.writers.iter_mut() {
+            writer.acknowledge();
+        }
         Ok(())
     }
 }
@@ -507,7 +613,12 @@ mod tests {
         let report = tokio::spawn(async move { queued.read().await });
         tokio::task::yield_now().await;
         assert!(!report.is_finished());
-        publication.retire().unwrap();
+        publication
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
         drop(publication);
         assert!(report.await.unwrap().is_none());
         let current = fence.version();
@@ -519,7 +630,12 @@ mod tests {
         );
         drop(accepted);
         let mut publication = fence.write().await;
-        publication.retire().unwrap();
+        publication
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
         drop(publication);
         assert!(!current.is_current());
     }

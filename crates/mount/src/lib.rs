@@ -528,7 +528,7 @@ impl<R: AsyncRead + AsyncSeek + Unpin> OpenFile<R> {
         arrived: Instant,
     ) -> std::io::Result<ReplyData> {
         let lease = match &self.fence {
-            Some(fence) => Some(fence.read().await?),
+            Some(fence) => Some(fence.try_read()?),
             None => None,
         };
         let listed = self
@@ -1537,6 +1537,7 @@ mod tests {
                 file.read(1, 0, 10, Instant::now())
             )
             .await
+            .unwrap()
             .is_err()
         );
         drop(writing);
