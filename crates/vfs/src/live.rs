@@ -231,6 +231,22 @@ impl LiveReader {
             .ok_or_else(|| io::Error::other("file reader is being refreshed"))
     }
 
+    fn finish_read(
+        &mut self,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+        before: usize,
+        result: Poll<io::Result<()>>,
+    ) -> Poll<io::Result<()>> {
+        if result.is_ready() && !self.version.is_current() {
+            buf.set_filled(before);
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+        self.pos += (buf.filled().len() - before) as u64;
+        result
+    }
+
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if self.version.blocked() {
             return Poll::Ready(Err(io::Error::other(
@@ -283,8 +299,7 @@ impl AsyncRead for LiveReader {
         ready!(this.poll_ready(cx))?;
         let before = buf.filled().len();
         let result = this.reader()?.poll_read(cx, buf);
-        this.pos += (buf.filled().len() - before) as u64;
-        result
+        this.finish_read(cx, buf, before, result)
     }
 }
 
@@ -319,6 +334,60 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     use tokio::sync::Notify;
+
+    #[tokio::test]
+    async fn a_read_completed_during_retirement_discards_bytes_and_keeps_its_cursor() {
+        struct Wakes(AtomicUsize);
+        impl std::task::Wake for Wakes {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let registry = Fences::default();
+        let fence = registry.get(ItemId::new());
+        let reload: Reload =
+            Arc::new(|_| Box::pin(async { Ok(Reader::Memory(Cursor::new(vec![3; 20]))) }));
+        let mut reader = LiveReader::new(
+            Reader::Memory(Cursor::new(vec![1; 20])),
+            fence.version(),
+            20,
+            reload,
+        );
+        reader.seek(SeekFrom::Start(5)).await.unwrap();
+        let mut bytes = [0; 6];
+        let mut buf = ReadBuf::new(&mut bytes);
+        buf.put_slice(&[9]);
+        let before = buf.filled().len();
+        let wakes = Arc::new(Wakes(AtomicUsize::new(0)));
+        let waker = std::task::Waker::from(Arc::clone(&wakes));
+        let mut cx = Context::from_waker(&waker);
+        // Schedule retirement exactly between the inner read and its delivery.
+        let completed = reader.reader().unwrap().poll_read(&mut cx, &mut buf);
+        assert!(completed.is_ready());
+        fence
+            .write()
+            .await
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
+        assert!(
+            reader
+                .finish_read(&mut cx, &mut buf, before, completed)
+                .is_pending()
+        );
+        assert_eq!(
+            buf.filled(),
+            &[9],
+            "superseded bytes never reach the caller"
+        );
+        assert_eq!(wakes.0.load(Ordering::Relaxed), 1, "reload is scheduled");
+        let mut fresh = [0; 3];
+        reader.read_exact(&mut fresh).await.unwrap();
+        assert_eq!(fresh, [3; 3]);
+        assert_eq!(reader.stream_position().await.unwrap(), 8);
+    }
 
     #[tokio::test]
     async fn another_retirement_cancels_a_pending_reload_without_losing_the_cursor() {
