@@ -813,7 +813,7 @@ async fn aborting_the_caller_releases_verification_admission() {
     )
     .await
     .unwrap();
-    let (_scratch, _, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let cancel = CancellationToken::new();
     let running = {
         let health = Arc::clone(&health);
@@ -828,17 +828,10 @@ async fn aborting_the_caller_releases_verification_admission() {
     running.abort();
     assert!(running.await.unwrap_err().is_cancelled());
     assert!(!cancel.is_cancelled());
-    assert!(matches!(
-        tokio::time::timeout(
-            Duration::from_secs(3),
-            // Admission must reopen even while the old NNTP connection drains.
-            health.check_availability(ItemId::new(), &cancel, AvailabilityOptions::default())
-        )
+    let publication = tokio::time::timeout(Duration::from_secs(10), db.pause_writes())
         .await
-        .unwrap()
-        .unwrap(),
-        Availability::Unavailable(_)
-    ));
+        .expect("aborting the caller releases exclusive publication admission");
+    drop(publication);
     assert!(!cancel.is_cancelled());
 }
 

@@ -108,7 +108,12 @@ impl Invalidation<'_> {
             .acknowledge_after(async {
                 for inode in aliases {
                     Self::current(registry, &mounted)?;
-                    (mounted.send)(inode).await?;
+                    // An evicted inode has no kernel pages left to invalidate.
+                    if let Err(error) = (mounted.send)(inode).await
+                        && error.raw_os_error() != Some(nix::libc::ENOENT)
+                    {
+                        return Err(error);
+                    }
                 }
                 Self::current(registry, &mounted)
             })
@@ -270,6 +275,44 @@ mod tests {
             .apply()
             .await
             .unwrap();
+        drop(writers);
+        drop(fence.read().await.unwrap());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::significant_drop_tightening)] // Eviction must occur after prepare captures aliases and before apply consumes the guard.
+    async fn an_alias_evicted_after_prepare_does_not_block_the_remaining_aliases() {
+        let vfs = vfs().await;
+        let item = ItemId::new();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mount = mounted(
+            Box::new({
+                let calls = Arc::clone(&calls);
+                move |inode| {
+                    lock(&calls).push(inode);
+                    Box::pin(async move {
+                        if inode == 11 {
+                            Err(io::Error::from_raw_os_error(nix::libc::ENOENT))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                }
+            }),
+            item,
+            &vfs,
+        );
+        let invalidator = Invalidator {
+            mounted: Mutex::new(Some(Arc::clone(&mount))),
+        };
+        let fence = vfs.read_fence(item);
+        let mut writers = [fence.write().await];
+        let plan = invalidator.prepare(&mut writers).unwrap();
+        lock(&mount.inodes).owners.remove(&11);
+        plan.apply()
+            .await
+            .expect("eviction already invalidated this alias");
+        assert_eq!(*lock(&calls), [11, 22]);
         drop(writers);
         drop(fence.read().await.unwrap());
     }
