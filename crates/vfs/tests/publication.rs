@@ -126,7 +126,12 @@ async fn shared_articles_and_source_members_are_fenced_but_other_opens_continue(
         .is_some()
     );
     for writer in &mut writers {
-        writer.retire().unwrap();
+        writer
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
     }
     assert!(unaffected.is_current());
     drop(writers);
@@ -198,8 +203,12 @@ async fn unfinished_publication_denies_old_buffers_until_reconciled() {
     let publication = vfs.begin_publication(nzb, &[patch]).unwrap();
     let mut writers = publication.writers().await;
     for writer in &mut writers {
-        writer.retire().unwrap();
-        writer.acknowledge();
+        writer
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
     }
     drop(writers);
     drop(publication);

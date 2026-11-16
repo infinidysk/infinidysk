@@ -49,7 +49,7 @@ impl Slots {
         Ok(slots)
     }
 
-    fn grow(&mut self, length: usize, budget: &mut Budget) -> Result<(), Error> {
+    pub(super) fn grow(&mut self, length: usize, budget: &mut Budget) -> Result<(), Error> {
         if length <= self.parts.len() {
             return Ok(());
         }
@@ -78,7 +78,7 @@ impl Slots {
         self.parts.len()
     }
     pub fn id(&self, index: usize) -> Option<&str> {
-        self.parts[index].id.as_deref()
+        self.parts.get(index).and_then(|slot| slot.id.as_deref())
     }
     pub fn damage(&mut self, index: usize, damage: Damage) {
         self.parts[index].damage = Some(damage);

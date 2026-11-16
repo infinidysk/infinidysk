@@ -26,7 +26,9 @@ use infinidysk_nntp::Client;
 use infinidysk_stream::{Budget, Cache, Fault, Gaps};
 use uuid::Uuid;
 
-pub use fence::{Publication, ReadFence, ReadLease, ReadVersion, WriteLease};
+pub use fence::{
+    ArmedWrites, Publication, ReadFence, ReadLease, ReadVersion, RetiredWrites, WriteLease,
+};
 pub use reader::{PartsReader, Reader};
 pub use session::{
     Delivery, FuseOp, FuseOps, Handle, OpInFlight, Origin, PendingOp, PendingRead, ReadStage,

@@ -71,8 +71,9 @@ async fn read_parity(
             continue;
         }
         let mut parity = name.contains(".par2");
-        for (i, segment) in file.segments.iter().enumerate() {
-            if i > 0 && !parity {
+        let mut classified = false;
+        for segment in &file.segments {
+            if classified && !parity {
                 break;
             }
             let body = match budget.body(client, &segment.id).await {
@@ -80,6 +81,7 @@ async fn read_parity(
                 Err(Error::Source(
                     infinidysk_nntp::Error::NotFound
                     | infinidysk_nntp::Error::Yenc(_)
+                    | infinidysk_nntp::Error::TooLarge
                     | infinidysk_nntp::Error::CrcMismatch { .. },
                 )) => {
                     reader.end_volume();
@@ -87,6 +89,7 @@ async fn read_parity(
                 }
                 Err(error) => return Err(error),
             };
+            classified = true;
             parity |= body.data.starts_with(b"PAR2\0PKT");
             if parity {
                 // Vec capacity growth and scanner packet records have separate headroom.
@@ -568,12 +571,16 @@ impl Budget {
             Err(infinidysk_nntp::Error::NotFound) => 0,
             Err(_) => MAX_DECODED_LEN,
         };
-        if bytes > MAX_DECODED_LEN {
-            return Err(Error::Limit("article size"));
-        }
-        self.limits.decoded_bytes -= bytes as u64;
+        self.limits.decoded_bytes = self
+            .limits
+            .decoded_bytes
+            .checked_sub(bytes as u64)
+            .ok_or(Error::Limit("decoded byte"))?;
         if result.is_ok() {
             self.network_bytes += bytes as u64;
+        }
+        if bytes > MAX_DECODED_LEN {
+            return Err(Error::Source(infinidysk_nntp::Error::TooLarge));
         }
         result.map_err(Error::Source)
     }

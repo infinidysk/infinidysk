@@ -536,6 +536,44 @@ async fn archives_open_three_levels_deep_and_compressed_inner_members_fail() {
 }
 
 #[tokio::test]
+async fn missing_obfuscated_data_waits_for_par2_instead_of_failing_empty() {
+    let missing = post("missing-obfuscated", "obfuscated", &[1; 1000], 1000);
+    let parity = fixture("par2/tests/fixtures/set.par2");
+    let index = post("surviving-index", "set.par2", &parity, 32 << 10);
+    let xml = nzb(&[
+        ("obfuscated", &missing, 1000, 1000),
+        ("set.par2", &index, parity.len(), 32 << 10),
+    ]);
+    let (_server, queue) = setup(index).await;
+    queue.enable_par2();
+    let db = queue.db();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &xml,
+        )
+        .await
+        .unwrap();
+    assert!(queue.process_next().await);
+    assert!(
+        db.history_entry(id).await.unwrap().is_none(),
+        "repair must be requested before failure"
+    );
+    assert_eq!(db.queue().await.unwrap().len(), 1);
+    let repair = db
+        .par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repair.state, 0);
+}
+
+#[tokio::test]
 async fn compressed_archives_fail_without_starting_a_repair_download() {
     let data = fixture("archive/tests/fixtures/7Zip.LZMA.7z");
     let articles = post("compressed", "source.7z", &data, 7000);

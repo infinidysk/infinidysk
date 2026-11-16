@@ -72,7 +72,12 @@ mod tests {
         );
         drop(slice);
         let mut publication = fence.write().await;
-        publication.retire().unwrap();
+        publication
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
         drop(publication);
         assert!(chunk(&mut reader, Some(&fence)).await.unwrap().is_some());
         assert!(chunk(&mut reader, Some(&fence)).await.unwrap().is_none());

@@ -15,13 +15,38 @@ use tokio_util::sync::CancellationToken;
 
 const ARTICLE: usize = 7000;
 
+struct Scratch(std::path::PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).expect("test database directory is removed");
+    }
+}
+
+#[tokio::test]
+async fn verification_fixture_removes_its_database_and_sidecars() {
+    let (data, _) = content();
+    let server = LoopbackServer::start([]).await.unwrap();
+    let path = {
+        let (scratch, db, _, health) = stored(&server, &data, None).await;
+        let path = scratch.0.clone();
+        assert!(path.join("verify.sqlite").is_file());
+        drop(health);
+        db.close().await;
+        drop(db);
+        drop(scratch);
+        path
+    };
+    assert!(!path.exists());
+}
+
 #[tokio::test]
 async fn active_playback_keeps_new_availability_checks_off_the_provider() {
     let (data, _) = content();
     let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
         .await
         .unwrap();
-    let (_, item, health) = stored(&server, &data, None).await;
+    let (_scratch, _, item, health) = stored(&server, &data, None).await;
     let health = Arc::try_unwrap(health)
         .ok()
         .unwrap()
@@ -52,7 +77,7 @@ async fn playback_preempts_an_availability_check_and_releases_publication() {
     )
     .await
     .unwrap();
-    let (db, item, health) = stored(&server, &data, None).await;
+    let (_scratch, db, item, health) = stored(&server, &data, None).await;
     let playing = Arc::new(AtomicBool::new(false));
     let gate = Arc::clone(&playing);
     let health = Arc::new(
@@ -93,7 +118,7 @@ async fn archive_members_check_their_stored_ranges_without_a_par2_proof() {
     let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
         .await
         .unwrap();
-    let (db, item, health) = stored(&server, &data, None).await;
+    let (_scratch, db, item, health) = stored(&server, &data, None).await;
     let meta = item.meta_blob.unwrap();
     let FileMeta::Nzb(plain) = blob::decode_meta(&db.blob(meta).await.unwrap().unwrap()).unwrap()
     else {
@@ -136,7 +161,7 @@ async fn availability_checks_all_articles_without_a_proof_or_a_full_download() {
     let posted = post("verify", "a.bin", &data, ARTICLE);
     let total = posted.len();
     let server = LoopbackServer::start(posted).await.unwrap();
-    let (_, item, health) = stored(&server, &data, None).await;
+    let (_scratch, _, item, health) = stored(&server, &data, None).await;
     let result = health
         .check_availability(
             item.id,
@@ -163,7 +188,7 @@ async fn availability_probes_continue_while_a_body_spot_check_waits() {
     )
     .await
     .unwrap();
-    let (_, item, health) = stored(&server, &data, None).await;
+    let (_scratch, _, item, health) = stored(&server, &data, None).await;
     let cancel = CancellationToken::new();
     let progress = Arc::new(AvailabilityProgress::default());
     let running = tokio::spawn({
@@ -207,7 +232,7 @@ async fn scan_evidence_deduplicates_articles_but_a_manual_check_is_fresh() {
     let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
         .await
         .unwrap();
-    let (_, item, health) = stored(&server, &data, None).await;
+    let (_scratch, _, item, health) = stored(&server, &data, None).await;
     let evidence = Arc::new(Evidence::default());
     for _ in 0..2 {
         assert!(matches!(
@@ -271,7 +296,7 @@ async fn stored(
     server: &LoopbackServer,
     data: &[u8],
     proof: Option<Par2Proof>,
-) -> (Db, Item, Arc<Health>) {
+) -> (Scratch, Db, Item, Arc<Health>) {
     stored_with_repairs(server, data, proof, None).await
 }
 
@@ -280,8 +305,11 @@ async fn stored_with_repairs(
     data: &[u8],
     proof: Option<Par2Proof>,
     repairs: Option<(BlobId, infinidysk_nntp::RepairLookup)>,
-) -> (Db, Item, Arc<Health>) {
-    let path = std::env::temp_dir().join(format!("infinidysk-verify-{}.sqlite", ItemId::new()));
+) -> (Scratch, Db, Item, Arc<Health>) {
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("infinidysk-verify-{}", ItemId::new())));
+    std::fs::create_dir(&scratch.0).expect("isolated database directory is created");
+    let path = scratch.0.join("verify.sqlite");
     let db = Db::connect(&format!("sqlite:{}", path.display()))
         .await
         .expect("test database opens");
@@ -365,7 +393,7 @@ async fn stored_with_repairs(
         watch::channel(Settings::default()).1,
     )
     .expect("health starts");
-    (db, item, Arc::new(health))
+    (scratch, db, item, Arc::new(health))
 }
 
 #[tokio::test]
@@ -419,7 +447,7 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
     let server = LoopbackServer::start_stalling(articles, 0, Duration::from_millis(100))
         .await
         .unwrap();
-    let (db, item, health) =
+    let (_scratch, db, item, health) =
         stored_with_repairs(&server, &data, Some(proof), Some((key.nzb, lookup))).await;
     let source = db
         .repair_source(Owner::Item(item.id))
@@ -532,7 +560,7 @@ async fn availability_obeys_the_source_read_allowance_without_changing_health() 
     let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
         .await
         .unwrap();
-    let (db, item, health) = stored(&server, &data, None).await;
+    let (_scratch, db, item, health) = stored(&server, &data, None).await;
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
@@ -561,7 +589,7 @@ async fn availability_does_not_require_slice_checksums() {
     let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
         .await
         .unwrap();
-    let (_, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, _, item, health) = stored(&server, &data, Some(proof)).await;
     assert!(matches!(
         health
             .check_availability(
@@ -579,7 +607,7 @@ async fn availability_does_not_require_slice_checksums() {
 async fn missing_articles_are_detected_without_a_proof_or_health_changes() {
     let (data, _) = content();
     let server = LoopbackServer::start([]).await.unwrap();
-    let (db, item, health) = stored(&server, &data, None).await;
+    let (_scratch, db, item, health) = stored(&server, &data, None).await;
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
@@ -604,7 +632,7 @@ async fn availability_does_not_claim_a_whole_file_checksum_check() {
     let server = LoopbackServer::start(post("verify", "a.bin", &wrong, ARTICLE))
         .await
         .unwrap();
-    let (db, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
@@ -640,7 +668,7 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
     )
     .await
     .unwrap();
-    let (db, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let id = item.id;
     let running = tokio::spawn(async move {
         health
@@ -677,7 +705,7 @@ async fn publication_drains_existing_verification_and_holds_new_verification() {
     )
     .await
     .unwrap();
-    let (db, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let checking = tokio::spawn({
         let health = Arc::clone(&health);
         async move {
@@ -728,7 +756,7 @@ async fn cancelling_a_pending_body_returns_without_waiting_for_the_server() {
     )
     .await
     .unwrap();
-    let (_, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, _, item, health) = stored(&server, &data, Some(proof)).await;
     let cancel = CancellationToken::new();
     let stop = cancel.clone();
     let running = tokio::spawn(async move {
@@ -758,7 +786,7 @@ async fn missing_articles_cannot_verify_even_when_expected_content_is_zero() {
     proof.slice_crc32.clear();
     proof.slice_size = 0;
     let server = LoopbackServer::start([]).await.unwrap();
-    let (db, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let before = db.health(item.id).await.unwrap();
     assert!(matches!(
         health
@@ -785,7 +813,7 @@ async fn aborting_the_caller_releases_verification_admission() {
     )
     .await
     .unwrap();
-    let (_, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, _, item, health) = stored(&server, &data, Some(proof)).await;
     let cancel = CancellationToken::new();
     let running = {
         let health = Arc::clone(&health);
@@ -824,7 +852,7 @@ async fn unchanged_metadata_remains_valid_after_a_blob_epoch_change() {
     )
     .await
     .unwrap();
-    let (db, item, health) = stored(&server, &data, Some(proof)).await;
+    let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let running = tokio::spawn(async move {
         health
             .check_availability(

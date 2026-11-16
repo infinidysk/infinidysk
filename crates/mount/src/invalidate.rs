@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::future::BoxFuture;
 use infinidysk_core::ItemId;
-use infinidysk_vfs::WriteLease;
+use infinidysk_vfs::{ArmedWrites, WriteLease};
 use tokio_util::sync::CancellationToken;
 
 use super::{Handle, Inode, Inodes, lock};
@@ -28,12 +28,12 @@ pub struct Invalidator {
 }
 
 /// A session and its aliases captured before SQL publication, with writers retained.
-#[must_use = "apply after publication; retain writers on failure or cancellation"]
+#[must_use = "apply after publication, or abort if no bytes changed"]
 pub struct Invalidation<'a> {
     registry: &'a Invalidator,
     mounted: Arc<Mounted>,
     aliases: BTreeSet<Inode>,
-    writers: &'a mut [WriteLease],
+    writers: ArmedWrites<'a>,
 }
 
 impl Invalidator {
@@ -78,7 +78,7 @@ impl Invalidator {
             registry: self,
             mounted,
             aliases,
-            writers,
+            writers: WriteLease::arm(writers),
         })
     }
 }
@@ -86,33 +86,40 @@ impl Invalidator {
 impl Invalidation<'_> {
     /// Arm before SQL. Failed or cancelled finalization leaves delivery closed.
     pub fn block(&mut self) {
-        for writer in self.writers.iter_mut() {
-            writer.block();
-        }
-    }
-    /// Retire reader buffers and invalidate every captured inode alias.
-    /// An error or cancellation is not an acknowledgement. The caller must keep the
-    /// writers until reconciliation completes, including after uncertain SQL commits.
-    pub async fn apply(self) -> io::Result<()> {
-        for writer in self.writers.iter_mut() {
-            writer.retire()?;
-        }
-        for &inode in &self.aliases {
-            self.current()?;
-            (self.mounted.send)(inode).await?;
-        }
-        self.current()?;
-        for writer in self.writers.iter_mut() {
-            writer.acknowledge();
-        }
-        Ok(())
+        self.writers.block();
     }
 
-    fn current(&self) -> io::Result<()> {
-        let active = lock(&self.registry.mounted)
+    /// Release admission only when SQL did not commit and delivery bytes did not change.
+    /// Never use this after an uncertain commit; reconcile with `apply` instead.
+    pub fn abort(self) {
+        self.writers.abort();
+    }
+    /// Retire reader buffers and invalidate every captured inode alias.
+    /// An error or cancellation retains reconciliation state even if writers drop.
+    pub async fn apply(self) -> io::Result<()> {
+        let Self {
+            registry,
+            mounted,
+            aliases,
+            writers,
+        } = self;
+        writers
+            .retire()?
+            .acknowledge_after(async {
+                for inode in aliases {
+                    Self::current(registry, &mounted)?;
+                    (mounted.send)(inode).await?;
+                }
+                Self::current(registry, &mounted)
+            })
+            .await
+    }
+
+    fn current(registry: &Invalidator, mounted: &Arc<Mounted>) -> io::Result<()> {
+        let active = lock(&registry.mounted)
             .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &self.mounted));
-        if self.mounted.stopping.is_cancelled() || !active {
+            .is_some_and(|current| Arc::ptr_eq(current, mounted));
+        if mounted.stopping.is_cancelled() || !active {
             return Err(unavailable());
         }
         Ok(())
@@ -189,6 +196,82 @@ mod tests {
             0,
             "/mnt",
         )
+    }
+
+    #[tokio::test]
+    async fn unfinished_invalidation_stays_blocked_after_all_owners_drop() {
+        for failure in 0..3 {
+            let vfs = vfs().await;
+            let item = ItemId::new();
+            let mount = mounted(
+                Box::new(move |_| {
+                    Box::pin(async move {
+                        match failure {
+                            1 => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+                            2 => std::future::pending().await,
+                            _ => Ok(()),
+                        }
+                    })
+                }),
+                item,
+                &vfs,
+            );
+            let invalidator = Invalidator {
+                mounted: Mutex::new(Some(mount)),
+            };
+            let mut writers = vec![vfs.read_fence(item).write().await];
+            let publication = invalidator.prepare(&mut writers).unwrap();
+            match failure {
+                0 => drop(publication),
+                1 => assert!(publication.apply().await.is_err()),
+                _ => assert!(
+                    tokio::time::timeout(Duration::from_millis(10), publication.apply())
+                        .await
+                        .is_err()
+                ),
+            }
+            drop(writers);
+            drop(invalidator);
+            assert!(
+                vfs.read_fence(item).read().await.is_err(),
+                "unfinished publication must survive loss of handles and writers"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn abort_reopens_only_publications_without_previous_unfinished_work() {
+        let vfs = vfs().await;
+        let item = ItemId::new();
+        let invalidator = Invalidator {
+            mounted: Mutex::new(Some(mounted(
+                Box::new(|_| Box::pin(async { Ok(()) })),
+                item,
+                &vfs,
+            ))),
+        };
+        let fence = vfs.read_fence(item);
+        let mut writers = [fence.write().await];
+        invalidator.prepare(&mut writers).unwrap().abort();
+        drop(writers);
+        drop(fence.read().await.unwrap());
+        let mut writers = [fence.write().await];
+        drop(invalidator.prepare(&mut writers).unwrap());
+        invalidator.prepare(&mut writers).unwrap().abort();
+        drop(writers);
+        assert!(
+            fence.read().await.is_err(),
+            "abort cannot clear earlier reconciliation"
+        );
+        let mut writers = [fence.write().await];
+        invalidator
+            .prepare(&mut writers)
+            .unwrap()
+            .apply()
+            .await
+            .unwrap();
+        drop(writers);
+        drop(fence.read().await.unwrap());
     }
 
     #[tokio::test]

@@ -603,6 +603,7 @@ async fn plan(
     .await;
     let layouts_at = started.elapsed();
     let mut volumes: BTreeMap<usize, Volume> = BTreeMap::new();
+    let mut dropped_missing = None;
     for (&i, layout) in wanted.iter().zip(layouts) {
         match layout {
             Ok(volume) => {
@@ -613,6 +614,7 @@ async fn plan(
                 if inputs[i].kind == Kind::Plain && media::kind(&inputs[i].name).is_none() =>
             {
                 tracing::warn!(file = %inputs[i].name, reason = %error, "dropping file");
+                dropped_missing.get_or_insert(error);
             }
             Err(error) => return Err(error),
         }
@@ -676,6 +678,11 @@ async fn plan(
         outputs.extend(expand(job, found, 1).await?);
     }
     at.archives = Some(started.elapsed());
+    if outputs.is_empty()
+        && let Some(error) = dropped_missing
+    {
+        return Err(error);
+    }
     Ok(outputs)
 }
 

@@ -91,15 +91,12 @@ async fn a_check_discards_observations_when_repairs_change_during_provider_reads
         db.set_health(item.id, &status, Recheck::None)
             .await
             .unwrap();
-        server.stall_article(&articles[0].message_id, 1, Duration::from_millis(500));
+        let (arrived, release) = server.hold_article(&articles[0].message_id);
         let checking = tokio::spawn(async move { health.step().await.unwrap() });
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while server.stalled(&articles[0].message_id) == 0 {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), arrived)
+            .await
+            .unwrap()
+            .unwrap();
         let paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
             .await
             .unwrap();
@@ -142,6 +139,11 @@ async fn a_check_discards_observations_when_repairs_change_during_provider_reads
             assert!(db.publish_patches(&source, &[patch]).await.unwrap());
         }
         drop(paused);
+        assert!(
+            !checking.is_finished(),
+            "provider read remains held through publication"
+        );
+        release.send(()).unwrap();
         assert!(checking.await.unwrap());
         let (_, result) = db.health(item.id).await.unwrap().unwrap();
         assert_eq!(

@@ -48,10 +48,7 @@ pub(super) fn restore(
         let Some(start) = at else {
             continue;
         };
-        let Some(end) = start
-            .checked_add(segments.items.len())
-            .filter(|&end| end <= slots.len())
-        else {
+        let Some(end) = start.checked_add(segments.items.len()) else {
             continue;
         };
         let mut identities_match = true;
@@ -74,6 +71,8 @@ pub(super) fn restore(
                 continue;
             }
         }
+        // Only validated identities may extend the NZB's trailing omitted slots.
+        slots.grow(end, budget)?;
         let mut position = offset;
         for (i, known) in (start..end).zip(&segments.items) {
             if known.size == 0 || known.size as usize > infinidysk_nntp::MAX_DECODED_LEN {
