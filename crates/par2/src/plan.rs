@@ -39,6 +39,7 @@ impl RepairSet<'_> {
         &self.sources
     }
 
+    /// Complete repair inputs require `Reader::repair_set`; verification can lack IFSC.
     pub fn inputs(&self) -> &[Input] {
         &self.inputs
     }
@@ -55,7 +56,7 @@ impl RepairSet<'_> {
             return None;
         }
         let start = (index - source.slices.start) as u64 * self.slice_size as u64;
-        let length = self.inputs.get(index)?.length as u64;
+        let length = (source.file.length - start).min(self.slice_size as u64);
         Some((position, start..start + length))
     }
 
@@ -213,11 +214,15 @@ pub(super) fn read(reader: &Reader, set: Id, verify: bool) -> Result<RepairSet<'
     let size = slice_size as u64;
     let mut sources = reserved(index.files.len())?;
     let mut inputs = reserved(0)?;
+    let mut total = 0;
     for file in index.files {
         inputs
             .try_reserve(file.slices.len())
             .map_err(|_| Error::Allocation)?;
-        let start = inputs.len();
+        let start = total;
+        // Verification can lack IFSC; global ranges still follow complete Main membership.
+        total += usize::try_from(file.length.div_ceil(size))
+            .expect("metadata bounded the total input count to 32768");
         for (i, &checksum) in file.slices.iter().enumerate() {
             let length = usize::try_from((file.length - i as u64 * size).min(size))
                 .expect("slice length is bounded by usize slice_size");
@@ -225,7 +230,7 @@ pub(super) fn read(reader: &Reader, set: Id, verify: bool) -> Result<RepairSet<'
         }
         sources.push(Source {
             file,
-            slices: start..inputs.len(),
+            slices: start..total,
         });
     }
     Ok(RepairSet {

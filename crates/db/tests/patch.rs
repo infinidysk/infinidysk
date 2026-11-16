@@ -151,6 +151,69 @@ fn patch() -> Patch {
 }
 
 #[tokio::test]
+async fn legacy_retirement_requires_the_whole_candidate_range() {
+    use sha2::{Digest as _, Sha256};
+    for range in [
+        ByteRange { start: 0, end: 1 },
+        ByteRange { start: 1, end: 3 },
+    ] {
+        for fixture in fixtures().await {
+            let hash = "A".repeat(64);
+            fixture
+                .db
+                .stage_legacy_repair(&hash, b"header", b"abc", &Sha256::digest(b"abc"))
+                .await
+                .unwrap();
+            fixture
+                .db
+                .legacy_repair_used(&hash, "patch@loopback", 1)
+                .await
+                .unwrap();
+            let mut partial = patch();
+            partial.source.range = range;
+            partial.source.part = Some(if range.start == 0 { 1 } else { 3 });
+            partial.source.total = Some(3);
+            fixture
+                .db
+                .publish_patches(&fixture.source().await, &[partial])
+                .await
+                .unwrap();
+            assert_eq!(
+                fixture
+                    .db
+                    .retire_legacy_repairs(|_, length| Some(ByteRange {
+                        start: 0,
+                        end: length as u64
+                    }))
+                    .await
+                    .unwrap(),
+                1
+            );
+            fixture
+                .execute("DELETE FROM repair_patches", "DELETE FROM repair_patches")
+                .await;
+            fixture
+                .db
+                .publish_patches(&fixture.source().await, &[patch()])
+                .await
+                .unwrap();
+            assert_eq!(
+                fixture
+                    .db
+                    .retire_legacy_repairs(|_, length| Some(ByteRange {
+                        start: 0,
+                        end: length as u64
+                    }))
+                    .await
+                    .unwrap(),
+                0
+            );
+            fixture.close().await;
+        }
+    }
+}
+
+#[tokio::test]
 async fn backup_inspection_rejects_catalog_mismatches_even_with_valid_payloads() {
     use sha2::{Digest as _, Sha256};
     for change in [

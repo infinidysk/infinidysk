@@ -413,6 +413,53 @@ async fn cancelled_attempt_cannot_finish_or_refund_a_restarted_claim() {
     stale_claims(&db).await;
 }
 
+#[tokio::test]
+async fn verification_after_nzb_restoration_gets_a_current_source_job() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    verification_restoration(&db).await;
+}
+
+async fn verification_restoration(db: &Db) {
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut item = Item::child(&root, "restored.bin", ItemKind::NzbFile).unwrap();
+    let meta = BlobId::new();
+    item.meta_blob = Some(meta);
+    db.insert(&[item.clone()], &[(meta, b"meta")])
+        .await
+        .unwrap();
+    let old = db
+        .request_par2(Owner::Item(item.id), true, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    let nzb = BlobId::new();
+    db.insert(&[], &[(nzb, b"nzb")]).await.unwrap();
+    assert_eq!(
+        db.restore_nzb_links(&[(item.id, nzb)], &[]).await.unwrap(),
+        1
+    );
+    let current = db
+        .request_par2(Owner::Item(item.id), true, 11)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(old, current);
+    assert_eq!(
+        db.request_par2(Owner::Item(item.id), true, 12)
+            .await
+            .unwrap(),
+        Some(current)
+    );
+    assert_eq!(
+        db.par2_result(Owner::Item(item.id), true)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        current
+    );
+}
+
 async fn stale_claims(db: &Db) {
     for job in db.par2_jobs().await.unwrap() {
         db.cancel_par2(job.id, 0).await.unwrap();
@@ -530,6 +577,7 @@ async fn postgres_requests_obey_the_same_claim_resume_and_cancellation_contract(
     history_contract(&db).await;
     handoff_at_capacity(&db).await;
     stale_claims(&db).await;
+    verification_restoration(&db).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP DATABASE {name} WITH (FORCE)"

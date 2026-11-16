@@ -442,9 +442,17 @@ impl Db {
                 .bind(item.0).fetch_optional(&mut *tx).await?;
             let Some((meta, meta_generation, nzb, generation)) = source else { return Ok(None) };
             let generation = generation.unwrap_or(0);
-            let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM repair_jobs WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND verify_only = TRUE")
-                .bind(item.0).bind(meta).bind(meta_generation).bind(generation).fetch_optional(&mut *tx).await?;
-            if let Some(id) = existing { return Ok(Some(id)); }
+            let query = sqlx::query_scalar::<_, Uuid>(if nzb.is_some() {
+                "SELECT id FROM repair_jobs WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob = $5 AND verify_only = TRUE"
+            } else {
+                "SELECT id FROM repair_jobs WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob IS NULL AND verify_only = TRUE"
+            }).bind(item.0).bind(meta).bind(meta_generation).bind(generation);
+            let query = if let Some(nzb) = nzb { query.bind(nzb) } else { query };
+            let existing: Option<Uuid> = query.fetch_optional(&mut *tx).await?;
+            if let Some(id) = existing {
+                tx.rollback().await?;
+                return Ok(Some(id));
+            }
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)").fetch_one(&mut *tx).await?;
             if count >= 128 { return Err(Error::RepairBounds("pending job count")); }
             let id = Uuid::new_v4();

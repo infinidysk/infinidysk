@@ -12,6 +12,26 @@ fn reader() -> Reader {
 }
 
 #[test]
+fn verification_without_first_file_checksums_keeps_global_source_indices() {
+    let complete = reader();
+    let id = read(INDEX).set_id.unwrap();
+    let full = complete.repair_set(id).unwrap();
+    let first = &full.sources()[0];
+    let second_start = first.slices.end;
+    let mut reader = Reader::default();
+    for p in packets(INDEX) {
+        if &p[48..64] == b"PAR 2.0\0IFSC\0\0\0\0" && p[64..80] == first.file.id {
+            continue;
+        }
+        reader.push(p);
+    }
+    let set = reader.verification_set(id).unwrap();
+    assert_eq!(set.source(0), full.source(0));
+    assert_eq!(set.source(second_start), full.source(second_start));
+    assert_eq!(set.sources()[0].slices, first.slices);
+}
+
+#[test]
 fn plans_and_reconstructs_a_complete_independent_set() {
     let reader = reader();
     let set = reader.repair_set(read(INDEX).set_id.unwrap()).unwrap();

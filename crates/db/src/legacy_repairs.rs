@@ -78,13 +78,42 @@ impl Db {
         Ok(())
     }
 
-    pub async fn retire_legacy_repairs(&self) -> Result<i64, Error> {
-        // An eligible committed patch already passed full source verification and durability.
-        on!(self, pool => sqlx::query(
-            "DELETE FROM legacy_repair_articles WHERE EXISTS (SELECT 1 FROM repair_patches p JOIN blobs b ON b.id = p.nzb_blob \
+    /// The importer decodes its temporary header format; unknown extents stay retained.
+    pub async fn retire_legacy_repairs(
+        &self,
+        extent: impl Fn(&[u8], usize) -> Option<infinidysk_core::ByteRange>,
+    ) -> Result<i64, Error> {
+        // Hashes are nonempty, so the empty cursor includes every first-page candidate.
+        let mut after = String::new();
+        loop {
+            let row: Option<(String, Vec<u8>, i64)> = on!(self, pool => sqlx::query_as(
+                "SELECT hash, header, CAST(length(payload) AS BIGINT) FROM legacy_repair_articles WHERE hash > $1 AND message_id IS NOT NULL ORDER BY hash LIMIT 1")
+                .bind(&after).fetch_optional(pool).await?);
+            let Some((hash, header, length)) = row else {
+                break;
+            };
+            after = hash;
+            let Some(range) = usize::try_from(length)
+                .ok()
+                .and_then(|length| extent(&header, length))
+            else {
+                continue;
+            };
+            let (Ok(start), Ok(end)) = (i64::try_from(range.start), i64::try_from(range.end))
+            else {
+                continue;
+            };
+            if start >= end {
+                continue;
+            }
+            // A committed replacement must cover the candidate's entire original extent.
+            on!(self, pool => sqlx::query(
+            "DELETE FROM legacy_repair_articles WHERE hash = $1 AND EXISTS (SELECT 1 FROM repair_patches p JOIN blobs b ON b.id = p.nzb_blob \
              WHERE p.message_id = legacy_repair_articles.message_id AND p.generation = b.generation \
+             AND p.start_byte <= $2 AND p.end_byte >= $3 \
              AND (EXISTS (SELECT 1 FROM items i WHERE i.nzb_blob = b.id) OR EXISTS (SELECT 1 FROM queue q WHERE q.nzb_blob = b.id)))",
-        ).execute(pool).await?.rows_affected());
+            ).bind(&after).bind(start).bind(end).execute(pool).await?.rows_affected());
+        }
         Ok(
             on!(self, pool => sqlx::query_scalar("SELECT COUNT(*) FROM legacy_repair_articles").fetch_one(pool).await?),
         )

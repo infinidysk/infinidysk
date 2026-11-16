@@ -31,11 +31,14 @@ fn invalid() -> io::Error {
     )
 }
 
-fn body(header: &[u8], bytes: Vec<u8>) -> io::Result<Body> {
+fn parse_header(header: &[u8], length: usize) -> io::Result<Header> {
+    if header.len() > 1_048_576 {
+        return Err(invalid());
+    }
     let header: Header = serde_json::from_slice(header).map_err(|_| invalid())?;
-    if bytes.is_empty()
-        || bytes.len() > MAX_DECODED_LEN
-        || header.part_size != bytes.len() as u64
+    if length == 0
+        || length > MAX_DECODED_LEN
+        || header.part_size != length as u64
         || header
             .part_offset
             .checked_add(header.part_size)
@@ -44,6 +47,11 @@ fn body(header: &[u8], bytes: Vec<u8>) -> io::Result<Body> {
     {
         return Err(invalid());
     }
+    Ok(header)
+}
+
+fn body(header: &[u8], bytes: Vec<u8>) -> io::Result<Body> {
+    let header = parse_header(header, bytes.len())?;
     Ok(Body {
         data: bytes.into(),
         offset: header.part_offset,
@@ -54,9 +62,6 @@ fn body(header: &[u8], bytes: Vec<u8>) -> io::Result<Body> {
 }
 
 fn checked_body(header: &[u8], data: Vec<u8>, checksum: &[u8]) -> io::Result<Body> {
-    if header.len() > 1_048_576 {
-        return Err(invalid());
-    }
     let candidate = body(header, data)?;
     if checksum != Sha256::digest(&candidate.data).as_slice() {
         return Err(invalid());
@@ -196,7 +201,18 @@ pub async fn read(db: &Db, id: &str) -> Result<Option<Body>, infinidysk_nntp::Er
 /// Retirement requires a full explicit rewrite pass, zero retained candidates and seven
 /// days with no old-format use. Original C# files are never deleted by this migration.
 pub async fn finish_rewrite(db: &Db, full_pass: bool) -> Result<(), infinidysk_db::Error> {
-    if !full_pass || db.retire_legacy_repairs().await? != 0 {
+    if !full_pass
+        || db
+            .retire_legacy_repairs(|header, length| {
+                let header = parse_header(header, length).ok()?;
+                Some(infinidysk_core::ByteRange {
+                    start: header.part_offset,
+                    end: header.part_offset.checked_add(header.part_size)?,
+                })
+            })
+            .await?
+            != 0
+    {
         return Ok(());
     }
     let config = db.config().await?;

@@ -212,10 +212,19 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
                 catalog: crate::repair::Row,
                 payload: Option<Vec<u8>>,
             }
-            let row: Option<SavedRepair> = sqlx::query_as(
+            let query = sqlx::query_as::<_, SavedRepair>(if after.is_some() {
                 "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload \
-                 FROM repair_patches WHERE backup_payload IS NOT NULL AND (id > $1 OR $1 IS NULL) ORDER BY id LIMIT 1")
-                .bind(after).fetch_optional(&mut *conn).await?;
+                 FROM repair_patches WHERE backup_payload IS NOT NULL AND id > $1 ORDER BY id LIMIT 1"
+            } else {
+                "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload \
+                 FROM repair_patches WHERE backup_payload IS NOT NULL ORDER BY id LIMIT 1"
+            });
+            let query = if let Some(after) = after {
+                query.bind(after)
+            } else {
+                query
+            };
+            let row = query.fetch_optional(&mut *conn).await?;
             let Some(row) = row else {
                 break;
             };
@@ -241,9 +250,19 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
     if schema_version >= 12 && problems.is_empty() {
         let mut after: Option<String> = None;
         loop {
-            let row: Option<(String, Option<Vec<u8>>, Vec<u8>)> = sqlx::query_as(
-                "SELECT hash, CASE WHEN length(payload) <= 33554432 THEN payload ELSE NULL END, sha256 FROM legacy_repair_articles WHERE hash > $1 OR $1 IS NULL ORDER BY hash LIMIT 1")
-                .bind(&after).fetch_optional(&mut *conn).await?;
+            let query = sqlx::query_as::<_, (String, Option<Vec<u8>>, Vec<u8>)>(
+                if after.is_some() {
+                    "SELECT hash, CASE WHEN length(payload) <= 33554432 THEN payload ELSE NULL END, sha256 FROM legacy_repair_articles WHERE hash > $1 ORDER BY hash LIMIT 1"
+                } else {
+                    "SELECT hash, CASE WHEN length(payload) <= 33554432 THEN payload ELSE NULL END, sha256 FROM legacy_repair_articles ORDER BY hash LIMIT 1"
+                },
+            );
+            let query = if let Some(after) = &after {
+                query.bind(after)
+            } else {
+                query
+            };
+            let row = query.fetch_optional(&mut *conn).await?;
             let Some((hash, bytes, checksum)) = row else {
                 break;
             };
