@@ -53,6 +53,12 @@ fn invalid(path: &'static str, message: String) -> Error {
 }
 
 const CHECK_PERCENT: RangeInclusive<u8> = 5..=100;
+const REPAIR_MEMORY_MB: RangeInclusive<u32> = 128..=65_536;
+const REPAIR_TRANSFER_GB: RangeInclusive<u32> = 1..=100_000;
+const REPAIR_STORAGE_GB: RangeInclusive<u32> = 1..=100_000;
+const REPAIR_TIMEOUT_MINUTES: RangeInclusive<u32> = 1..=10_080;
+const REPAIR_ATTEMPTS: RangeInclusive<u8> = 1..=10;
+const CHECK_CONCURRENCY: RangeInclusive<u16> = 1..=256;
 const QUEUE_CONCURRENCY: RangeInclusive<u8> = 1..=10;
 const NZB_RETENTION_DAYS: RangeInclusive<u32> = 0..=3650;
 const READ_AHEAD_MB: RangeInclusive<u32> = 1..=1250;
@@ -161,6 +167,7 @@ pub struct Settings {
     pub arr_instances: Vec<ArrInstance>,
     pub arr: ArrOptions,
     pub health: Health,
+    pub repair: Repair,
     pub queue: Queue,
     pub imports: Imports,
     pub metrics: Metrics,
@@ -179,7 +186,12 @@ pub struct Experiment {
     pub description: &'static str,
 }
 
-pub const EXPERIMENTS: [Experiment; 2] = [
+pub const EXPERIMENTS: [Experiment; 3] = [
+    Experiment {
+        name: "par2-repair",
+        title: "Repair original articles with PAR2",
+        description: "Enables bounded local repair before Arr replacement and retries damaged imports. Repairs use persistent storage and can read complete recovery sets. Kernel and throughput validation is still pending; back up your config before enabling. Applies after restart.",
+    },
     Experiment {
         name: "win-floor",
         title: "Deeper read-ahead for large articles",
@@ -471,6 +483,112 @@ impl Default for Network {
             public_url: String::new(),
             download_limit_mb_per_s: None,
         }
+    }
+}
+
+/// Per-attempt admission and retained repair storage. Applied at the next attempt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct Repair {
+    pub check_concurrency: u16,
+    pub memory_mb: u32,
+    pub transfer_gb: u32,
+    pub storage_gb: u32,
+    pub timeout_minutes: u32,
+    pub attempts: u8,
+}
+
+impl Default for Repair {
+    fn default() -> Self {
+        Self {
+            check_concurrency: 64,
+            memory_mb: 256,
+            transfer_gb: 100,
+            storage_gb: 10,
+            timeout_minutes: 60,
+            attempts: 3,
+        }
+    }
+}
+
+impl Repair {
+    fn validate(&self) -> Result<(), Error> {
+        check(
+            "repair.check_concurrency",
+            "Availability requests",
+            self.check_concurrency,
+            &CHECK_CONCURRENCY,
+        )?;
+        check(
+            "repair.memory_mb",
+            "Working memory (MB)",
+            self.memory_mb,
+            &REPAIR_MEMORY_MB,
+        )?;
+        check(
+            "repair.transfer_gb",
+            "Source reads per attempt (GB)",
+            self.transfer_gb,
+            &REPAIR_TRANSFER_GB,
+        )?;
+        check(
+            "repair.storage_gb",
+            "Repair storage capacity (GB)",
+            self.storage_gb,
+            &REPAIR_STORAGE_GB,
+        )?;
+        check(
+            "repair.timeout_minutes",
+            "Time per attempt (minutes)",
+            self.timeout_minutes,
+            &REPAIR_TIMEOUT_MINUTES,
+        )?;
+        check(
+            "repair.attempts",
+            "Repair attempts",
+            self.attempts,
+            &REPAIR_ATTEMPTS,
+        )
+    }
+
+    fn reset_invalid(&mut self) {
+        let defaults = Self::default();
+        reset(
+            "repair.check_concurrency",
+            &mut self.check_concurrency,
+            &CHECK_CONCURRENCY,
+            defaults.check_concurrency,
+        );
+        reset(
+            "repair.memory_mb",
+            &mut self.memory_mb,
+            &REPAIR_MEMORY_MB,
+            defaults.memory_mb,
+        );
+        reset(
+            "repair.transfer_gb",
+            &mut self.transfer_gb,
+            &REPAIR_TRANSFER_GB,
+            defaults.transfer_gb,
+        );
+        reset(
+            "repair.storage_gb",
+            &mut self.storage_gb,
+            &REPAIR_STORAGE_GB,
+            defaults.storage_gb,
+        );
+        reset(
+            "repair.timeout_minutes",
+            &mut self.timeout_minutes,
+            &REPAIR_TIMEOUT_MINUTES,
+            defaults.timeout_minutes,
+        );
+        reset(
+            "repair.attempts",
+            &mut self.attempts,
+            &REPAIR_ATTEMPTS,
+            defaults.attempts,
+        );
     }
 }
 
@@ -1192,6 +1310,7 @@ impl Settings {
             d.maintenance.backup.keep,
         );
         self.performance.reset_invalid();
+        self.repair.reset_invalid();
         if let Some(limit) = self.network.download_limit_mb_per_s
             && !DOWNLOAD_LIMIT_MB_PER_S.contains(&limit)
         {
@@ -1238,6 +1357,7 @@ impl Settings {
 
     /// [`Self::validate`], with the disk cache in `default_cache_dir` when none is saved.
     pub(crate) fn validate_in(&mut self, default_cache_dir: &str) -> Result<(), Error> {
+        self.repair.validate()?;
         if !self.mount.dir.starts_with('/') {
             return Err(invalid(
                 "mount.dir",

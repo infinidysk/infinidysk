@@ -317,6 +317,11 @@ pub async fn serve(
         &quotas,
         &bandwidth,
     )?));
+    let repairs = crate::repair::install(&client, db.clone(), boot.config_dir.join("repairs"));
+    repairs
+        .restore_embedded()
+        .await
+        .context("restoring saved repair articles")?;
     let warm_task = {
         let client = Arc::clone(&client);
         let cancel = cancel.clone();
@@ -404,6 +409,9 @@ pub async fn serve(
         settings: health_rx.clone(),
         analyzes,
     }));
+    if infinidysk_core::experiment("par2-repair") {
+        queue.enable_par2();
+    }
     let worker = {
         let queue = Arc::clone(&queue);
         tokio::spawn(async move { queue.run().await })
@@ -434,6 +442,9 @@ pub async fn serve(
             boot.ffprobe.clone(),
             move || importing() || streaming(),
         ));
+    }
+    if infinidysk_core::experiment("par2-repair") {
+        health = health.with_par2();
     }
     let health = Arc::new(health);
     let health_task = {
@@ -594,10 +605,29 @@ pub async fn serve(
         .await,
     );
     let library_task = tokio::spawn(Arc::clone(&library).run());
+    let repair_task = if infinidysk_core::experiment("par2-repair") {
+        let publisher = crate::repair::Publisher::new(Arc::clone(&repairs), Arc::clone(&vfs))?;
+        #[cfg(target_os = "linux")]
+        let publisher = if fuse {
+            publisher.with_mount(invalidator)
+        } else {
+            publisher
+        };
+        Some(tokio::spawn(Arc::clone(&repairs).run(
+            Arc::clone(&client),
+            publisher,
+            Arc::clone(&health),
+            Arc::clone(&config),
+            cancel.clone(),
+        )))
+    } else {
+        None
+    };
     let restart = Arc::new(AtomicBool::new(false));
     let backups = Arc::new(
         crate::backup::Backups::new(crate::backup::Parts {
             db: db.clone(),
+            repairs: Arc::clone(&repairs),
             config: Arc::clone(&config),
             // After a cutover the database is PostgreSQL, whatever the boot URL says.
             live: if db.is_postgres() {
@@ -660,6 +690,7 @@ pub async fn serve(
         client,
         vfs,
         health,
+        repairs,
         live,
         metrics,
         arr: discovery,
@@ -715,6 +746,15 @@ pub async fn serve(
         }
     };
     cancel.cancel();
+    if let Some(mut task) = repair_task
+        && tokio::time::timeout(DRAIN, &mut task).await.is_err()
+    {
+        task.abort();
+        warn!(
+            reason = "repair finalization is still pending",
+            "repair will reconcile after restart"
+        );
+    }
     worker.abort();
     health_task.abort();
     discovery_task.abort();

@@ -56,6 +56,7 @@ import {
   Status,
 } from "../ui";
 import { copyStreamLink, download, playable, Player } from "./player";
+import { Par2Actions } from "../par2";
 
 type Entry = Schemas["FileEntry"];
 type Filters = NonNullable<operations["get_files"]["parameters"]["query"]>;
@@ -619,6 +620,7 @@ function Details({
                 )}
                 <Remove id={id} onRemoved={onRemoved} />
               </div>
+              {file && <Par2Actions id={id} hasNzb={has_nzb} />}
               <div className="grid gap-6 lg:grid-cols-2">
                 <dl className="grid grid-cols-[auto_1fr] content-start gap-x-4 gap-y-1.5">
                   <Fact label="Kind">

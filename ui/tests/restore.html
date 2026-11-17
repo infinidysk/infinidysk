@@ -2,8 +2,11 @@
 <html lang="en">
 <meta charset="utf-8">
 <title>Restore wait regression</title>
+<div id="root"></div>
 <pre id="result">Running</pre>
 <script type="module">
+  import { act, createElement } from "react";
+  import { createRoot } from "react-dom/client";
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const check = (condition, message) => {
@@ -29,6 +32,27 @@
   const failed = { started: 1, running: null, attempt: { id: "a1", action: "restore", state: "failed", reason: "copy failed" } };
 
   try {
+    const { InfoTip } = await import("/src/ui.tsx");
+    const { TooltipProvider } = await import("/src/components/ui/tooltip.tsx");
+    const { jobCopy } = await import("/src/maintenance.tsx");
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.getElementById("root"));
+    try {
+      await act(async () => root.render(
+        createElement(TooltipProvider, null,
+          createElement(InfoTip, { label: "About backups" }, jobCopy["backup-database"].tip)),
+      ));
+      await act(async () => document.querySelector('[aria-label="About backups"]').click());
+      const tip = document.querySelector('[role="tooltip"]').textContent;
+      check(/stop infinidysk/i.test(tip), "PostgreSQL backups must stop infinidysk first");
+      check(tip.includes("pg_dump") && tip.includes("/config/repairs"), "Backups need the dump and repair directory");
+      check(/matched pair/i.test(tip), "Backups must keep the dump and repair directory together");
+      check(/restore both before restarting/i.test(tip), "Restore must finish before restarting");
+      check(/dump alone cannot recover/i.test(tip), "Explain the limit of a database-only restore");
+    } finally {
+      await act(async () => root.unmount());
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    }
     const { waitForRestart } = await import("/src/settings.ts");
     const run = async (name, steps, expect, setup) => {
       script = steps;

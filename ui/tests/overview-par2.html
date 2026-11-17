@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Overview PAR2 regression</title>
+  <div id="root"></div>
+  <pre id="result">Running</pre>
+  <script type="module">
+    import { act, createElement } from "react";
+    import { createRoot } from "react-dom/client";
+    import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+    import { MemoryRouter } from "react-router";
+    import { TooltipProvider } from "/src/components/ui/tooltip.tsx";
+    import "/src/index.css";
+
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    const root = createRoot(document.getElementById("root"));
+    const originalFetch = globalThis.fetch;
+    let fetchRequest = originalFetch;
+    globalThis.fetch = (...args) => fetchRequest(...args);
+    const check = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const tile = (label) => [...document.querySelectorAll("dt")].find((dt) => dt.textContent === label)?.parentElement;
+    const totals = Object.fromEntries([
+      "reads", "stalls", "seeks", "read_ms", "stall_ms", "healthy", "unhealthy", "inconclusive", "repaired",
+      "imports", "import_failures", "import_retries", "import_bytes", "cache_hits", "cache_misses", "fetched", "served", "peak_fetch_bps",
+    ].map((key) => [key, 0]));
+    const history = (par2) => ({ totals, points: [], workloads: [], reads: [], bucket_ms: 900000, at: Date.now(), par2 });
+    const scan = {
+      enabled: true,
+      counts: [{ state: 0, count: 3 }, { state: 1, count: 2 }, { state: 4, count: 4 }],
+      jobs: [
+        { id: "check", state: "running", verify_only: true, checked_articles: 200, total_articles: 500, reason: "Checking article availability" },
+        { id: "repair", state: "running", verify_only: false, completed_requests: 18, missing_requests: 12, reason: "Reading recovery data" },
+      ],
+    };
+    try {
+      const { Overview } = await import("/src/pages/overview.tsx");
+      client.setQueryData(["live"], { reads: [], providers: [], article_cap: 0, article_bytes: 0, requests_minute: 0, read_bps: 0, read_minute: 0, failures_minute: 0 });
+      client.setQueryData(["health", "summary"], []);
+      client.setQueryData(["queue", "paused"], { paused: false });
+      client.setQueryData(["status"], { mount: { enabled: false } });
+      client.setQueryData(["arr-status"], { instances: [] });
+      client.setQueryData(["upgrade", "report"], { seen: true });
+      client.setQueryData(["upgrade", "leftovers"], { imported: false });
+      client.setQueryData(["par2-scan"], scan);
+      client.setQueryData(["overview", "24h"], history({ repaired: 3, verified: 2, unavailable: 4, cancelled: 1 }));
+      client.setQueryData(["overview", "1h"], history({ repaired: 1, verified: 0, unavailable: 0, cancelled: 0 }));
+      await act(async () => root.render(createElement(QueryClientProvider, { client }, createElement(MemoryRouter, null, createElement(TooltipProvider, null, createElement(Overview))))));
+      check(tile("PAR2"), "Right now must contain one PAR2 tile");
+      check(tile("PAR2").textContent.includes("2 running") && tile("PAR2").textContent.includes("3 queued") && tile("PAR2").textContent.includes("4 deferred"), "Show all active work states");
+      check(tile("PAR2").textContent.includes("200 of 500 articles checked"), "Show measured availability progress");
+      check(tile("PAR2").textContent.includes("18 provider reads") && tile("PAR2").textContent.includes("12 missing"), "Show repair progress even when articles are missing");
+      check(tile("PAR2").querySelector('a[href="/health"]'), "Live tile links to job details");
+      check(tile("PAR2 repairs")?.textContent.includes("3 repaired"), "History counts successful repairs separately");
+      check(tile("PAR2 repairs").textContent.includes("2 verified") && tile("PAR2 repairs").textContent.includes("4 could not repair") && tile("PAR2 repairs").textContent.includes("1 cancelled"), "History preserves distinct outcomes");
+      check(tile("PAR2 repairs").querySelector('a[href="/health"]'), "History tile links to job details");
+      await act(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === "1 h").click());
+      check(tile("PAR2 repairs").textContent.includes("1 repaired") && !tile("PAR2 repairs").textContent.includes("4 could not repair"), "PAR2 history follows the selected window");
+      await act(async () => client.setQueryData(["par2-scan"], { ...scan, counts: [], jobs: [] }));
+      check(tile("PAR2").textContent.includes("Idle"), "Empty work is idle");
+      await act(async () => client.setQueryData(["par2-scan"], { ...scan, enabled: false, counts: [], jobs: [] }));
+      check(tile("PAR2").textContent.includes("Disabled"), "Disabled must not look idle");
+      await act(async () => client.setQueryData(["par2-scan"], { ...scan, counts: [{ state: 0, count: 3 }], jobs: [] }));
+      check(tile("PAR2").textContent.includes("Queued"), "Waiting jobs must not look idle");
+      await act(async () => client.setQueryData(["par2-scan"], { ...scan, counts: [{ state: 4, count: 4 }], jobs: [] }));
+      check(tile("PAR2").textContent.includes("Deferred"), "Deferred jobs must not look idle");
+      let rejectRequest;
+      let refresh;
+      fetchRequest = () => new Promise((resolve, reject) => { rejectRequest = reject; });
+      await act(async () => {
+        refresh = client.resetQueries({ queryKey: ["par2-scan"] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      check(tile("PAR2").textContent.includes("Loading…"), "Loading must not look idle");
+      await act(async () => {
+        rejectRequest(new Error("Fixture unavailable"));
+        await refresh;
+      });
+      check(tile("PAR2").textContent.includes("Unavailable") && tile("PAR2").querySelector('[role="alert"]'), "Failed status requests must be visible");
+      check(tile("PAR2 repairs").textContent.includes("1 repaired"), "Live status failure must preserve history");
+      fetchRequest = originalFetch;
+      await act(async () => client.setQueryData(["par2-scan"], scan));
+      await document.fonts.ready;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      for (const label of ["PAR2", "PAR2 repairs"]) {
+        check(tile(label).scrollWidth <= tile(label).clientWidth, `${label} must fit a mobile tile`);
+      }
+      document.getElementById("result").textContent = "PASS";
+    } catch (error) {
+      document.getElementById("result").textContent = `FAIL: ${error.message}`;
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (!new URLSearchParams(location.search).has("preview")) await act(async () => root.unmount());
+      client.clear();
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    }
+  </script>
+</html>
