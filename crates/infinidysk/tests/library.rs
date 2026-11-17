@@ -114,29 +114,15 @@ fn link(path: &Path, target: &str) {
     std::os::unix::fs::symlink(target, path).unwrap();
 }
 
-#[tokio::test]
-#[allow(clippy::many_single_char_names)] // Items are named after their files.
-async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
-    let root = std::env::temp_dir().join(format!("infinidysk-library-{}", ItemId::new()));
-    let (lib, strm, mount) = (root.join("lib"), root.join("strm"), root.join("mnt"));
-    let season = lib.join("Show/Season 1");
-    fs::create_dir_all(&season).unwrap();
-    fs::create_dir_all(mount.join(".ids")).unwrap();
-    fs::create_dir_all(&strm).unwrap();
+type Server = tokio::task::JoinHandle<anyhow::Result<infinidysk::app::Exit>>;
 
-    let sonarr_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let sonarr = sonarr_listener.local_addr().unwrap();
-    let fake = axum::Router::new()
-        .fallback(fake_sonarr)
-        .with_state(lib.clone());
-    tokio::spawn(async move { axum::serve(sonarr_listener, fake).await });
-
-    let db_path = root.join("infinidysk.sqlite");
+/// Serves the app on `root/infinidysk.sqlite`, its mount at `mount`, admin key `adminkey`.
+async fn boot(root: &Path, mount: &Path) -> (SocketAddr, CancellationToken, Server) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let boot = Boot {
         listen: addr,
-        database_url: format!("sqlite:{}", db_path.display()),
+        database_url: format!("sqlite:{}", root.join("infinidysk.sqlite").display()),
         database_source: infinidysk::database::Source::Env,
         uid: 0,
         gid: 0,
@@ -162,6 +148,151 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         let cancel = cancel.clone();
         async move { serve(listener, &boot, vars, cancel).await }
     });
+    (addr, cancel, server)
+}
+
+#[tokio::test]
+async fn a_strm_folder_that_fails_its_check_keeps_the_preview() {
+    let root = std::env::temp_dir().join(format!("infinidysk-library-{}", ItemId::new()));
+    let mount = root.join("mnt");
+    fs::create_dir_all(mount.join(".ids")).unwrap();
+    fs::write(root.join("file"), "").unwrap();
+    let (addr, cancel, server) = boot(&root, &mount).await;
+
+    let (_, view) = admin(addr, "GET", "/api/v1/settings", "").await;
+    let mut settings = view["settings"].clone();
+    settings["imports"]["strm_dir"] = json!(root.join("file/strm"));
+    settings["network"]["public_url"] = json!("http://media.example");
+    let (code, _) = admin(addr, "PUT", "/api/v1/settings", &settings.to_string()).await;
+    assert_eq!(code, "HTTP/1.1 200 OK");
+    let body = json!({ "strategy": "strm" }).to_string();
+    let (code, error) = admin(addr, "POST", "/api/v1/library/preview", &body).await;
+    assert_eq!(code, "HTTP/1.1 200 OK", "{error}");
+    until(addr, "preview", |v| v["preview_state"] == "ready").await;
+
+    let (code, error) = admin(addr, "POST", "/api/v1/library/confirm", "").await;
+    assert_eq!(code, "HTTP/1.1 400 Bad Request", "{error}");
+    let (_, view) = admin(addr, "GET", "/api/v1/library", "").await;
+    assert_eq!(
+        view["preview_state"], "ready",
+        "fixing the folder needs no new preview"
+    );
+
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(target_os = "linux")]
+const FREEZE_CHILD: &str = "INFINIDYSK_TEST_FREEZE_ROOT";
+
+/// One runtime thread serves both the FUSE mount and the library task, so a blocking
+/// look at the mount from the task never returns. Reruns itself as the app's process
+/// and watches it from here.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs FUSE: Linux, root and /dev/fuse"]
+fn a_library_check_does_not_freeze_the_mount_it_checks() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    if let Some(root) = std::env::var_os(FREEZE_CHILD) {
+        return freeze_child(Path::new(&root));
+    }
+    let root = std::env::temp_dir().join(format!("infinidysk-freeze-{}", ItemId::new()));
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_library_check_does_not_freeze_the_mount_it_checks",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(FREEZE_CHILD, &root)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let (mut mounted, mut checked) = (false, false);
+    while !checked {
+        let Ok(line) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) else {
+            break;
+        };
+        mounted |= line == "MOUNTED";
+        checked = line == "CHECKED";
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = Command::new("fusermount3")
+        .arg("-uz")
+        .arg(root.join("mnt"))
+        .status();
+    let _ = fs::remove_dir_all(&root);
+    assert!(mounted, "the mount never came up");
+    assert!(checked, "the app froze checking its own mount");
+}
+
+#[cfg(target_os = "linux")]
+fn freeze_child(root: &Path) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mount = root.join("mnt");
+        fs::create_dir_all(&mount).unwrap();
+        let (addr, cancel, server) = boot(root, &mount).await;
+        // Read the mount table: a look at the mount itself would cache its entries.
+        let target = mount.display().to_string();
+        tokio::task::spawn_blocking(move || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !fs::read_to_string("/proc/self/mountinfo")
+                .unwrap()
+                .lines()
+                .any(|l| l.split(' ').nth(4) == Some(target.as_str()))
+            {
+                assert!(Instant::now() < deadline, "no mount at {target}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        })
+        .await
+        .unwrap();
+        println!("MOUNTED");
+        let (code, _) = admin(addr, "POST", "/api/v1/library/check", "").await;
+        assert_eq!(code, "HTTP/1.1 200 OK");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        admin(addr, "GET", "/api/v1/library", "").await;
+        println!("CHECKED");
+        cancel.cancel();
+        server.await.unwrap().unwrap();
+    });
+}
+
+#[tokio::test]
+#[allow(clippy::many_single_char_names)] // Items are named after their files.
+async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
+    let root = std::env::temp_dir().join(format!("infinidysk-library-{}", ItemId::new()));
+    let (lib, strm, mount) = (root.join("lib"), root.join("strm"), root.join("mnt"));
+    let season = lib.join("Show/Season 1");
+    fs::create_dir_all(&season).unwrap();
+    fs::create_dir_all(mount.join(".ids")).unwrap();
+    fs::create_dir_all(&strm).unwrap();
+
+    let sonarr_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sonarr = sonarr_listener.local_addr().unwrap();
+    let fake = axum::Router::new()
+        .fallback(fake_sonarr)
+        .with_state(lib.clone());
+    tokio::spawn(async move { axum::serve(sonarr_listener, fake).await });
+
+    let db_path = root.join("infinidysk.sqlite");
+    let (addr, cancel, server) = boot(&root, &mount).await;
 
     let (_, view) = admin(addr, "GET", "/api/v1/settings", "").await;
     let mut settings = view["settings"].clone();
