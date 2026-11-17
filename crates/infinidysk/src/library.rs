@@ -443,9 +443,39 @@ struct Job {
     preview_state: PreviewState,
     /// Requested, or finished with its result; the generated key stays here.
     preview: Option<(PreviewRequest, Option<String>, Option<Preview>)>,
+    /// Counts preview requests, so a confirm knows its preview was not replaced.
+    preview_gen: u64,
     cancel: CancellationToken,
     /// Last attempt at pending Arr rescans.
     remapped_ms: i64,
+}
+
+impl Job {
+    fn request_preview(&mut self, req: PreviewRequest, key: Option<String>) {
+        self.preview = Some((req, key, None));
+        self.preview_state = PreviewState::Running;
+        self.preview_gen += 1;
+    }
+
+    /// The finished preview to confirm, left in place, with its generation.
+    fn finished_preview(&self) -> Option<(u64, PreviewRequest, Option<String>, Preview)> {
+        let (req, key, Some(preview)) = self.preview.as_ref()? else {
+            return None;
+        };
+        Some((self.preview_gen, req.clone(), key.clone(), preview.clone()))
+    }
+
+    fn preview_ready(&self, generation: u64) -> bool {
+        self.preview_gen == generation && matches!(self.preview, Some((_, _, Some(_))))
+    }
+
+    /// Drops the confirmed preview unless a newer one replaced it.
+    fn confirmed_preview(&mut self, generation: u64) {
+        if self.preview_ready(generation) {
+            self.preview = None;
+            self.preview_state = PreviewState::None;
+        }
+    }
 }
 
 /// What the converter needs from the rest of the app.
@@ -571,13 +601,21 @@ impl Library {
         mount_dirs.push(self.parts.mount_dir.trim_end_matches('/').to_owned());
         mount_dirs.sort();
         mount_dirs.dedup();
-        let skip = mount_dirs
+        let mut skip: Vec<PathBuf> = mount_dirs
             .iter()
             .chain(std::iter::once(&settings.imports.strm_dir))
             .map(PathBuf::from)
-            .flat_map(|p| [fs::canonicalize(&p).ok(), Some(p)])
-            .flatten()
             .collect();
+        let raw = skip.clone();
+        skip.extend(
+            tokio::task::spawn_blocking(move || {
+                raw.iter()
+                    .filter_map(|p| fs::canonicalize(p).ok())
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default(),
+        );
         Known {
             mount_dirs,
             keys: std::iter::once(settings.imports.strm_key.0.clone())
@@ -779,11 +817,7 @@ impl Library {
     /// Starts a preview of `req`, replacing any earlier one.
     fn request_preview(&self, req: PreviewRequest) {
         let key = req.new_key.then(|| Uuid::new_v4().simple().to_string());
-        {
-            let mut job = self.lock();
-            job.preview = Some((req, key, None));
-            job.preview_state = PreviewState::Running;
-        }
+        self.lock().request_preview(req, key);
         self.interrupt();
     }
 
@@ -795,18 +829,6 @@ impl Library {
         if running {
             job.cancel.cancel();
         }
-    }
-
-    /// The finished preview, taken to confirm.
-    fn take_preview(&self) -> Option<(PreviewRequest, Option<String>, Preview)> {
-        let mut job = self.lock();
-        if !matches!(job.preview, Some((_, _, Some(_)))) {
-            return None;
-        }
-        job.preview_state = PreviewState::None;
-        let (req, key, preview) = job.preview.take()?;
-        drop(job);
-        Some((req, key, preview?))
     }
 
     /// Records `after` as the confirmed form and starts converting the library to it.
@@ -952,9 +974,7 @@ impl Library {
                 target.mount_dir
             )));
         }
-        if target.strategy == ImportStrategy::Symlinks
-            && !Path::new(&target.mount_dir).join(".ids").is_dir()
-        {
+        if target.strategy == ImportStrategy::Symlinks && !mount_up(&target.mount_dir).await {
             return Err(Stop::Wait(
                 "symlinks need the mount, which is not up".to_owned(),
             ));
@@ -987,8 +1007,7 @@ impl Library {
                 self.convert_found(settings, &target, found, false, &mut arr_files, cancel)
                     .await?;
             }
-            let strm_dir = Path::new(&settings.imports.strm_dir);
-            if strm_dir.is_dir() {
+            if dir_exists(&settings.imports.strm_dir).await {
                 self.progress(|p| p.folder = Some(settings.imports.strm_dir.clone()));
                 let found = walk_root(&settings.imports.strm_dir, &known)
                     .await
@@ -1104,7 +1123,7 @@ impl Library {
                     Pointer::Link(_) => Action::Keep,
                 },
                 Some(item) => {
-                    let action = plan(&f, item, target, &mut stems);
+                    let action = planned(&f, item, target, &mut stems).await;
                     self.hold(&settings.arr_instances, target, &f, action)
                         .await
                         .map_err(Stop::Wait)?
@@ -1163,7 +1182,7 @@ impl Library {
             })
         });
         Ok(if stays {
-            kept_link(f, target, "its Arr keeps symlinks")
+            kept_link(f, target, "its Arr keeps symlinks").await
         } else {
             action
         })
@@ -1759,7 +1778,7 @@ impl Library {
                     for f in &found {
                         let action = match self.parts.db.item(f.item).await {
                             Ok(Some(item)) => {
-                                let action = plan(f, &item, &target, &mut stems);
+                                let action = planned(f, &item, &target, &mut stems).await;
                                 self.hold(&next.arr_instances, &target, f, action)
                                     .await
                                     .unwrap_or(Action::Skip("database unavailable"))
@@ -1792,7 +1811,7 @@ impl Library {
                                         }
                                     }
                                 }
-                                if taken(&path, f.item) {
+                                if taken(&path, f.item).await {
                                     p.skipped_total += 1;
                                     if p.skipped.len() < LISTED {
                                         p.skipped.push(Problem {
@@ -1813,7 +1832,7 @@ impl Library {
             p.rewrite += check.rewrite;
             p.folders.push(check);
         }
-        if Path::new(&next.imports.strm_dir).is_dir()
+        if dir_exists(&next.imports.strm_dir).await
             && let Ok(found) = walk_root(&next.imports.strm_dir, &known).await
         {
             for f in &found {
@@ -1853,14 +1872,18 @@ impl Library {
         let settings = self.settings().await;
         let known = self.known(&settings).await;
         let target = Target::of(&settings);
-        let roots: Vec<String> = settings
+        let mut roots = Vec::new();
+        for root in settings
             .imports
             .library_dirs
             .iter()
             .map(|d| d.path.clone())
             .chain(std::iter::once(settings.imports.strm_dir.clone()))
-            .filter(|r| Path::new(r).is_dir())
-            .collect();
+        {
+            if dir_exists(&root).await {
+                roots.push(root);
+            }
+        }
         for root in &roots {
             let Ok(found) = walk_root(root, &known).await else {
                 // An unreadable folder is not a clean one; the next pass tries again.
@@ -1943,6 +1966,16 @@ async fn blocking<T: Send + 'static>(
         .map_err(Fault::from)
 }
 
+// ponytail: a hung mount stalls the library task (and a conversion's write permit), not
+// a worker; a handoff::bounded-style gate would let it give up.
+async fn dir_exists(path: impl AsRef<Path>) -> bool {
+    tokio::fs::metadata(path).await.is_ok_and(|m| m.is_dir())
+}
+
+async fn mount_up(mount_dir: &str) -> bool {
+    dir_exists(Path::new(mount_dir).join(".ids")).await
+}
+
 /// Arr libraries fetched once per run.
 #[derive(Default)]
 struct ArrFiles {
@@ -1994,18 +2027,46 @@ impl ArrFiles {
 struct Stems(HashMap<PathBuf, HashMap<String, usize>>);
 
 impl Stems {
-    fn shared(&mut self, dir: &Path, stem: &str) -> bool {
-        let stems = self.0.entry(dir.to_path_buf()).or_insert_with(|| {
+    /// Whether another video in `dir` has `stem`; `None` until `dir` is loaded.
+    fn shared(&self, dir: &Path, stem: &str) -> Option<bool> {
+        let stems = self.0.get(dir)?;
+        Some(stems.get(&stem.to_lowercase()).copied().unwrap_or_default() > 1)
+    }
+
+    async fn load(&mut self, dir: PathBuf) {
+        let read = dir.clone();
+        let stems = tokio::task::spawn_blocking(move || {
             let mut stems: HashMap<String, usize> = HashMap::new();
-            for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            for entry in fs::read_dir(read).into_iter().flatten().flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if media::is_video(&name) {
                     *stems.entry(stem_of(&name).to_lowercase()).or_default() += 1;
                 }
             }
             stems
-        });
-        stems.get(&stem.to_lowercase()).copied().unwrap_or_default() > 1
+        })
+        .await
+        .unwrap_or_default();
+        self.0.insert(dir, stems);
+    }
+}
+
+/// What [`plan`] must look at on disk before it can decide.
+enum Needs {
+    /// The video stems of this folder.
+    Stems(PathBuf),
+    /// Whether the mount is up, for a symlink that stays one.
+    KeptLink(&'static str),
+}
+
+/// [`plan`], with what it needs read off the async workers.
+async fn planned(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
+    loop {
+        match plan(f, item, target, stems) {
+            Ok(action) => return action,
+            Err(Needs::KeptLink(reason)) => return kept_link(f, target, reason).await,
+            Err(Needs::Stems(dir)) => stems.load(dir).await,
+        }
     }
 }
 
@@ -2014,7 +2075,7 @@ fn stem_of(name: &str) -> &str {
 }
 
 /// What to do with the pointer `f` to `item` for `target`.
-fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
+fn plan(f: &Found, item: &Item, target: &Target, stems: &Stems) -> Result<Action, Needs> {
     let video = media::is_video(&item.name);
     let name = f
         .path
@@ -2043,16 +2104,21 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
         (ImportStrategy::Strm, Pointer::Link(_)) => {
             if handoff::is_subtitle(&item.name) {
                 return if item.size.unwrap_or_default() > MAX_SUBTITLE_BYTES {
-                    kept_link(f, target, "subtitle larger than 10 MB stays a symlink")
+                    Err(Needs::KeptLink(
+                        "subtitle larger than 10 MB stays a symlink",
+                    ))
                 } else {
-                    Action::Copy
+                    Ok(Action::Copy)
                 };
             }
             if !video || !media::is_video(&name) {
-                return kept_link(f, target, "not a video; stays a symlink");
+                return Err(Needs::KeptLink("not a video; stays a symlink"));
             }
             let stem = stem_of(&name);
-            let strm = if stems.shared(dir, stem) {
+            let Some(shared) = stems.shared(dir, stem) else {
+                return Err(Needs::Stems(dir.to_path_buf()));
+            };
+            let strm = if shared {
                 format!("{name}.strm")
             } else {
                 format!("{stem}.strm")
@@ -2060,7 +2126,7 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
             (target.strm(item.id, &item.name), dir.join(strm))
         }
     };
-    if path == f.path {
+    Ok(if path == f.path {
         let same = match (&want, &f.pointer) {
             (Pointer::Strm(w), Pointer::Strm(t)) => t.trim() == w,
             (w, t) => w == t,
@@ -2072,15 +2138,15 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
         }
     } else {
         Action::Move(path, want)
-    }
+    })
 }
 
 /// A symlink that stays one under STRM, pointed at the current mount once it is up.
-fn kept_link(f: &Found, target: &Target, reason: &'static str) -> Action {
+async fn kept_link(f: &Found, target: &Target, reason: &'static str) -> Action {
     let want = target.link(f.item);
     if f.pointer == want {
         Action::Skip(reason)
-    } else if !Path::new(&target.mount_dir).join(".ids").is_dir() {
+    } else if !mount_up(&target.mount_dir).await {
         Action::Skip("the mount is not up; the symlink keeps its target")
     } else {
         Action::Rewrite(want)
@@ -2088,9 +2154,14 @@ fn kept_link(f: &Found, target: &Target, reason: &'static str) -> Action {
 }
 
 /// Whether something other than a pointer to `item` is at `path`.
-fn taken(path: &Path, item: ItemId) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|meta| classify(path, &meta, &Known::any()).is_none_or(|f| f.item != item))
+async fn taken(path: &Path, item: ItemId) -> bool {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        fs::symlink_metadata(&path)
+            .is_ok_and(|meta| classify(&path, &meta, &Known::any()).is_none_or(|f| f.item != item))
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// The local path of the Arr-side `path`, inside a library folder.
@@ -2456,25 +2527,34 @@ pub async fn delete_library_preview(
 pub async fn post_library_confirm(
     State(admin): State<Arc<Admin>>,
 ) -> Result<Json<LibraryView>, Fail> {
-    let Some((req, key, preview)) = admin.library.take_preview() else {
+    let finished = admin.library.lock().finished_preview();
+    let Some((generation, req, key, preview)) = finished else {
         return Err(Fail::Conflict("no finished preview to confirm".to_owned()));
     };
-    let mut store = admin.config.write().await;
-    let before = store.settings().clone();
-    let mut next = before.clone();
-    req.apply(&mut next, key.as_deref());
-    if next.imports.strategy == ImportStrategy::Strm
-        && let Err(reason) = admin.live.probe_strm_dir(&next.imports.strm_dir).await
+    let probed = {
+        let mut next = admin.config.read().await.settings().clone();
+        req.apply(&mut next, key.as_deref());
+        strm_dir_of(&next).map(str::to_owned)
+    };
+    // The probe can hang on a dead share, so it runs before the settings lock.
+    if let Some(dir) = &probed
+        && let Err(reason) = admin.live.probe_strm_dir(dir).await
     {
         return Err(Fail::Setting(
             "imports.strm_dir".to_owned(),
-            format!(
-                "Cannot write STRM files in {:?}: {reason}",
-                next.imports.strm_dir
-            ),
+            format!("Cannot write STRM files in {dir:?}: {reason}"),
+        ));
+    }
+    let mut store = admin.config.write().await;
+    let before = store.settings().clone();
+    let next = confirmed(&before, &req, key.as_deref(), probed.as_deref())?;
+    if !admin.library.lock().preview_ready(generation) {
+        return Err(Fail::Conflict(
+            "the preview changed; confirm again".to_owned(),
         ));
     }
     store.save(next).await?;
+    admin.library.lock().confirmed_preview(generation);
     let after = store.settings().clone();
     if let Err(error) = admin.live.apply(&after).await {
         return Err(Fail::Bad(format!("saved, but could not apply: {error:#}")));
@@ -2488,6 +2568,29 @@ pub async fn post_library_confirm(
         .collect();
     admin.library.confirm(&before, &after, excluded).await;
     Ok(Json(admin.library.view().await?))
+}
+
+/// The STRM directory `s` writes into, if it writes STRMs.
+fn strm_dir_of(s: &Settings) -> Option<&str> {
+    (s.imports.strategy == ImportStrategy::Strm).then_some(s.imports.strm_dir.as_str())
+}
+
+/// `current` changed by `req`, unless the STRM directory to write is no longer `probed`.
+fn confirmed(
+    current: &Settings,
+    req: &PreviewRequest,
+    key: Option<&str>,
+    probed: Option<&str>,
+) -> Result<Settings, Fail> {
+    let mut next = current.clone();
+    req.apply(&mut next, key);
+    if strm_dir_of(&next) != probed {
+        return Err(Fail::Setting(
+            "imports.strm_dir".to_owned(),
+            "Settings changed while the STRM folder was checked; confirm again".to_owned(),
+        ));
+    }
+    Ok(next)
 }
 
 /// Stops the conversion after the current file; the library stays mixed, which plays.
@@ -2710,15 +2813,59 @@ mod tests {
             key: "k".into(),
             mount_dir: "/mnt".into(),
         };
-        let action = plan(&found, &item, &target, &mut Stems::default());
-        let Action::Move(path, _) = action else {
-            panic!("{action:?}")
+        let action = plan(&found, &item, &target, &Stems::default());
+        let Ok(Action::Move(path, _)) = action else {
+            panic!("{:?}", action.ok())
         };
         assert_eq!(path, PathBuf::from("/lib/Show/Episode"));
     }
 
-    #[test]
-    fn a_kept_symlink_follows_the_mount_only_once_it_is_up() {
+    #[tokio::test]
+    async fn strm_names_follow_the_folder_once_its_stems_are_loaded() {
+        let dir = temp();
+        fs::write(dir.join("Episode.mkv"), "").unwrap();
+        fs::write(dir.join("Episode.mp4"), "").unwrap();
+        let id = ItemId::new();
+        let item = Item {
+            id,
+            parent: Some(ItemId::CONTENT),
+            name: "e.mkv".into(),
+            path: "/content/c/j/e.mkv".into(),
+            kind: infinidysk_core::ItemKind::NzbFile,
+            size: Some(1),
+            meta_blob: None,
+            nzb_blob: None,
+            created_at: 0,
+            release_date: None,
+            health_state: infinidysk_db::HealthState::Healthy,
+            encrypted: false,
+        };
+        let found = Found {
+            path: dir.join("Episode.mkv"),
+            item: id,
+            pointer: Pointer::Link(format!("/mnt/{}", id.ids_path())),
+            legacy: false,
+        };
+        let target = Target {
+            strategy: ImportStrategy::Strm,
+            public_url: "http://x".into(),
+            key: "k".into(),
+            mount_dir: "/mnt".into(),
+        };
+        let mut stems = Stems::default();
+        assert!(matches!(
+            plan(&found, &item, &target, &stems),
+            Err(Needs::Stems(d)) if d == dir
+        ));
+        let Action::Move(path, _) = planned(&found, &item, &target, &mut stems).await else {
+            panic!("not a move")
+        };
+        assert_eq!(path, dir.join("Episode.mkv.strm"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_kept_symlink_follows_the_mount_only_once_it_is_up() {
         let mount = std::env::temp_dir().join(format!("infinidysk-kept-{}", ItemId::new()));
         let id = ItemId::new();
         let found = Found {
@@ -2734,14 +2881,76 @@ mod tests {
             mount_dir: mount.display().to_string(),
         };
         assert!(matches!(
-            kept_link(&found, &target, "kept"),
+            kept_link(&found, &target, "kept").await,
             Action::Skip(r) if r != "kept"
         ));
         fs::create_dir_all(mount.join(".ids")).unwrap();
         assert!(matches!(
-            kept_link(&found, &target, "kept"),
+            kept_link(&found, &target, "kept").await,
             Action::Rewrite(p) if p == target.link(id)
         ));
         fs::remove_dir_all(mount).unwrap();
+    }
+
+    #[test]
+    fn a_confirm_takes_only_the_preview_it_checked() {
+        let mut job = Job::default();
+        job.request_preview(PreviewRequest::default(), None);
+        let finish = |job: &mut Job| {
+            if let Some((_, _, done)) = job.preview.as_mut() {
+                *done = Some(Preview {
+                    strategy: ImportStrategy::Strm,
+                    public_url: String::new(),
+                    mount_dir: String::new(),
+                    new_key: false,
+                    folders: Vec::new(),
+                    strm_dir_rewrite: 0,
+                    convert: 0,
+                    rewrite: 0,
+                    copy: 0,
+                    dangling: 0,
+                    arrs: Vec::new(),
+                    skipped: Vec::new(),
+                    skipped_total: 0,
+                    warnings: Vec::new(),
+                });
+            }
+        };
+        assert!(job.finished_preview().is_none(), "still running");
+        finish(&mut job);
+        let (first, ..) = job.finished_preview().unwrap();
+
+        job.request_preview(PreviewRequest::default(), None);
+        finish(&mut job);
+        assert!(!job.preview_ready(first), "replaced");
+        job.confirmed_preview(first);
+        let (second, ..) = job.finished_preview().unwrap();
+        assert!(job.preview_ready(second), "the newer preview survives");
+
+        job.confirmed_preview(second);
+        assert!(!job.preview_ready(second), "a second confirm finds nothing");
+
+        job.request_preview(PreviewRequest::default(), None);
+        finish(&mut job);
+        let (third, ..) = job.finished_preview().unwrap();
+        job.preview = None;
+        assert!(!job.preview_ready(third), "dropped");
+    }
+
+    #[test]
+    fn a_confirm_keeps_other_changes_but_not_a_new_strm_folder() {
+        let req = PreviewRequest {
+            strategy: Some(ImportStrategy::Strm),
+            ..PreviewRequest::default()
+        };
+        let mut current = Settings::default();
+        current.imports.strm_dir = "/strm".to_owned();
+        current.network.public_url = "http://other".to_owned();
+        let next = confirmed(&current, &req, None, Some("/strm")).ok().unwrap();
+        assert_eq!(next.imports.strategy, ImportStrategy::Strm);
+        assert_eq!(next.network.public_url, "http://other");
+
+        current.imports.strm_dir = "/elsewhere".to_owned();
+        assert!(confirmed(&current, &req, None, Some("/strm")).is_err());
     }
 }
