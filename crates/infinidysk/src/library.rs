@@ -465,6 +465,17 @@ impl Job {
         Some((self.preview_gen, req.clone(), key.clone(), preview.clone()))
     }
 
+    /// Stores `result` unless a newer request replaced the one it was computed for.
+    fn finish_preview(&mut self, generation: u64, result: Preview) {
+        if self.preview_gen != generation {
+            return;
+        }
+        if let Some((_, _, done)) = self.preview.as_mut() {
+            *done = Some(result);
+            self.preview_state = PreviewState::Ready;
+        }
+    }
+
     fn preview_ready(&self, generation: u64) -> bool {
         self.preview_gen == generation && matches!(self.preview, Some((_, _, Some(_))))
     }
@@ -656,10 +667,11 @@ impl Library {
                 job.preview
                     .as_ref()
                     .filter(|(_, _, done)| done.is_none())
-                    .map(|(req, key, _)| (req.clone(), key.clone()))
+                    .map(|(req, key, _)| (job.preview_gen, req.clone(), key.clone()))
             };
-            let next = if let Some((req, key)) = preview {
-                self.preview(&req, key.as_deref(), &cancel).await;
+            let next = if let Some((generation, req, key)) = preview {
+                self.preview(generation, &req, key.as_deref(), &cancel)
+                    .await;
                 Next::Again
             } else {
                 // A whole conversion run holds it, so compaction waits for or skips one.
@@ -1664,7 +1676,13 @@ impl Library {
 
     /// Walks every library folder of the would-be settings and counts what a conversion
     /// would do; nothing is written but a probe file per folder.
-    async fn preview(&self, req: &PreviewRequest, key: Option<&str>, cancel: &CancellationToken) {
+    async fn preview(
+        &self,
+        generation: u64,
+        req: &PreviewRequest,
+        key: Option<&str>,
+        cancel: &CancellationToken,
+    ) {
         let settings = self.settings().await;
         let mut next = settings.clone();
         req.apply(&mut next, key);
@@ -1690,12 +1708,8 @@ impl Library {
             self.store(FORM_KEY, &confirmed).await;
         }
         let mut job = self.lock();
-        if cancel.is_cancelled() {
-            return;
-        }
-        if let Some((_, _, done)) = job.preview.as_mut() {
-            *done = Some(result);
-            job.preview_state = PreviewState::Ready;
+        if !cancel.is_cancelled() {
+            job.finish_preview(generation, result);
         }
     }
 
@@ -2896,9 +2910,10 @@ mod tests {
     fn a_confirm_takes_only_the_preview_it_checked() {
         let mut job = Job::default();
         job.request_preview(PreviewRequest::default(), None);
-        let finish = |job: &mut Job| {
-            if let Some((_, _, done)) = job.preview.as_mut() {
-                *done = Some(Preview {
+        let finish = |job: &mut Job, generation: u64| {
+            job.finish_preview(
+                generation,
+                Preview {
                     strategy: ImportStrategy::Strm,
                     public_url: String::new(),
                     mount_dir: String::new(),
@@ -2913,15 +2928,22 @@ mod tests {
                     skipped: Vec::new(),
                     skipped_total: 0,
                     warnings: Vec::new(),
-                });
-            }
+                },
+            );
         };
         assert!(job.finished_preview().is_none(), "still running");
-        finish(&mut job);
-        let (first, ..) = job.finished_preview().unwrap();
+        let first = job.preview_gen;
+        finish(&mut job, first);
+        assert!(job.preview_ready(first));
 
         job.request_preview(PreviewRequest::default(), None);
-        finish(&mut job);
+        finish(&mut job, first);
+        assert!(
+            job.finished_preview().is_none(),
+            "a replaced preview's result is dropped"
+        );
+        let current = job.preview_gen;
+        finish(&mut job, current);
         assert!(!job.preview_ready(first), "replaced");
         job.confirmed_preview(first);
         let (second, ..) = job.finished_preview().unwrap();
@@ -2931,7 +2953,8 @@ mod tests {
         assert!(!job.preview_ready(second), "a second confirm finds nothing");
 
         job.request_preview(PreviewRequest::default(), None);
-        finish(&mut job);
+        let current = job.preview_gen;
+        finish(&mut job, current);
         let (third, ..) = job.finished_preview().unwrap();
         job.preview = None;
         assert!(!job.preview_ready(third), "dropped");
