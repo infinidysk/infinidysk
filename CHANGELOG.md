@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0-beta.10](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.9...v2.0.0-beta.10) (2026-11-17)
+
+
+### Features
+
+* **mount:** traces and support packs show where playback start-up time goes ([#1923](https://github.com/infinidysk/infinidysk/issues/1923)) ([53ba6cc](https://github.com/infinidysk/infinidysk/commit/53ba6cc5a2b85afa898ae3902f04ce89186c8d22))
+
+
+### Bug Fixes
+
+* **deps:** Bump the cargo-minor-patch group with 2 updates ([#1922](https://github.com/infinidysk/infinidysk/issues/1922)) ([60f2744](https://github.com/infinidysk/infinidysk/commit/60f274471dded75fe5b62e0f24ef2207031cbb04))
+* **deps:** Bump the cargo-minor-patch group with 3 updates ([#1936](https://github.com/infinidysk/infinidysk/issues/1936)) ([1ff92fd](https://github.com/infinidysk/infinidysk/commit/1ff92fd84d54d693856f265b9060861857c5c732))
+* **deps:** Bump the npm-minor-patch group in /ui with 6 updates ([#1935](https://github.com/infinidysk/infinidysk/issues/1935)) ([7156d0c](https://github.com/infinidysk/infinidysk/commit/7156d0c6c55947ed0d400e3e40f6571d41ea8887))
+* **health:** search again when an accepted replacement fails while hidden ([#1927](https://github.com/infinidysk/infinidysk/issues/1927)) ([b07e7a7](https://github.com/infinidysk/infinidysk/commit/b07e7a79e0de802de92a4e93a776196fb58be4ad)), closes [#1926](https://github.com/infinidysk/infinidysk/issues/1926)
+* **health:** skip media analysis requests for deleted files ([#1916](https://github.com/infinidysk/infinidysk/issues/1916)) ([a5b33db](https://github.com/infinidysk/infinidysk/commit/a5b33db6fafd2c34d7f2eca1e9b531b6ce871faa))
+* **import:** checking the library no longer freezes the app ([#1934](https://github.com/infinidysk/infinidysk/issues/1934)) ([3f69590](https://github.com/infinidysk/infinidysk/commit/3f6959002ba7619fa2b9d1b4369de30b6f85cd6c))
+* **stream:** reuse metadata scan data for library scans and playback ([#1914](https://github.com/infinidysk/infinidysk/issues/1914)) ([a248440](https://github.com/infinidysk/infinidysk/commit/a248440504a84c6d4a8dea2daff074b17320b1fa))
+
 ## [2.0.0-beta.9](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.8...v2.0.0-beta.9) (2026-11-13)
 
 
