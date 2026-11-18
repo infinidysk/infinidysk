@@ -15,6 +15,7 @@ import {
   Monitor,
   Moon,
   RefreshCw,
+  Search,
   Settings,
   Sun,
   Terminal,
@@ -47,6 +48,7 @@ import { Loading } from "./ui";
 const pages = [
   { to: "/overview", label: "Overview", icon: Gauge },
   { to: "/queue", label: "Queue", icon: ListOrdered },
+  { to: "/search", label: "Search", icon: Search },
   { to: "/explorer", label: "Explorer", icon: FolderTree },
   { to: "/health", label: "Health", icon: Activity },
   { to: "/stats", label: "Stats", icon: ChartColumn },

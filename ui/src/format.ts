@@ -10,6 +10,11 @@ export function bytes(n: number, compact = false): string {
   return `${n.toFixed(i === 0 || (compact && n >= 9.95) ? 0 : 1)} ${units[i]}`;
 }
 
+/** "1 result", "1,234 results": the count with `toLocaleString()` and the noun in singular or plural. */
+export function count(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 const steps: [Intl.RelativeTimeFormatUnit, number][] = [
   ["second", 60],

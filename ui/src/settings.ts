@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, body, type Schemas } from "./api/client";
+import { api, body, HttpError, type Schemas } from "./api/client";
 
 export type Settings = Schemas["Settings"];
 
@@ -19,10 +19,17 @@ export function useCatalog() {
 export function useSaveSettings() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (settings: Settings) => body(api.PUT("/api/v1/settings", { body: settings })),
+    mutationFn: ({ settings, indexers_revision }: { settings: Settings; indexers_revision: string }) =>
+      body(api.PUT("/api/v1/settings", { body: { ...settings, indexers_revision } })),
     onSuccess: (view) => {
       client.setQueryData(["settings"], view);
       void client.invalidateQueries({ queryKey: ["auth"] });
+    },
+    onError: (error) => {
+      // A stale indexers_revision: refetch so the next save sends the current one.
+      if (error instanceof HttpError && error.status === 409) {
+        void client.invalidateQueries({ queryKey: ["settings"] });
+      }
     },
   });
 }
