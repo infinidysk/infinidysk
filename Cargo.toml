@@ -2,6 +2,10 @@
 resolver = "3"
 members = ["crates/*"]
 
+[patch.crates-io]
+# Remove once https://github.com/infinidysk/infinidysk-fuse/pull/63 is released.
+infinidysk-fuse = { git = "https://github.com/infinidysk/infinidysk-fuse", rev = "06aaf3a46ad10354136d53fe7cb55d536feca1a4" }
+
 [workspace.package]
 # ponytail: crate versions stay 0.0.0; release-please owns the product version in version.txt.
 version = "0.0.0"

@@ -15,7 +15,7 @@ infinidysk-nntp.workspace = true
 infinidysk-stream.workspace = true
 quick_cache.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "sync"] }
 uuid.workspace = true
 
 [dev-dependencies]

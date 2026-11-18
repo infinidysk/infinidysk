@@ -2,12 +2,12 @@
 //! of an MP4-family file must add up to the file's length.
 
 use infinidysk_core::crypt::{BLOCK, Cipher};
-use infinidysk_core::{FileMeta, Segment, Segments};
+use infinidysk_core::{FileMeta, Par2Proof, Segment, Segments};
 use infinidysk_db::Defect;
 use infinidysk_nntp::Articles;
 
 /// Bumped whenever a rule changes, so evidence from older rules needs a fresh sighting.
-const CLASSIFIER: u8 = 1;
+const CLASSIFIER: u8 = 2;
 /// Top-level boxes walked before giving up; a plain MP4 has a handful.
 const MAX_BOXES: usize = 32;
 const MP4: &[&str] = &["mp4", "m4v", "mov"];
@@ -122,6 +122,7 @@ struct Span<'a> {
     offset: u64,
     /// Flat index of the first segment.
     base: usize,
+    proof: Option<&'a Par2Proof>,
 }
 
 /// Logical bytes of a file from CRC-verified bodies; never zero-filled.
@@ -142,8 +143,17 @@ impl<'a> Bytes<'a> {
     fn new(articles: &'a dyn Articles, meta: &'a FileMeta) -> Option<Self> {
         let mut spans = Vec::new();
         let (mut len, mut base) = (0, 0);
-        let mut push = |segments: &'a Segments, offset: u64, start: u64, end: u64| {
-            if !segments.sizes_trusted || start < offset || end > offset + segments.size() {
+        let mut push = |segments: &'a Segments,
+                        offset: u64,
+                        start: u64,
+                        end: u64,
+                        proof: Option<&'a Par2Proof>| {
+            if !segments.sizes_trusted
+                || start < offset
+                || offset
+                    .checked_add(segments.size())
+                    .is_none_or(|limit| end > limit)
+            {
                 return false;
             }
             if end > start {
@@ -154,6 +164,7 @@ impl<'a> Bytes<'a> {
                     at: start,
                     offset,
                     base,
+                    proof,
                 });
                 len += end - start;
             }
@@ -161,11 +172,16 @@ impl<'a> Bytes<'a> {
             true
         };
         let ok = match meta {
-            FileMeta::Nzb(f) => push(&f.segments, 0, 0, f.segments.size()),
-            FileMeta::Multipart(f) => f
-                .parts
-                .iter()
-                .all(|p| push(&p.segments, p.offset, p.data.start, p.data.end)),
+            FileMeta::Nzb(f) => push(&f.segments, 0, 0, f.segments.size(), f.proof.as_ref()),
+            FileMeta::Multipart(f) => f.parts.iter().all(|p| {
+                push(
+                    &p.segments,
+                    p.offset,
+                    p.data.start,
+                    p.data.end,
+                    p.proof.as_ref(),
+                )
+            }),
         };
         let crypt = match meta {
             FileMeta::Multipart(f) => f.crypt.as_ref(),
@@ -240,7 +256,8 @@ impl<'a> Bytes<'a> {
                 return Err("layout ends before the file".to_owned());
             };
             let segment = segment.clone();
-            let data = self.segment(flat, &segment, begin).await?;
+            let proof = span.proof;
+            let data = self.segment(flat, &segment, begin, proof).await?;
             let within = usize::try_from(posted - begin).unwrap_or(usize::MAX);
             let left = usize::try_from(span_end - posted).unwrap_or(usize::MAX);
             let take = (n - out.len()).min(data.len() - within).min(left);
@@ -253,17 +270,23 @@ impl<'a> Bytes<'a> {
         flat: usize,
         segment: &Segment,
         begin: u64,
+        proof: Option<&Par2Proof>,
     ) -> Result<&[u8], String> {
         if self.held.as_ref().is_none_or(|(held, _)| *held != flat) {
-            self.held = Some((flat, fetch(self.articles, segment, begin).await?));
+            self.held = Some((flat, fetch(self.articles, segment, begin, proof).await?));
         }
         Ok(&self.held.as_ref().expect("held set above").1)
     }
 }
 
 /// The body of `segment` exactly as posted at `begin`.
-async fn fetch(articles: &dyn Articles, segment: &Segment, begin: u64) -> Result<Vec<u8>, String> {
-    let error = match articles.body(&segment.id, Some(begin)).await {
+async fn fetch(
+    articles: &dyn Articles,
+    segment: &Segment,
+    begin: u64,
+    proof: Option<&Par2Proof>,
+) -> Result<Vec<u8>, String> {
+    let error = match articles.read(segment, Some(begin), proof).await {
         Ok(data) if data.len() == segment.size as usize => return Ok(data.into()),
         Ok(_) => "decoded size differs from the layout".to_owned(),
         Err(e) => e.to_string(),
@@ -281,22 +304,39 @@ pub fn source(meta: &FileMeta) -> i64 {
         }
     };
     write(&[CLASSIFIER]);
-    let mut part = |segments: &Segments, offset: u64, start: u64, end: u64| {
-        for v in [offset, start, end] {
-            write(&v.to_le_bytes());
-        }
-        for s in &segments.items {
-            write(&s.size.to_le_bytes());
-            write(s.id.as_bytes());
-            write(&[0]);
-            write(&[1]);
-        }
-    };
+    let mut part =
+        |segments: &Segments, offset: u64, start: u64, end: u64, proof: Option<&Par2Proof>| {
+            if let Some(proof) = proof
+                && let Some(set) = proof.set_id
+            {
+                write(&[1]);
+                write(&set);
+                write(&proof.file_id);
+                write(&proof.file_md5);
+            } else {
+                write(&[0]);
+            }
+            for v in [offset, start, end] {
+                write(&v.to_le_bytes());
+            }
+            for s in &segments.items {
+                write(&s.size.to_le_bytes());
+                write(s.id.as_bytes());
+                write(&[0]);
+                write(&[1]);
+            }
+        };
     match meta {
-        FileMeta::Nzb(f) => part(&f.segments, 0, 0, f.segments.size()),
+        FileMeta::Nzb(f) => part(&f.segments, 0, 0, f.segments.size(), f.proof.as_ref()),
         FileMeta::Multipart(f) => {
             for p in &f.parts {
-                part(&p.segments, p.offset, p.data.start, p.data.end);
+                part(
+                    &p.segments,
+                    p.offset,
+                    p.data.start,
+                    p.data.end,
+                    p.proof.as_ref(),
+                );
             }
         }
     }
@@ -347,7 +387,9 @@ pub fn judge(
         },
         (_, None) => Verdict::Nothing,
         (Structure::Sound, Some(_)) => Verdict::Clear,
-        (Structure::Unrecognized, Some(d)) if d.source != source => Verdict::Clear,
+        (Structure::Unrecognized | Structure::Inconclusive(_), Some(d)) if d.source != source => {
+            Verdict::Clear
+        }
         (Structure::Unrecognized | Structure::Inconclusive(_), Some(d)) => Verdict::Keep(d),
     }
 }
@@ -355,6 +397,134 @@ pub fn judge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn omitted_container_headers_use_posted_identity_and_do_not_reuse_old_evidence() {
+        use infinidysk_core::{BlobId, ByteRange, FilePart, MultipartFile, Segment};
+        use infinidysk_nntp::{Body, Client, RepairKey};
+        let nzb = BlobId::new();
+        let mut first = boxes(&[(16, b"ftyp")]);
+        first.resize(16, 0);
+        let mut second = boxes(&[(16, b"moov")]);
+        second.resize(16, 0);
+        let client = Client::new([]);
+        client.set_repairs(Box::new(move |key| {
+            let RepairKey::Omitted(key) = key else {
+                return None;
+            };
+            if key.nzb != nzb
+                || key.generation != 0
+                || key.set != [7; 16]
+                || key.range
+                    != (ByteRange {
+                        start: 100,
+                        end: 116,
+                    })
+            {
+                return None;
+            }
+            let data = if key.file == [1; 16] {
+                first.clone()
+            } else if key.file == [2; 16] {
+                second.clone()
+            } else {
+                return None;
+            };
+            Some(Box::pin(async move {
+                Ok(Some(Body {
+                    data: data.into(),
+                    offset: 100,
+                    file_size: 200,
+                    part: Some(2),
+                    total: Some(3),
+                }))
+            }))
+        }));
+        let articles = crate::check::Direct {
+            client: &client,
+            source: Some((nzb, 0)),
+            meter: None,
+        };
+        let part = |file: u8| FilePart {
+            segments: Segments {
+                items: vec![Segment {
+                    id: String::new(),
+                    size: 16,
+                    fallbacks: vec![],
+                }],
+                sizes_trusted: true,
+                ..Segments::default()
+            },
+            offset: 100,
+            data: ByteRange {
+                start: 100,
+                end: 116,
+            },
+            split_after: true,
+            proof: Some(Par2Proof {
+                set_id: Some([7; 16]),
+                file_id: [file; 16],
+                file_length: 200,
+                slice_size: 4,
+                slice_md5: vec![],
+                slice_crc32: vec![],
+                file_md5: [3; 16],
+                md5_16k: [4; 16],
+            }),
+        };
+        let mut meta = FileMeta::Multipart(MultipartFile {
+            parts: vec![part(1), part(2)],
+            crypt: None,
+        });
+        assert_eq!(
+            walk(&articles, &meta, "source.mp4", None).await,
+            Structure::Sound
+        );
+        let check = crate::first_check(&articles, &meta, "source.mp4", None, false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(check.status.state, infinidysk_db::HealthState::Healthy);
+        let prior = source(&meta);
+        let FileMeta::Multipart(file) = &mut meta else {
+            unreachable!()
+        };
+        file.parts[1].proof.as_mut().unwrap().file_id = [9; 16];
+        assert_ne!(source(&meta), prior);
+        let old = Defect {
+            source: prior,
+            offset: 16,
+            size: 4,
+            seen_at: 0,
+        };
+        assert_eq!(
+            judge(
+                Some(old),
+                &Structure::Inconclusive(String::new()),
+                source(&meta),
+                100,
+                50
+            ),
+            Verdict::Clear
+        );
+        let FileMeta::Multipart(file) = &mut meta else {
+            unreachable!()
+        };
+        file.parts[1].proof.as_mut().unwrap().file_id = [2; 16];
+        file.parts[0].offset = u64::MAX - 4;
+        let opts = crate::check::Options {
+            percent: 100,
+            tolerant: false,
+            concurrency: 2,
+            proven: false,
+        };
+        assert!(matches!(
+            crate::check::run(&articles, &mut meta, "source.mp4", &opts)
+                .await
+                .0,
+            crate::check::Outcome::Inconclusive(infinidysk_nntp::Error::Repair(_))
+        ));
+    }
 
     fn boxes(list: &[(u32, &[u8; 4])]) -> Vec<u8> {
         list.iter()
