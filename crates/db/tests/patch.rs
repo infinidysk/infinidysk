@@ -1174,3 +1174,36 @@ async fn additive_migration_keeps_existing_files_and_starts_their_generation_at_
         fixture.close().await;
     }
 }
+
+async fn sqlite_fixture() -> Fixture {
+    let path = std::env::temp_dir().join(format!("infinidysk-patch-db-{}.sqlite", ItemId::new()));
+    Fixture::open(format!("sqlite:{}", path.display()), Cleanup::Sqlite(path)).await
+}
+
+#[tokio::test]
+async fn a_publication_dropped_after_commit_still_invalidates_cached_metadata() {
+    use std::future::Future as _;
+    let fixture = sqlite_fixture().await;
+    let source = fixture.source().await;
+    let before = fixture.db.blob_epoch();
+    let mut publication = Box::pin(fixture.db.publish_repair_metadata(&source, b"next"));
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while fixture.db.blob(fixture.meta).await.unwrap().as_deref() != Some(b"next") {
+            if publication.as_mut().poll(&mut cx).is_ready() {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    drop(publication);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while fixture.db.blob_epoch() == before {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("committed metadata must change the epoch");
+    fixture.close().await;
+}

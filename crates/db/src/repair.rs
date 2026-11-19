@@ -102,6 +102,17 @@ pub(super) struct Row {
     descriptor: Vec<u8>,
 }
 
+/// A dropped caller must not cancel a COMMIT that may land without its cache invalidation.
+async fn owned<T>(task: tokio::task::JoinHandle<Result<T, Error>>) -> Result<T, Error> {
+    match task.await {
+        Ok(result) => result,
+        Err(error) => match error.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            Err(_) => Err(Error::Interrupted),
+        },
+    }
+}
+
 pub(super) fn decode(row: &Row) -> Result<Patch, Error> {
     let patch = Patch::decode(&row.descriptor)?;
     if patch.id.0 != row.id
@@ -236,6 +247,14 @@ impl Db {
         source: &Source,
         data: &[u8],
     ) -> Result<bool, Error> {
+        let (db, source, data) = (self.clone(), source.clone(), data.to_vec());
+        owned(tokio::spawn(async move {
+            db.write_repair_metadata(&source, &data).await
+        }))
+        .await
+    }
+
+    async fn write_repair_metadata(&self, source: &Source, data: &[u8]) -> Result<bool, Error> {
         let Some((meta, generation)) = source.metadata else {
             return Ok(false);
         };
@@ -369,6 +388,14 @@ impl Db {
     /// An uncertain commit may have succeeded. Retry the same IDs; retain files until
     /// reference reconciliation proves they can be removed.
     pub async fn publish_patches(&self, source: &Source, patches: &[Patch]) -> Result<bool, Error> {
+        let (db, source, patches) = (self.clone(), source.clone(), patches.to_vec());
+        owned(tokio::spawn(async move {
+            db.write_patches(&source, &patches).await
+        }))
+        .await
+    }
+
+    async fn write_patches(&self, source: &Source, patches: &[Patch]) -> Result<bool, Error> {
         if patches.is_empty() || patches.len() > MAX_PATCHES {
             return Err(Error::RepairBounds("batch size"));
         }
