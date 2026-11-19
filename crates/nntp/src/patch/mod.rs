@@ -21,6 +21,9 @@ use steps::Steps;
 
 pub(super) const CHUNK: usize = 64 * 1024;
 
+/// Default repair store size; full stores evict the least recently read repairs.
+pub const CAPACITY_BYTES: u64 = 4_000_000_000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("repair storage failed")]
@@ -155,6 +158,38 @@ impl Store {
         drop(state);
         result
     }
+
+    /// Make room for a `needed`-byte write, least recently read first. `remove` drops the
+    /// reference, live or not, and returns a guard that lives through the unlink; `None`
+    /// keeps the file. Unpublished receipts are never evicted. Returns the files removed.
+    pub fn evict<G>(
+        &self,
+        needed: u64,
+        remove: impl Fn(PatchId) -> Result<Option<G>, Error>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<u64, Error> {
+        let mut state = self.0.used.lock().map_err(|_| Error::Recovery)?;
+        let used = state.ok_or(Error::Recovery)?;
+        let result = files::evict(
+            &self.0.dir,
+            used,
+            |used| needed <= self.1.saturating_sub(used),
+            |id| {
+                let pinned = self
+                    .0
+                    .pins
+                    .lock()
+                    .map_err(|_| Error::Recovery)?
+                    .contains_key(&id);
+                if pinned { Ok(None) } else { remove(id) }
+            },
+            &cancelled,
+        );
+        *state = scan(&self.0.dir, false).ok();
+        drop(state);
+        result
+    }
+
     /// Open one private dedicated directory. Its parent must exist. The process lease
     /// excludes other writers/recovery. Remove only abandoned temporary files; retain
     /// every durable file until SQL reconciliation can prove it is unreferenced.
@@ -281,6 +316,8 @@ impl Store {
         data.try_reserve_exact(usize::try_from(patch.source.range.len()).expect("bounded article"))
             .map_err(|_| Error::Allocation)?;
         validate_file(&mut file, patch, Some(&mut data))?;
+        // Eviction order only; a failed touch must not fail playback.
+        let _ = file.set_modified(std::time::SystemTime::now());
         Ok(Body {
             data: data.into(),
             offset: patch.source.range.start,

@@ -135,6 +135,54 @@ fn retries_are_idempotent_and_capacity_never_evicts_existing_repairs() {
 }
 
 #[test]
+fn eviction_frees_the_least_recently_read_unpinned_repairs() {
+    use std::{
+        cell::RefCell,
+        time::{Duration, UNIX_EPOCH},
+    };
+    let root = directory();
+    let path = root.join("repairs");
+    let patches = [b"first!", b"second", b"third!"].map(|data| (descriptor(data), data));
+    let length = patches[0].0.encode().unwrap().len() as u64 + 6;
+    let store = Store::open(&path, 3 * length).unwrap();
+    let mut pin = None;
+    for (seconds, (patch, data)) in (1000..).step_by(1000).zip(&patches) {
+        pin = Some(store.write(patch, *data, || false).unwrap());
+        fs::File::options()
+            .write(true)
+            .open(path.join(format!("{}.patch", patch.id)))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(seconds))
+            .unwrap();
+    }
+    let ids = patches.each_ref().map(|(patch, _)| patch.id);
+    store.read(&patches[0].0).unwrap();
+    let removed = RefCell::new(Vec::new());
+    let remove = |id| {
+        removed.borrow_mut().push(id);
+        Ok(Some(()))
+    };
+    assert!(matches!(
+        store.write(&descriptor(b"fourth"), b"fourth", || false),
+        Err(Error::Capacity)
+    ));
+    assert_eq!(store.evict(length, remove, || false).unwrap(), 1);
+    assert_eq!(*removed.borrow(), [ids[1]]);
+    assert!(store.read(&patches[1].0).is_err());
+    let refuse_first = |id| Ok((id != ids[0]).then_some(()));
+    assert_eq!(store.evict(2 * length, refuse_first, || false).unwrap(), 0);
+    drop(pin);
+    assert_eq!(store.evict(2 * length, refuse_first, || false).unwrap(), 1);
+    assert!(store.read(&patches[2].0).is_err());
+    assert_eq!(store.read(&patches[0].0).unwrap().data.as_ref(), b"first!");
+    store
+        .write(&descriptor(b"fourth"), b"fourth", || false)
+        .unwrap();
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_limited_writer_shares_the_reader_lease_and_global_usage() {
     let root = directory();
     let wide = Store::open(&root.join("repairs"), 1_000_000).unwrap();

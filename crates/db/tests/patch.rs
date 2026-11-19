@@ -1242,3 +1242,44 @@ async fn a_backup_must_carry_every_repair_it_references() {
     );
     assert_eq!(embedded.failure(), None);
 }
+
+#[tokio::test]
+async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
+    for fixture in fixtures().await {
+        let source = fixture.source().await;
+        let repair = patch();
+        assert!(
+            fixture
+                .db
+                .publish_patches(&source, slice::from_ref(&repair))
+                .await
+                .unwrap()
+        );
+        let mut status = fixture.db.health(fixture.file.id).await.unwrap().unwrap().1;
+        status.state = infinidysk_db::HealthState::Healthy;
+        fixture
+            .db
+            .set_health(fixture.file.id, &status, infinidysk_db::Recheck::None)
+            .await
+            .unwrap();
+        let before = fixture.db.blob_epoch();
+        assert_eq!(
+            fixture.db.evict_patch(repair.id).await.unwrap(),
+            vec![(fixture.file.id, fixture.file.path.clone())]
+        );
+        assert!(fixture.db.blob_epoch() > before);
+        assert_eq!(
+            fixture
+                .db
+                .article_patch(&source, "patch@loopback")
+                .await
+                .unwrap(),
+            None
+        );
+        let status = fixture.db.health(fixture.file.id).await.unwrap().unwrap().1;
+        assert_eq!(status.state, infinidysk_db::HealthState::Unchecked);
+        assert_ne!(status.recheck, infinidysk_db::Recheck::None);
+        assert_eq!(fixture.db.evict_patch(repair.id).await.unwrap(), []);
+        fixture.close().await;
+    }
+}

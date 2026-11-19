@@ -161,6 +161,56 @@ impl Drop for Part<'_> {
     }
 }
 
+/// Unlink least recently read files until `room(used)` holds. Reads refresh the
+/// modification time, so the order survives restarts.
+pub(super) fn evict<G>(
+    dir: &File,
+    mut used: u64,
+    room: impl Fn(u64) -> bool,
+    remove: impl Fn(PatchId) -> Result<Option<G>, Error>,
+    cancelled: &impl Fn() -> bool,
+) -> Result<u64, Error> {
+    let mut files = Vec::new();
+    let mut entries = Dir::openat(
+        dir,
+        ".",
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )?;
+    for entry in entries.iter() {
+        let entry = entry?;
+        let Some(id) = entry
+            .file_name()
+            .to_str()
+            .ok()
+            .and_then(|name| name.strip_suffix(".patch"))
+            .and_then(|id| id.parse::<PatchId>().ok())
+        else {
+            continue;
+        };
+        let name = format!("{id}.patch");
+        let metadata = fstatat(dir, name.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW)?;
+        let size =
+            u64::try_from(metadata.st_size).map_err(|_| Error::Integrity("store entry size"))?;
+        files.push(((metadata.st_mtime, metadata.st_mtime_nsec), name, id, size));
+    }
+    files.sort_unstable_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let mut removed = 0;
+    for (_, name, id, size) in files {
+        if room(used) {
+            break;
+        }
+        check(cancelled)?;
+        if let Some(_guard) = remove(id)? {
+            unlinkat(dir, name.as_str(), UnlinkatFlags::NoRemoveDir)?;
+            used = used.saturating_sub(size);
+            removed += 1;
+        }
+    }
+    dir.sync_all()?;
+    Ok(removed)
+}
+
 pub(super) fn write(
     dir: &File,
     patch: &Patch,

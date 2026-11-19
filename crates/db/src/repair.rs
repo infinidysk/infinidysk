@@ -241,6 +241,41 @@ impl Db {
         ).bind(id.0).execute(pool).await?.rows_affected())
             > 0)
     }
+    /// Drop one reference, live or not, so the store can evict its file. Items reading
+    /// its source are checked again; they are returned for the caller's eviction log.
+    pub async fn evict_patch(
+        &self,
+        id: infinidysk_core::PatchId,
+    ) -> Result<Vec<(ItemId, String)>, Error> {
+        let db = self.clone();
+        owned(tokio::spawn(async move { db.drop_patch(id).await })).await
+    }
+
+    async fn drop_patch(
+        &self,
+        id: infinidysk_core::PatchId,
+    ) -> Result<Vec<(ItemId, String)>, Error> {
+        let items: Vec<(Uuid, String)> = on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let nzb: Option<Uuid> = sqlx::query_scalar("DELETE FROM repair_patches WHERE id = $1 RETURNING nzb_blob")
+                .bind(id.0).fetch_optional(&mut *tx).await?;
+            let Some(nzb) = nzb else {
+                tx.rollback().await?;
+                return Ok(Vec::new());
+            };
+            let items = sqlx::query_as("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = 1 WHERE nzb_blob = $1 AND kind <> 1 RETURNING id, path")
+                .bind(nzb).fetch_all(&mut *tx).await?;
+            let committed = tx.commit().await;
+            self.blob_epoch.fetch_add(1, Ordering::Release);
+            committed?;
+            items
+        });
+        Ok(items
+            .into_iter()
+            .map(|(id, path)| (ItemId(id), path))
+            .collect())
+    }
+
     /// Publish recovered proof/layout metadata under the same owner/blob source check.
     pub async fn publish_repair_metadata(
         &self,
