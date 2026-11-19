@@ -1,0 +1,78 @@
+-- SQLite promotes overflowing integer arithmetic to REAL instead of failing it.
+ALTER TABLE blobs ADD COLUMN generation BIGINT NOT NULL DEFAULT 0
+    CHECK (typeof(generation) = 'integer' AND generation >= 0);
+
+-- Physical files are durable before these references commit. Removing the last NZB
+-- owner makes references ineligible; deleting the NZB removes them for later file cleanup.
+CREATE TABLE repair_patches (
+    id BLOB PRIMARY KEY NOT NULL,
+    nzb_blob BLOB NOT NULL REFERENCES blobs (id) ON DELETE CASCADE,
+    generation BIGINT NOT NULL CHECK (generation >= 0),
+    set_id BLOB NOT NULL CHECK (length(set_id) = 16),
+    file_id BLOB NOT NULL CHECK (length(file_id) = 16),
+    start_byte BIGINT NOT NULL CHECK (start_byte >= 0),
+    end_byte BIGINT NOT NULL CHECK (end_byte > start_byte),
+    message_id TEXT,
+    descriptor BLOB NOT NULL CHECK (length(descriptor) BETWEEN 10 AND 8192),
+    backup_payload BLOB CHECK (backup_payload IS NULL OR length(backup_payload) <= 33554432),
+    UNIQUE (nzb_blob, generation, set_id, file_id, start_byte, end_byte),
+    UNIQUE (nzb_blob, generation, message_id)
+);
+CREATE INDEX repair_patches_message ON repair_patches (message_id) WHERE message_id IS NOT NULL;
+
+CREATE TABLE repair_jobs (
+    id BLOB PRIMARY KEY NOT NULL,
+    nzb_blob BLOB REFERENCES blobs(id) ON DELETE CASCADE,
+    item_id BLOB REFERENCES items(id) ON DELETE CASCADE,
+    meta_blob BLOB REFERENCES blobs(id) ON DELETE CASCADE,
+    meta_generation BIGINT,
+    generation BIGINT NOT NULL CHECK (generation >= 0),
+    verify_only BOOLEAN NOT NULL,
+    state SMALLINT NOT NULL DEFAULT 0 CHECK (state BETWEEN 0 AND 6),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    started_at BIGINT,
+    duration_ms BIGINT NOT NULL DEFAULT 0,
+    verified_bytes BIGINT NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    transferred_bytes BIGINT NOT NULL DEFAULT 0,
+    stored_bytes BIGINT NOT NULL DEFAULT 0,
+    scan_at BIGINT,
+    repair_on_failure BOOLEAN NOT NULL DEFAULT FALSE,
+    checked_articles BIGINT NOT NULL DEFAULT 0,
+    total_articles BIGINT NOT NULL DEFAULT 0,
+    completed_requests BIGINT NOT NULL DEFAULT 0 CHECK (completed_requests >= 0),
+    missing_requests BIGINT NOT NULL DEFAULT 0
+        CHECK (missing_requests >= 0 AND missing_requests <= completed_requests),
+    -- Retry counters can reset; claim identities must never repeat.
+    claim_generation BIGINT NOT NULL DEFAULT 0
+        CHECK (typeof(claim_generation) = 'integer' AND claim_generation >= 0),
+    CHECK (CASE WHEN verify_only
+        THEN item_id IS NOT NULL AND meta_blob IS NOT NULL AND meta_generation IS NOT NULL
+        ELSE nzb_blob IS NOT NULL END)
+);
+CREATE UNIQUE INDEX repair_jobs_source ON repair_jobs(nzb_blob, generation) WHERE verify_only = FALSE;
+-- An NZB restored at generation zero must not reuse a check made without it.
+CREATE UNIQUE INDEX repair_jobs_verification
+    ON repair_jobs(item_id, meta_blob, meta_generation, generation, nzb_blob)
+    WHERE verify_only = TRUE AND nzb_blob IS NOT NULL;
+CREATE UNIQUE INDEX repair_jobs_verification_without_nzb
+    ON repair_jobs(item_id, meta_blob, meta_generation, generation)
+    WHERE verify_only = TRUE AND nzb_blob IS NULL;
+CREATE INDEX repair_jobs_due ON repair_jobs(state, next_at);
+CREATE INDEX repair_jobs_lane ON repair_jobs(verify_only, state, next_at);
+CREATE INDEX repair_jobs_updated ON repair_jobs(updated_at DESC, id);
+-- Foreign-key cascades look these up on every blob and item delete.
+CREATE INDEX repair_jobs_nzb ON repair_jobs(nzb_blob) WHERE nzb_blob IS NOT NULL;
+CREATE INDEX repair_jobs_item ON repair_jobs(item_id) WHERE item_id IS NOT NULL;
+CREATE INDEX repair_jobs_meta ON repair_jobs(meta_blob) WHERE meta_blob IS NOT NULL;
+
+-- Temporary importer candidates, never authoritative repaired articles.
+CREATE TABLE legacy_repair_articles (
+    hash TEXT PRIMARY KEY NOT NULL CHECK (length(hash) = 64),
+    message_id TEXT,
+    header BLOB NOT NULL CHECK (length(header) <= 1048576),
+    payload BLOB NOT NULL CHECK (length(payload) BETWEEN 1 AND 33554432),
+    sha256 BLOB NOT NULL CHECK (length(sha256) = 32)
+);

@@ -5,6 +5,7 @@ pub mod blob;
 pub mod crypt;
 pub mod media;
 mod meta;
+pub mod repair;
 pub mod trace;
 pub mod wait;
 
@@ -105,6 +106,10 @@ id!(
 id!(
     /// A queued or finished download; the same id moves from queue to history.
     JobId
+);
+id!(
+    /// One immutable repaired article, distinct from metadata/NZB blobs.
+    PatchId
 );
 
 impl ItemId {

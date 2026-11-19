@@ -1605,7 +1605,9 @@ dependencies = [
  "infinidysk-core",
  "infinidysk-testkit",
  "infinidysk-yenc",
+ "nix",
  "rustls",
+ "sha2 0.11.1",
  "socket2",
  "thiserror 2.0.21",
  "tokio",
@@ -1622,6 +1624,7 @@ version = "0.0.0"
 dependencies = [
  "infinidysk-yenc",
  "md-5",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

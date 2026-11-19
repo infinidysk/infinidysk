@@ -1,6 +1,6 @@
 [package]
 name = "infinidysk-par2"
-description = "PAR2 packet parsing and slice verification"
+description = "PAR2 packet parsing, verification, and incremental repair"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 infinidysk-yenc.workspace = true
 md-5.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
