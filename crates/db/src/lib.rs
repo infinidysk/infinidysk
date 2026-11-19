@@ -2205,8 +2205,7 @@ impl Db {
         let sql = "UPDATE items SET health_state = $2, last_health_check = $3, \
                    next_health_check = $4, repair_attempts = $5, hidden_until = $6, \
                    recheck_requested = CASE WHEN recheck_requested = $7 THEN 0 \
-                   ELSE recheck_requested END, suspect_since = $8, \
-                   arr_replacement_requested = CASE WHEN $2 IN (1, 2) THEN FALSE ELSE arr_replacement_requested END WHERE id = $1";
+                   ELSE recheck_requested END, suspect_since = $8 WHERE id = $1";
         let suspect_since = status
             .suspect_since
             .filter(|_| status.state == HealthState::Suspect);

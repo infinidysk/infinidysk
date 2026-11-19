@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)] // Assertions in shared database test helpers.
 
 use infinidysk_core::{BlobId, ItemId, ItemKind};
-use infinidysk_db::{Db, Item, repair::Owner};
+use infinidysk_db::{Db, Error, Item, repair::Owner, repair_jobs::QUEUE_CAPACITY};
 use sha2::{Digest as _, Sha256};
 
 #[tokio::test]
@@ -14,6 +14,66 @@ async fn manual_checks_overtake_a_scan_without_starving_it_or_waiting_for_repair
 async fn damage_handoff_releases_a_slot_before_queuing_repair_at_capacity() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     handoff_at_capacity(&db).await;
+}
+
+#[tokio::test]
+async fn the_queue_takes_its_last_job_and_refuses_the_next() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    capacity_bounds(&db).await;
+}
+
+async fn capacity_bounds(db: &Db) {
+    for job in db.par2_jobs().await.unwrap() {
+        db.cancel_par2(job.id, 0).await.unwrap();
+    }
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut items = Vec::new();
+    for n in 0..QUEUE_CAPACITY + 2 {
+        let mut item = Item::child(&root, &format!("capacity-{n}.bin"), ItemKind::NzbFile).unwrap();
+        let (meta, nzb) = (BlobId::new(), BlobId::new());
+        item.meta_blob = Some(meta);
+        item.nzb_blob = Some(nzb);
+        db.insert(&[item.clone()], &[(meta, b"meta"), (nzb, b"nzb")])
+            .await
+            .unwrap();
+        items.push(item.id);
+    }
+    let last = usize::try_from(QUEUE_CAPACITY - 1).unwrap();
+    for &item in &items[..last] {
+        db.request_par2_scan(item, 10, 1, true)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let repair = db
+        .request_par2(Owner::Item(items[last]), false, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(db.par2_pending().await.unwrap(), QUEUE_CAPACITY);
+    let full = |r: Result<Option<uuid::Uuid>, Error>| matches!(r, Err(Error::RepairBounds(_)));
+    let next = Owner::Item(items[last + 1]);
+    assert!(full(db.request_par2(next, false, 11).await));
+    assert!(full(db.request_par2(next, true, 11).await));
+    assert!(full(
+        db.request_par2_scan(items[last + 1], 11, 1, true).await
+    ));
+    // A repeated request names the job it already has.
+    assert_eq!(
+        db.request_par2(Owner::Item(items[last]), false, 11)
+            .await
+            .unwrap(),
+        Some(repair)
+    );
+    db.cancel_par2(repair, 12).await.unwrap();
+    let check = db.request_par2(next, true, 13).await.unwrap().unwrap();
+    assert!(matches!(
+        db.restart_par2(repair, 14).await,
+        Err(Error::RepairBounds(_))
+    ));
+    db.cancel_par2(check, 15).await.unwrap();
+    db.restart_par2(repair, 16).await.unwrap();
+    assert_eq!(db.par2_pending().await.unwrap(), QUEUE_CAPACITY);
 }
 
 #[tokio::test]
@@ -87,7 +147,7 @@ async fn handoff_at_capacity(db: &Db) {
     let nzb = BlobId::new();
     let mut items = Vec::new();
     let mut blobs = vec![(nzb, b"nzb".as_slice())];
-    for n in 0..128 {
+    for n in 0..QUEUE_CAPACITY {
         let mut item = Item::child(&root, &format!("handoff-{n}.bin"), ItemKind::NzbFile).unwrap();
         let meta = BlobId::new();
         item.meta_blob = Some(meta);
@@ -99,10 +159,10 @@ async fn handoff_at_capacity(db: &Db) {
     for item in &items {
         db.request_par2_scan(item.id, 10, 1, true).await.unwrap();
     }
-    assert_eq!(db.par2_pending().await.unwrap(), 128);
+    assert_eq!(db.par2_pending().await.unwrap(), QUEUE_CAPACITY);
     let check = db.claim_par2_lane(11, true, true).await.unwrap().unwrap();
     assert!(db.escalate_par2(check.claim(), 12).await.unwrap());
-    assert_eq!(db.par2_pending().await.unwrap(), 128);
+    assert_eq!(db.par2_pending().await.unwrap(), QUEUE_CAPACITY);
     let repair = db.claim_par2_lane(13, false, false).await.unwrap().unwrap();
     assert_eq!(repair.nzb_blob, Some(nzb.0));
     assert_eq!(repair.scan_at, Some(1));
@@ -576,6 +636,7 @@ async fn postgres_requests_obey_the_same_claim_resume_and_cancellation_contract(
     lane_contract(&db).await;
     history_contract(&db).await;
     handoff_at_capacity(&db).await;
+    capacity_bounds(&db).await;
     stale_claims(&db).await;
     verification_restoration(&db).await;
     db.close().await;

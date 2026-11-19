@@ -1,4 +1,3 @@
-ALTER TABLE items ADD COLUMN arr_replacement_requested BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE repair_patches ADD COLUMN backup_payload BLOB CHECK (backup_payload IS NULL OR length(backup_payload) <= 33554432);
 CREATE TABLE repair_jobs (
     id BLOB PRIMARY KEY NOT NULL,

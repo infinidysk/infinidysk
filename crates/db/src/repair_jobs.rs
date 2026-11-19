@@ -8,6 +8,10 @@ use crate::{
     repair::Owner,
 };
 
+/// Pending (queued, running and deferred) jobs, checks and repairs together. A check
+/// that finds damage hands its slot to the repair it queues.
+pub const QUEUE_CAPACITY: i64 = 50;
+
 /// 0 queued, 1 running, 2 verified, 3 repaired, 4 deferred, 5 unavailable, 6 cancelled.
 #[derive(Debug, sqlx::FromRow)]
 pub struct Job {
@@ -286,22 +290,12 @@ impl Db {
             if !state.is_some_and(|s| matches!(s, 2 | 3 | 5 | 6)) { return Ok(()) }
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
-            if count >= 128 { return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { return Err(Error::RepairBounds("pending job count")); }
             sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                 .bind(id).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;
             tx.commit().await?;
             Ok(())
         })
-    }
-    pub async fn request_arr_replacement(&self, id: ItemId) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE items SET arr_replacement_requested = TRUE WHERE id = $1")
-            .bind(id.0).execute(pool).await?.rows_affected());
-        Ok(())
-    }
-
-    pub async fn par2_before_arr(&self, id: ItemId) -> Result<bool, Error> {
-        Ok(on!(self, pool => sqlx::query_scalar("SELECT NOT arr_replacement_requested FROM items WHERE id = $1")
-            .bind(id.0).fetch_optional(pool).await?).unwrap_or(false))
     }
     /// Recheck availability through committed repairs and retry parked imports.
     pub async fn wake_par2(&self, nzb: BlobId, now: i64) -> Result<(), Error> {
@@ -336,7 +330,7 @@ impl Db {
                 "SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = $3")
                 .bind(source.nzb().0).bind(source.generation()).bind(verify).fetch_optional(&mut *tx).await?;
             if let Some(id) = existing { return Ok(Some(id)); }
-            if count >= 128 { return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { return Err(Error::RepairBounds("pending job count")); }
             let id = Uuid::new_v4();
             sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, generation, verify_only, next_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)")
                 .bind(id).bind(source.nzb().0).bind(source.generation()).bind(verify).bind(now)
@@ -454,7 +448,7 @@ impl Db {
                 return Ok(Some(id));
             }
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)").fetch_one(&mut *tx).await?;
-            if count >= 128 { return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { return Err(Error::RepairBounds("pending job count")); }
             let id = Uuid::new_v4();
             sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, next_at, updated_at, scan_at, repair_on_failure) VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $7, $8, $9)")
                 .bind(id).bind(nzb).bind(item.0).bind(meta).bind(meta_generation).bind(generation).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;

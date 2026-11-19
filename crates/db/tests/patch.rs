@@ -1144,7 +1144,6 @@ async fn additive_migration_keeps_existing_files_and_starts_their_generation_at_
         fixture.db.close().await;
         let old_schema = "DROP TABLE repair_jobs;
             DROP TABLE legacy_repair_articles;
-            ALTER TABLE items DROP COLUMN arr_replacement_requested;
             DROP TABLE repair_patches;
             ALTER TABLE blobs DROP COLUMN generation;
             DELETE FROM _sqlx_migrations WHERE version >= 10;";
