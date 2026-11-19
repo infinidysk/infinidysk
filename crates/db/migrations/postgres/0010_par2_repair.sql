@@ -44,7 +44,10 @@ CREATE TABLE repair_jobs (
     missing_requests BIGINT NOT NULL DEFAULT 0
         CHECK (missing_requests >= 0 AND missing_requests <= completed_requests),
     -- Retry counters can reset; claim identities must never repeat.
-    claim_generation BIGINT NOT NULL DEFAULT 0 CHECK (claim_generation >= 0)
+    claim_generation BIGINT NOT NULL DEFAULT 0 CHECK (claim_generation >= 0),
+    CHECK (CASE WHEN verify_only
+        THEN item_id IS NOT NULL AND meta_blob IS NOT NULL AND meta_generation IS NOT NULL
+        ELSE nzb_blob IS NOT NULL END)
 );
 CREATE UNIQUE INDEX repair_jobs_source ON repair_jobs(nzb_blob, generation) WHERE verify_only = FALSE;
 -- An NZB restored at generation zero must not reuse a check made without it.
@@ -57,6 +60,10 @@ CREATE UNIQUE INDEX repair_jobs_verification_without_nzb
 CREATE INDEX repair_jobs_due ON repair_jobs(state, next_at);
 CREATE INDEX repair_jobs_lane ON repair_jobs(verify_only, state, next_at);
 CREATE INDEX repair_jobs_updated ON repair_jobs(updated_at DESC, id);
+-- Foreign-key cascades look these up on every blob and item delete.
+CREATE INDEX repair_jobs_nzb ON repair_jobs(nzb_blob) WHERE nzb_blob IS NOT NULL;
+CREATE INDEX repair_jobs_item ON repair_jobs(item_id) WHERE item_id IS NOT NULL;
+CREATE INDEX repair_jobs_meta ON repair_jobs(meta_blob) WHERE meta_blob IS NOT NULL;
 
 -- Temporary importer candidates, never authoritative repaired articles.
 CREATE TABLE legacy_repair_articles (

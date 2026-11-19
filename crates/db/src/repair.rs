@@ -310,8 +310,8 @@ impl Db {
             .bind(meta.0).bind(data).bind(generation).bind(item.0).bind(source.nzb.0).bind(source.generation)
             .execute(&mut *tx).await?.rows_affected();
             if changed > 0 {
-                sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND state = 1 AND verify_only = TRUE")
-                    .bind(item.0).bind(meta.0).bind(generation).bind(source.generation).execute(&mut *tx).await?;
+                sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob = $5 AND state = 1 AND verify_only = TRUE")
+                    .bind(item.0).bind(meta.0).bind(generation).bind(source.generation).bind(source.nzb.0).execute(&mut *tx).await?;
             }
             let committed = tx.commit().await;
             if changed > 0 {

@@ -492,6 +492,8 @@ async fn verification_restoration(db: &Db) {
         .await
         .unwrap()
         .unwrap();
+    let claimed = db.claim_par2_lane(10, true, false).await.unwrap().unwrap();
+    assert_eq!(claimed.id, old);
     let nzb = BlobId::new();
     db.insert(&[], &[(nzb, b"nzb")]).await.unwrap();
     assert_eq!(
@@ -504,6 +506,30 @@ async fn verification_restoration(db: &Db) {
         .unwrap()
         .unwrap();
     assert_ne!(old, current);
+    let claimed = db.claim_par2_lane(11, true, false).await.unwrap().unwrap();
+    assert_eq!(claimed.id, current);
+    let source = db
+        .repair_source(Owner::Item(item.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        db.publish_repair_metadata(&source, b"new-meta")
+            .await
+            .unwrap()
+    );
+    let jobs = db.par2_jobs().await.unwrap();
+    let generation = |id| {
+        jobs.iter()
+            .find(|job| job.id == id)
+            .unwrap()
+            .meta_generation
+    };
+    assert_eq!(
+        (generation(old), generation(current)),
+        (Some(0), Some(1)),
+        "a check made without the NZB must keep its metadata generation"
+    );
     assert_eq!(
         db.request_par2(Owner::Item(item.id), true, 12)
             .await
