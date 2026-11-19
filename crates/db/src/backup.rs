@@ -203,6 +203,7 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
     } else {
         problems.into_iter().take(MAX_PROBLEMS).collect()
     };
+    // A restore has no live store, so every reference must carry its bytes.
     if schema_version >= 12 && problems.is_empty() {
         let mut after: Option<uuid::Uuid> = None;
         loop {
@@ -214,10 +215,10 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
             }
             let query = sqlx::query_as::<_, SavedRepair>(if after.is_some() {
                 "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload \
-                 FROM repair_patches WHERE backup_payload IS NOT NULL AND id > $1 ORDER BY id LIMIT 1"
+                 FROM repair_patches WHERE id > $1 ORDER BY id LIMIT 1"
             } else {
                 "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload \
-                 FROM repair_patches WHERE backup_payload IS NOT NULL ORDER BY id LIMIT 1"
+                 FROM repair_patches ORDER BY id LIMIT 1"
             });
             let query = if let Some(after) = after {
                 query.bind(after)

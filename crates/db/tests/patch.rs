@@ -1207,3 +1207,39 @@ async fn a_publication_dropped_after_commit_still_invalidates_cached_metadata() 
     .expect("committed metadata must change the epoch");
     fixture.close().await;
 }
+
+#[tokio::test]
+async fn a_backup_must_carry_every_repair_it_references() {
+    use sha2::{Digest as _, Sha256};
+    let fixture = sqlite_fixture().await;
+    let mut repair = patch();
+    repair.sha256 = Sha256::digest(b"abc").into();
+    assert!(
+        fixture
+            .db
+            .publish_patches(&fixture.source().await, slice::from_ref(&repair))
+            .await
+            .unwrap()
+    );
+    let backup =
+        std::env::temp_dir().join(format!("infinidysk-patch-backup-{}.sqlite", ItemId::new()));
+    fixture.db.backup_into(&backup, || false).await.unwrap();
+    let missing = infinidysk_db::check_file(&backup, || false).await.unwrap();
+    let copy = Db::connect(&format!("sqlite:{}", backup.display()))
+        .await
+        .unwrap();
+    copy.set_repair_payload(&repair, Some(b"abc"))
+        .await
+        .unwrap();
+    copy.close().await;
+    let embedded = infinidysk_db::check_file(&backup, || false).await.unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", backup.display()));
+    }
+    fixture.close().await;
+    assert!(
+        missing.failure().is_some(),
+        "a backup without repair bytes was accepted"
+    );
+    assert_eq!(embedded.failure(), None);
+}
