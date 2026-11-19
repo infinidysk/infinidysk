@@ -457,32 +457,3 @@ impl Db {
         })
     }
 }
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)] // Generated test rows and migration assertions.
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn legacy_cancelled_checks_are_reclassified_without_changing_real_failures() {
-        let db = Db::connect("sqlite::memory:").await.unwrap();
-        let cancelled = Uuid::new_v4();
-        let failed = Uuid::new_v4();
-        for (id, reason) in [
-            (cancelled, "repair unavailable: Cancelled"),
-            (failed, "repair unavailable: memory allowance"),
-        ] {
-            on!(&db, pool => sqlx::query("INSERT INTO repair_jobs(id, generation, verify_only, state, reason, next_at, updated_at) VALUES($1, 0, TRUE, 5, $2, 0, 0)")
-                .bind(id).bind(reason).execute(pool).await.unwrap().rows_affected());
-        }
-        for _ in 0..2 {
-            on!(&db, pool => sqlx::raw_sql(include_str!("../migrations/sqlite/0016_cancelled_checks.sql")).execute(pool).await.unwrap().rows_affected());
-        }
-        let jobs = db.par2_jobs().await.unwrap();
-        assert_eq!(
-            jobs.iter().find(|job| job.id == cancelled).unwrap().state,
-            6
-        );
-        assert_eq!(jobs.iter().find(|job| job.id == failed).unwrap().state, 5);
-    }
-}

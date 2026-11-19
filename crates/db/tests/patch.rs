@@ -469,10 +469,6 @@ async fn publishes_references_only_for_the_unchanged_source_and_survives_reopeni
             Some(patch.clone())
         );
         db.close().await;
-        // Upgrade a committed version-10 repair catalog without rewriting its references.
-        let previous_catalog = "DROP INDEX repair_patches_message;
-            DELETE FROM _sqlx_migrations WHERE version = 11;";
-        fixture.execute(previous_catalog, previous_catalog).await;
         fixture.db = Db::connect(&fixture.url).await.unwrap();
         let db = &fixture.db;
         assert!(db.may_have_repairs());

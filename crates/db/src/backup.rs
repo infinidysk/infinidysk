@@ -204,7 +204,7 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
         problems.into_iter().take(MAX_PROBLEMS).collect()
     };
     // A restore has no live store, so every reference must carry its bytes.
-    if schema_version >= 12 && problems.is_empty() {
+    if schema_version >= 10 && problems.is_empty() {
         let mut after: Option<uuid::Uuid> = None;
         loop {
             #[derive(sqlx::FromRow)]
@@ -248,7 +248,7 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
             }
         }
     }
-    if schema_version >= 12 && problems.is_empty() {
+    if schema_version >= 10 && problems.is_empty() {
         let mut after: Option<String> = None;
         loop {
             let query = sqlx::query_as::<_, (String, Option<Vec<u8>>, Vec<u8>)>(
