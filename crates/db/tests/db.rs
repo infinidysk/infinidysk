@@ -1745,3 +1745,51 @@ async fn check_file_names_a_1x_database() {
     assert!(check.incompatible.is_some(), "{check:?}");
     remove_set(&path);
 }
+
+#[tokio::test]
+async fn requested_checks_and_repairs_precede_routine_checks() {
+    let db = Db::connect("sqlite::memory:").await.expect("db");
+    let root = db
+        .item(ItemId::CONTENT)
+        .await
+        .expect("root")
+        .expect("content");
+    let names = [
+        "routine.mkv",
+        "repair.mkv",
+        "hidden.mkv",
+        "requested.mkv",
+        "playback.mkv",
+    ];
+    let mut files = Vec::new();
+    let mut blobs = Vec::new();
+    for name in names {
+        let mut file = Item::child(&root, name, ItemKind::NzbFile).expect("file");
+        let blob = BlobId::new();
+        file.meta_blob = Some(blob);
+        files.push(file);
+        blobs.push((blob, b"metadata".as_slice()));
+    }
+    db.insert(&files, &blobs).await.expect("insert");
+    for (index, state, reason) in [
+        (1, HealthState::Repairing, Recheck::None),
+        (2, HealthState::Hidden, Recheck::None),
+        (3, HealthState::Healthy, Recheck::User),
+        (4, HealthState::Suspect, Recheck::Playback),
+    ] {
+        let status = HealthStatus {
+            state,
+            next_check: Some(if index == 2 { 2 } else { 1 }),
+            ..HealthStatus::default()
+        };
+        db.set_health(files[index].id, &status, Recheck::None)
+            .await
+            .expect("state");
+        db.request_recheck(files[index].id, reason)
+            .await
+            .expect("recheck");
+    }
+    let work = db.due_health_work(10, true, 10).await.expect("work");
+    let actual: Vec<_> = work.into_iter().map(|(item, _)| item.id).collect();
+    assert_eq!(actual, [4, 3, 1, 2, 0].map(|index| files[index].id));
+}

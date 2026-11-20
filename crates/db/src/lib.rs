@@ -2145,8 +2145,8 @@ impl Db {
                 (recheck_requested <> 0 AND health_state NOT IN (4, 5)) \
                 OR (COALESCE(next_health_check, 0) <= $2 \
                     AND (health_state IN (4, 5) OR ($3 AND health_state <> 7)))) \
-             ORDER BY CASE WHEN recheck_requested = 2 THEN 0 WHEN health_state = 0 THEN 1 \
-                WHEN recheck_requested = 1 THEN 2 ELSE 3 END, \
+             ORDER BY CASE WHEN recheck_requested = 2 THEN 0 WHEN recheck_requested = 1 THEN 1 \
+                WHEN health_state IN (4, 5) THEN 2 WHEN health_state = 0 THEN 3 ELSE 4 END, \
                 COALESCE(next_health_check, 0), COALESCE(release_date, created_at) DESC \
              LIMIT $4"
         );
