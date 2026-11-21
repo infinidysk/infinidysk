@@ -15,7 +15,6 @@ infinidysk-arr.workspace = true
 infinidysk-core.workspace = true
 infinidysk-db.workspace = true
 infinidysk-nntp.workspace = true
-infinidysk-par2.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,6 +26,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 axum = { workspace = true, features = ["http1", "json", "query", "tokio"] }
+infinidysk-par2.workspace = true
 infinidysk-queue.workspace = true
 infinidysk-testkit.workspace = true
 jiff.workspace = true
