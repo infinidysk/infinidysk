@@ -267,7 +267,7 @@ impl Store {
             return Err(Error::Integrity("payload checksum"));
         }
         let mut state = self.0.used.lock().map_err(|_| Error::Recovery)?;
-        let used = state.ok_or(Error::Recovery)?;
+        let mut used = state.ok_or(Error::Recovery)?;
         let name = format!("{}.patch", patch.id);
         match open_file(&self.0.dir, &name, nix::fcntl::OFlag::O_RDONLY) {
             Ok(mut existing) => {
@@ -280,6 +280,11 @@ impl Store {
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
+        }
+        // Only linkat publishes, so a `.part` left by an earlier failed write is never a repair.
+        if files::remove_part(&self.0.dir, patch.id)? {
+            *state = scan(&self.0.dir, false).ok();
+            used = state.ok_or(Error::Recovery)?;
         }
         let length = header.len() as u64 + data.len() as u64;
         if length > self.1.saturating_sub(used) {

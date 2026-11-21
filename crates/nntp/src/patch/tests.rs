@@ -139,6 +139,27 @@ fn filesystem_errors_at_every_boundary_never_lose_existing_repairs() {
 }
 
 #[test]
+fn a_part_left_by_a_failed_write_does_not_block_a_retry_on_the_same_store() {
+    let root = root();
+    let path = root.join("repairs");
+    let store = Store::open(&path, 10_000_000).unwrap();
+    let data = bytes();
+    let new = patch(NEW, &data);
+    // As if the failed write could not unlink its part file.
+    fs::write(path.join(format!("{}.part", new.id)), b"stale").unwrap();
+    store
+        .write(&new, &data, || false)
+        .expect("retry replaces the stale part");
+    let used = store.used_bytes().unwrap();
+    drop(store);
+    let reopened = Store::open(&path, 10_000_000).unwrap();
+    assert_eq!(reopened.used_bytes().unwrap(), used);
+    assert_eq!(reopened.read(&new).unwrap().data.as_ref(), data);
+    drop(reopened);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn crash_child() {
     let Ok(path) = std::env::var("INFINIDYSK_PATCH_CRASH_DIR") else {
         return;

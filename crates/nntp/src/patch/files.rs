@@ -211,6 +211,19 @@ pub(super) fn evict<G>(
     Ok(removed)
 }
 
+/// Removes `{id}.part`; false when there was none.
+pub(super) fn remove_part(dir: &File, id: PatchId) -> Result<bool, Error> {
+    match unlinkat(
+        dir,
+        format!("{id}.part").as_str(),
+        UnlinkatFlags::NoRemoveDir,
+    ) {
+        Ok(()) => Ok(true),
+        Err(nix::errno::Errno::ENOENT) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(super) fn write(
     dir: &File,
     patch: &Patch,
