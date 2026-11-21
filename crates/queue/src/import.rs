@@ -987,8 +987,16 @@ async fn read_par2(
             let key = (index.set_id, f.id);
             if let Some(&at) = seen.get(&key) {
                 let previous = &mut files[at];
-                if previous.1 != index.slice_size || previous.2 != f {
+                // A copy without the IFSC packet lacks slices; it does not disagree.
+                let p = &previous.2;
+                let compatible = previous.1 == index.slice_size
+                    && (p.hash, p.hash_16k, p.length, &p.name)
+                        == (f.hash, f.hash_16k, f.length, &f.name)
+                    && (f.slices.is_empty() || p.slices.is_empty() || f.slices == p.slices);
+                if !compatible {
                     previous.0 = None;
+                } else if previous.2.slices.is_empty() {
+                    previous.2.slices = f.slices;
                 }
             } else {
                 seen.insert(key, files.len());

@@ -657,6 +657,13 @@ async fn conflicting_par2_file_descriptions_do_not_authorize_omitted_reads() {
     check_par2_names(2).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_par2_copy_without_slice_checksums_keeps_the_set() {
+    check_par2_names(3).await;
+}
+
+/// `ambiguity`: 0 one index, 1 a second set, 2 a conflicting copy, 3 a copy without
+/// IFSC packets.
 async fn check_par2_names(ambiguity: u8) {
     let data: Vec<u8> = (0..100_000usize)
         .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
@@ -669,6 +676,22 @@ async fn check_par2_names(ambiguity: u8) {
         ("\"x.par2\"", &p, par2.len(), 32 << 10),
     ];
     let mut other = par2.clone();
+    if ambiguity == 3 {
+        let mut kept = Vec::new();
+        let mut at = 0;
+        while at < other.len() {
+            let len = usize::try_from(u64::from_le_bytes(
+                other[at + 8..at + 16].try_into().unwrap(),
+            ))
+            .unwrap();
+            if &other[at + 48..at + 60] != b"PAR 2.0\0IFSC" {
+                kept.extend_from_slice(&other[at..at + len]);
+            }
+            at += len;
+        }
+        assert!(kept.len() < other.len(), "the fixture has IFSC packets");
+        other = kept;
+    }
     // Recompute packet checksums after changing either the set or the full-file hash.
     let mut at = 0;
     while at < other.len() {
@@ -680,7 +703,7 @@ async fn check_par2_names(ambiguity: u8) {
         assert!(len <= 16_384);
         if ambiguity == 1 {
             packet[32..48].fill(9);
-        } else if &packet[48..64] == b"PAR 2.0\0FileDesc" {
+        } else if ambiguity == 2 && &packet[48..64] == b"PAR 2.0\0FileDesc" {
             packet[80] ^= 1;
         }
         let hash = infinidysk_par2::hash_16k(&packet[32..]);
@@ -707,15 +730,17 @@ async fn check_par2_names(ambiguity: u8) {
     };
     let proof = f.proof.expect("PAR2 proof");
     assert_eq!(proof.file_length, 100_000);
+    let held = matches!(ambiguity, 0 | 3);
     assert_eq!(
         proof.set_id,
-        if ambiguity != 0 {
-            None
-        } else {
+        if held {
             infinidysk_par2::read(&par2).set_id
+        } else {
+            None
         }
     );
-    assert_eq!(proof.set_id.is_some(), ambiguity == 0);
+    assert_eq!(proof.set_id.is_some(), held);
+    assert!(!held || !proof.slice_md5.is_empty(), "slice checksums kept");
 }
 
 /// Fixtures: `par2 create -c0 -s4096 one.par2 one.bin` and `-s8192 two.par2 two.bin`.
