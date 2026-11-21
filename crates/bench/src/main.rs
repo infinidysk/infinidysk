@@ -197,6 +197,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .any(|scenario| scenario.name.contains(&filter))
             && !SEEK_SCENARIO.contains(&filter))
     {
+        if trace {
+            return Err("--trace is not supported by the PAR2 scenarios".into());
+        }
         return repair_bench::run(&filter, json_path.as_deref(), &server_rt, &client_rt);
     }
 
