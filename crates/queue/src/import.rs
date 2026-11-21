@@ -724,13 +724,11 @@ pub async fn import(
     }
     let outputs = filter(outputs, job);
     let required = rules.owners.get(&category.to_lowercase());
-    let usable = if outputs.is_empty() {
-        Err(Error::Unrepairable("No importable files found.".to_owned()))
-    } else {
-        require(&outputs, required.map_or(&[], Vec::as_slice))
-    };
-    // A dropped file may have been the wanted media under an obfuscated name.
-    usable.map_err(|error| dropped_missing.unwrap_or(error))?;
+    require(
+        &outputs,
+        required.map_or(&[], Vec::as_slice),
+        dropped_missing,
+    )?;
     let outputs = name(outputs, release, usize::MAX).await;
     let outputs = check_articles(job, outputs, rules.check_percent).await?;
     let check_at = started.elapsed();
@@ -2192,7 +2190,9 @@ fn filter(outputs: Vec<Output>, job: &Job) -> Vec<Output> {
 
 /// Fails unless some file is of a kind the category's Arr imports; no kinds means any.
 /// Video Arrs cannot import full Blu-ray or DVD discs: they pick a stream, often an extra.
-fn require(outputs: &[Output], kinds: &[media::Kind]) -> Result<(), Error> {
+/// Otherwise a `dropped` missing file stands in for the failure: it may have been the
+/// wanted media under an obfuscated name.
+fn require(outputs: &[Output], kinds: &[media::Kind], dropped: Option<Error>) -> Result<(), Error> {
     let disc = |o: &Output| {
         o.path.split_last().is_some_and(|(_, dirs)| {
             dirs.iter()
@@ -2204,6 +2204,11 @@ fn require(outputs: &[Output], kinds: &[media::Kind]) -> Result<(), Error> {
             "Full disc releases are not supported.".to_owned(),
         ));
     }
+    if outputs.is_empty() {
+        return Err(
+            dropped.unwrap_or_else(|| Error::Unrepairable("No importable files found.".to_owned()))
+        );
+    }
     if kinds.is_empty()
         || outputs
             .iter()
@@ -2211,6 +2216,9 @@ fn require(outputs: &[Output], kinds: &[media::Kind]) -> Result<(), Error> {
             .any(|n| kinds.iter().any(|&k| media::fits(n, k)))
     {
         return Ok(());
+    }
+    if let Some(error) = dropped {
+        return Err(error);
     }
     let wanted: Vec<&str> = [
         (media::Kind::Video, "video"),
@@ -2656,13 +2664,50 @@ mod tests {
             }),
             origin: POSTED,
         }];
-        assert!(require(&disc, &[media::Kind::Video]).is_err());
-        assert!(require(&disc, &[]).is_ok(), "unowned categories keep it");
+        assert!(require(&disc, &[media::Kind::Video], None).is_err());
+        assert!(
+            require(&disc, &[], None).is_ok(),
+            "unowned categories keep it"
+        );
         let audiobook = [Output {
             path: ["Release", "book.mp4"].map(str::to_owned).to_vec(),
             ..disc[0].clone()
         }];
-        assert!(require(&audiobook, &[media::Kind::Audio]).is_ok());
+        assert!(require(&audiobook, &[media::Kind::Audio], None).is_ok());
+    }
+
+    #[test]
+    fn a_dropped_file_never_overrides_a_full_disc_rejection() {
+        let dropped = || Some(Error::Missing("Release.nfo".to_owned()));
+        let disc = [Output {
+            path: ["Release", "BDMV", "STREAM", "00086.m2ts"]
+                .map(str::to_owned)
+                .to_vec(),
+            meta: FileMeta::Multipart(MultipartFile {
+                parts: Vec::new(),
+                crypt: None,
+            }),
+            origin: POSTED,
+        }];
+        assert!(matches!(
+            require(&disc, &[media::Kind::Video], dropped()),
+            Err(Error::Unrepairable(_))
+        ));
+        let sidecar = [Output {
+            path: ["Release", "Release.srt"].map(str::to_owned).to_vec(),
+            ..disc[0].clone()
+        }];
+        assert!(
+            matches!(
+                require(&sidecar, &[media::Kind::Video], dropped()),
+                Err(Error::Missing(_))
+            ),
+            "the dropped file may be the obfuscated media"
+        );
+        assert!(matches!(
+            require(&[], &[], dropped()),
+            Err(Error::Missing(_))
+        ));
     }
 
     #[tokio::test]
