@@ -74,6 +74,9 @@ async fn read_parity(
         }
         let mut parity = name.contains(".par2");
         let mut classified = false;
+        // The set this file's packets belong to; another set's metadata must not
+        // end its read or stand in for its index.
+        let mut own: Option<Id> = None;
         for segment in &file.segments {
             if classified && !parity {
                 break;
@@ -93,6 +96,9 @@ async fn read_parity(
             };
             classified = true;
             parity |= body.data.starts_with(b"PAR2\0PKT");
+            if own.is_none() && body.data.starts_with(b"PAR2\0PKT") {
+                own = body.data.get(32..48).and_then(|id| id.try_into().ok());
+            }
             if parity {
                 // Vec capacity growth and scanner packet records have separate headroom.
                 budget.metadata(
@@ -108,27 +114,23 @@ async fn read_parity(
                     if reader.recovery_slices(set, size)?.len() >= count + 2 {
                         return Ok(reader);
                     }
-                } else if reader.reached_recovery() && complete_metadata(&reader) {
+                } else if reader.reached_recovery()
+                    && own.is_some_and(|set| reader.repair_set(set).is_ok())
+                {
                     break;
                 }
             }
         }
         if recovery.is_none()
-            && parity
             && volume_stem(&name).is_none()
             && let Some(stem) = name.strip_suffix(".par2")
-            && complete_metadata(&reader)
+            && own.is_some_and(|set| reader.repair_set(set).is_ok())
         {
             indexes.insert(stem.to_owned());
         }
         reader.end_volume();
     }
     Ok(reader)
-}
-
-fn complete_metadata(reader: &infinidysk_par2::Reader) -> bool {
-    let sets = reader.sets();
-    !sets.is_empty() && sets.into_iter().all(|set| reader.repair_set(set).is_ok())
 }
 
 use std::collections::HashSet;

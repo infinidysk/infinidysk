@@ -360,6 +360,42 @@ async fn discovery_uses_the_index_before_downloading_recovery_volumes() {
 }
 
 #[tokio::test]
+async fn one_complete_index_does_not_skip_another_sets_volumes() {
+    let odd = post(
+        "odd",
+        "odd.par2",
+        include_bytes!("../../par2/tests/fixtures/odd.par2"),
+        7000,
+    );
+    let index = post("index", "set.par2", INDEX, 7000);
+    let volume = post(
+        "volume",
+        "set.vol0+3.par2",
+        include_bytes!("../../par2/tests/fixtures/set.vol0+3.par2"),
+        2000,
+    );
+    let nzb = document(&[
+        ("set.vol0+3.par2", &volume),
+        ("set.par2", &index),
+        ("odd.par2", &odd),
+    ]);
+    // The `set` index is gone; only its recovery volume survives.
+    let server = LoopbackServer::start(odd.into_iter().chain(volume))
+        .await
+        .unwrap();
+    let (reader, _, _) = infinidysk_queue::repair::discover(
+        &client(&server),
+        &nzb,
+        limits(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let set = infinidysk_par2::read(INDEX).set_id.unwrap();
+    assert!(reader.sets().contains(&set), "the volume was read");
+}
+
+#[tokio::test]
 async fn discovery_keeps_reading_metadata_after_a_recovery_packet() {
     let packets = |mut bytes: &[u8]| {
         let mut output = Vec::new();
