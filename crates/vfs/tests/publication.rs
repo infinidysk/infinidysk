@@ -163,15 +163,34 @@ async fn cancelled_admission_releases_partial_writers_and_pending_opens() {
                 .unwrap(),
         );
     }
-    let reader = vfs.read_fence(items[1].id).read().await.unwrap();
+    // Writers are taken in item order; hold the last so the first is acquired.
+    let (first, last) = if items[0].id < items[1].id {
+        (items[0].clone(), items[1].clone())
+    } else {
+        (items[1].clone(), items[0].clone())
+    };
+    let reader = vfs.read_fence(last.id).read().await.unwrap();
     let publication = vfs.begin_publication(nzb, &[patch]).unwrap();
+    let mut writers = Box::pin(publication.writers());
     assert!(
-        tokio::time::timeout(Duration::from_millis(15), publication.writers())
+        tokio::time::timeout(Duration::from_millis(15), &mut writers)
             .await
             .is_err()
     );
-    drop(vfs.read_fence(items[0].id).read().await.unwrap());
-    let node = Node::Item(items[0].clone());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(15), vfs.read_fence(first.id).read())
+            .await
+            .is_err(),
+        "the first writer is held"
+    );
+    drop(writers);
+    drop(
+        tokio::time::timeout(Duration::from_secs(1), vfs.read_fence(first.id).read())
+            .await
+            .expect("cancelling admission releases the partial writer")
+            .unwrap(),
+    );
+    let node = Node::Item(first);
     let mut opening = Box::pin(vfs.open(&node, origin()));
     assert!(
         tokio::time::timeout(Duration::from_millis(15), &mut opening)
