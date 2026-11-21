@@ -374,6 +374,9 @@ impl ReadVersion {
         let scope = Scope::new(nzb, meta);
         let waiting = {
             let entries = registry.lock().unwrap_or_else(PoisonError::into_inner);
+            if !self.is_current() {
+                return false;
+            }
             if let Some(active) = &entries.active
                 && active.effects.affects(&scope)
                 && !active.items.contains(&self.fence.item())

@@ -38,7 +38,7 @@ pub(crate) struct Opened {
 impl Opened {
     fn build(
         &self,
-        meta: &FileMeta,
+        meta: &Arc<FileMeta>,
         source: Option<(BlobId, i64)>,
         version: &ReadVersion,
     ) -> Result<Reader, Error> {
@@ -52,10 +52,10 @@ impl Opened {
             }) as Report
         });
         let access: Access = {
-            let version = version.clone();
+            let scope = Arc::new((version.clone(), Arc::clone(meta)));
             Arc::new(move |id| {
-                let version = version.clone();
-                Box::pin(async move { version.access(id).await })
+                let scope = Arc::clone(&scope);
+                Box::pin(async move { scope.0.access(id).await })
             })
         };
         let reader = Reader::new(
@@ -83,7 +83,7 @@ impl Opened {
 
     pub(crate) fn reader(
         self,
-        meta: &FileMeta,
+        meta: &Arc<FileMeta>,
         source: Option<(BlobId, i64)>,
         version: ReadVersion,
     ) -> Result<Reader, Error> {
@@ -136,6 +136,9 @@ impl Opened {
                             return Err(Error::Corrupt("open file size changed"));
                         }
                         if !version.track(item.nzb_blob, &meta).await {
+                            if !version.is_current() {
+                                return Err(Error::Corrupt("file revision changed during reload"));
+                            }
                             continue;
                         }
                         return opened.build(&meta, fresh_source, &version);

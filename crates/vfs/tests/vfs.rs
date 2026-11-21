@@ -307,6 +307,30 @@ async fn serves_content_links_ids_and_queued_nzbs() {
         .await
         .unwrap();
     assert!(analyzed_again == plain, "cached analysis bytes");
+    {
+        let mut handle = vfs.open(&node, origin()).await.unwrap().unwrap();
+        let mut byte = [0];
+        handle.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, plain[..1]);
+        let fence = vfs.read_fence(a.id);
+        let mut writer = fence.write().await;
+        writer.block();
+        drop(writer);
+        assert_eq!(
+            handle.read(&mut byte).await.unwrap_err().to_string(),
+            "repair publication needs reconciliation"
+        );
+        fence
+            .write()
+            .await
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
+        handle.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, plain[1..2]);
+    }
     assert_eq!(
         server.body_commands(),
         fetched,
