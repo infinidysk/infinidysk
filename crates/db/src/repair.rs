@@ -195,7 +195,7 @@ impl Db {
     }
 
     pub async fn recheck_missing_repairs(&self) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE nzb_blob IN (SELECT nzb_blob FROM repair_patches)")
+        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE health_state <> 7 AND nzb_blob IN (SELECT nzb_blob FROM repair_patches)")
             .execute(pool).await?.rows_affected());
         Ok(())
     }
@@ -204,9 +204,10 @@ impl Db {
         &self,
         after: Option<infinidysk_core::PatchId>,
     ) -> Result<Vec<Patch>, Error> {
-        let rows: Vec<Row> = on!(self, pool => sqlx::query_as(concat!(columns!(),
-            " FROM repair_patches p WHERE p.id > $1 OR $1 IS NULL ORDER BY p.id LIMIT 64"))
-            .bind(after.map(|id| id.0)).fetch_all(pool).await?);
+        let rows: Vec<Row> = on!(self, pool => match after {
+            Some(id) => sqlx::query_as(concat!(columns!(), " FROM repair_patches p WHERE p.id > $1 ORDER BY p.id LIMIT 64")).bind(id.0).fetch_all(pool).await?,
+            None => sqlx::query_as(concat!(columns!(), " FROM repair_patches p ORDER BY p.id LIMIT 64")).fetch_all(pool).await?,
+        });
         rows.iter().map(decode).collect()
     }
 
@@ -269,7 +270,7 @@ impl Db {
                 tx.rollback().await?;
                 return Ok(Vec::new());
             };
-            let items = sqlx::query_as("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE nzb_blob = $1 AND kind <> 1 RETURNING id, path")
+            let items = sqlx::query_as("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE nzb_blob = $1 AND kind <> 1 AND health_state <> 7 RETURNING id, path")
                 .bind(nzb).fetch_all(&mut *tx).await?;
             let committed = tx.commit().await;
             self.blob_epoch.fetch_add(1, Ordering::Release);
@@ -324,9 +325,13 @@ impl Db {
             .bind(meta.0).bind(data).bind(generation).bind(item.0).bind(source.nzb.0).bind(source.generation)
             .execute(&mut *tx).await?.rows_affected();
             if changed > 0 && let Some(check) = check {
-                sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE id = $6 AND claim_generation = $7 AND item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob = $5 AND state = 1 AND verify_only = TRUE")
+                let matched = sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE id = $6 AND claim_generation = $7 AND item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob = $5 AND state = 1 AND verify_only = TRUE")
                     .bind(item.0).bind(meta.0).bind(generation).bind(source.generation).bind(source.nzb.0)
-                    .bind(check.id).bind(check.generation).execute(&mut *tx).await?;
+                    .bind(check.id).bind(check.generation).execute(&mut *tx).await?.rows_affected();
+                if matched == 0 {
+                    tx.rollback().await?;
+                    return Ok(false);
+                }
             }
             let committed = tx.commit().await;
             if changed > 0 {
@@ -432,18 +437,25 @@ impl Db {
         Ok(on!(self, pool => capture!(pool, owner)))
     }
 
-    /// Publish one bounded batch atomically. The caller must hold durability receipts
-    /// for every descriptor and must have verified the reconstructed source bytes first.
+    /// Publish one bounded batch atomically. Transfer write admission and all durability
+    /// receipts in `guard` after verifying the reconstructed source bytes.
     /// False means the source changed or disappeared. Errors never publish a partial batch.
     /// An uncertain commit may have succeeded. Retry the same IDs; retain files until
     /// reference reconciliation proves they can be removed.
-    pub async fn publish_patches(&self, source: &Source, patches: &[Patch]) -> Result<bool, Error> {
+    pub async fn publish_patches(
+        &self,
+        guard: impl Send + 'static,
+        source: &Source,
+        patches: &[Patch],
+    ) -> Result<bool, Error> {
         if patches.is_empty() || patches.len() > MAX_PATCHES {
             return Err(Error::RepairBounds("batch size"));
         }
         let (db, source, patches) = (self.clone(), source.clone(), patches.to_vec());
         owned(tokio::spawn(async move {
-            db.write_patches(&source, &patches).await
+            let result = db.write_patches(&source, &patches).await;
+            drop(guard);
+            result
         }))
         .await
     }
@@ -462,9 +474,10 @@ impl Db {
         on!(self, pool => {
             // Never return a connection with a changed durability setting to the pool,
             // including when this future is cancelled before COMMIT.
-            let mut conn = pool.acquire().await?.detach();
+            let mut conn = pool.acquire().await?;
             if !postgres {
-                sqlx::query("PRAGMA synchronous = FULL").execute(&mut conn).await?;
+                conn.close_on_drop();
+                sqlx::query("PRAGMA synchronous = FULL").execute(&mut *conn).await?;
             }
             let mut tx = conn.begin_with(self.begin_write()).await?;
             if postgres {

@@ -94,6 +94,10 @@ impl Db {
         let _serial = self.searches.lock().await;
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
+            if matches!(self.pool, Pool::Postgres(_)) {
+                sqlx::query("SELECT id FROM blobs WHERE id = (SELECT nzb_blob FROM repair_jobs WHERE id = $1) FOR UPDATE")
+                    .bind(claim.id).execute(&mut *tx).await?;
+            }
             let source: Option<(Uuid, i64, Option<i64>)> = sqlx::query_as(
                 "UPDATE repair_jobs SET state = 5, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $3 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) RETURNING nzb_blob, generation, scan_at")
                 .bind(claim.id).bind(now).bind(claim.generation).fetch_optional(&mut *tx).await?;
@@ -141,7 +145,7 @@ impl Db {
             "UPDATE repair_jobs SET state = 1, claim_generation = claim_generation + 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
             "(SELECT id FROM repair_jobs WHERE state IN (0, 4) AND next_at <= $1 AND verify_only = $2 ",
             "ORDER BY CASE WHEN (scan_at IS NOT NULL) = $3 THEN 0 ELSE 1 END, next_at, id LIMIT 1) ",
-            "AND state IN (0, 4) RETURNING ", columns!()))
+            "AND state IN (0, 4) AND next_at <= $1 RETURNING ", columns!()))
             .bind(now).bind(verify).bind(prefer_scan).fetch_optional(pool).await?))
     }
 
@@ -287,10 +291,10 @@ impl Db {
                 tx.commit().await?;
                 return Ok(());
             }
-            if !state.is_some_and(|s| matches!(s, 2 | 3 | 5 | 6)) { return Ok(()) }
+            if !state.is_some_and(|s| matches!(s, 2 | 3 | 5 | 6)) { tx.rollback().await?; return Ok(()) }
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
-            if count >= QUEUE_CAPACITY { return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairBounds("pending job count")); }
             sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                 .bind(id).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;
             tx.commit().await?;
@@ -348,8 +352,8 @@ impl Db {
             let existing: Option<Uuid> = sqlx::query_scalar(
                 "SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = $3")
                 .bind(source.nzb().0).bind(source.generation()).bind(verify).fetch_optional(&mut *tx).await?;
-            if let Some(id) = existing { return Ok(Some(id)); }
-            if count >= QUEUE_CAPACITY { return Err(Error::RepairBounds("pending job count")); }
+            if let Some(id) = existing { tx.rollback().await?; return Ok(Some(id)); }
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairBounds("pending job count")); }
             let id = Uuid::new_v4();
             sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, generation, verify_only, next_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)")
                 .bind(id).bind(source.nzb().0).bind(source.generation()).bind(verify).bind(now)
@@ -364,7 +368,7 @@ impl Db {
         Ok(on!(self, pool => sqlx::query_as(concat!(
             "UPDATE repair_jobs SET state = 1, claim_generation = claim_generation + 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
             "(SELECT id FROM repair_jobs WHERE state IN (0, 4) AND next_at <= $1 ORDER BY next_at, id LIMIT 1) ",
-            "AND state IN (0, 4) RETURNING ", columns!()))
+            "AND state IN (0, 4) AND next_at <= $1 RETURNING ", columns!()))
             .bind(now).fetch_optional(pool).await?))
     }
 
@@ -395,7 +399,7 @@ impl Db {
         }
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
-            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND state IN (1, 6) RETURNING state, nzb_blob")
+            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL)) RETURNING state, nzb_blob")
                 .bind(claim.id).bind(state).bind(reason).bind(transferred).bind(stored).bind(now).bind(retry.unwrap_or(now))
                 .bind(claim.generation).fetch_optional(&mut *tx).await?;
             if let Some((state, Some(source))) = result && state != 4 { release_nzb!(self, tx, source); }
@@ -450,10 +454,15 @@ impl Db {
         let _serial = self.searches.lock().await;
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
+            if matches!(self.pool, Pool::Postgres(_)) {
+                sqlx::query("SELECT id FROM items WHERE id = $1 FOR UPDATE").bind(item.0).execute(&mut *tx).await?;
+                sqlx::query("SELECT id FROM blobs WHERE id IN (SELECT meta_blob FROM items WHERE id = $1 UNION ALL SELECT nzb_blob FROM items WHERE id = $1) ORDER BY id FOR UPDATE")
+                    .bind(item.0).execute(&mut *tx).await?;
+            }
             let source: Option<(Uuid, i64, Option<Uuid>, Option<i64>)> = sqlx::query_as(
                 "SELECT m.id, m.generation, b.id, b.generation FROM items i JOIN blobs m ON m.id = i.meta_blob LEFT JOIN blobs b ON b.id = i.nzb_blob WHERE i.id = $1 AND i.kind <> 1")
                 .bind(item.0).fetch_optional(&mut *tx).await?;
-            let Some((meta, meta_generation, nzb, generation)) = source else { return Ok(None) };
+            let Some((meta, meta_generation, nzb, generation)) = source else { tx.rollback().await?; return Ok(None) };
             let generation = generation.unwrap_or(0);
             let query = sqlx::query_scalar::<_, Uuid>(if nzb.is_some() {
                 "SELECT id FROM repair_jobs WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob = $5 AND verify_only = TRUE"
@@ -467,7 +476,7 @@ impl Db {
                 return Ok(Some(id));
             }
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)").fetch_one(&mut *tx).await?;
-            if count >= QUEUE_CAPACITY { return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairBounds("pending job count")); }
             let id = Uuid::new_v4();
             sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, next_at, updated_at, scan_at, repair_on_failure) VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $7, $8, $9)")
                 .bind(id).bind(nzb).bind(item.0).bind(meta).bind(meta_generation).bind(generation).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;

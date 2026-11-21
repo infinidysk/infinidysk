@@ -414,9 +414,22 @@ async fn durable_requests(db: &mut Db, url: &str) {
         .unwrap()
         .unwrap()
         .duration_ms;
-    db.finish_par2(restarted.claim(), 3, "late completion", 200, 50, 19, None)
+    db.finish_par2(restarted.claim(), 3, "late completion", 999, 99, 19, None)
         .await
         .unwrap();
+    let final_job = db
+        .par2_result(Owner::Item(item.id), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            final_job.transferred_bytes,
+            final_job.stored_bytes,
+            final_job.updated_at
+        ),
+        (200, 50, 18)
+    );
     assert_eq!(
         db.par2_result(Owner::Item(item.id), false)
             .await
@@ -503,6 +516,7 @@ async fn verification_restoration(db: &Db) {
         .unwrap();
     let claimed = db.claim_par2_lane(10, true, false).await.unwrap().unwrap();
     assert_eq!(claimed.id, old);
+    let old_claim = claimed.claim();
     let nzb = BlobId::new();
     db.insert(&[], &[(nzb, b"nzb")]).await.unwrap();
     assert_eq!(
@@ -522,6 +536,13 @@ async fn verification_restoration(db: &Db) {
         .await
         .unwrap()
         .unwrap();
+    let epoch = db.blob_epoch();
+    assert!(
+        !db.publish_repair_metadata(&source, b"stale", Some(old_claim))
+            .await
+            .unwrap()
+    );
+    assert_eq!(db.blob_epoch(), epoch);
     assert!(
         db.publish_repair_metadata(&source, b"new-meta", Some(claimed.claim()))
             .await
@@ -777,7 +798,9 @@ async fn library_scan_pages_surviving_files_by_id_with_a_fixed_boundary() {
 
 #[tokio::test]
 async fn legacy_candidates_are_durable_and_not_visible_as_committed_repairs() {
-    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let path = std::env::temp_dir().join(format!("infinidysk-legacy-{}.sqlite", ItemId::new()));
+    let url = format!("sqlite:{}", path.display());
+    let db = Db::connect(&url).await.unwrap();
     db.stage_legacy_repair(
         &"A".repeat(64),
         b"header",
@@ -787,7 +810,11 @@ async fn legacy_candidates_are_durable_and_not_visible_as_committed_repairs() {
     )
     .await
     .unwrap();
+    db.close().await;
+    let db = Db::connect(&url).await.unwrap();
     let saved = db.legacy_repair(&"A".repeat(64)).await.unwrap().unwrap();
     assert_eq!(saved.1, b"candidate");
-    assert_eq!(db.article_repairs("candidate@loopback").await.unwrap(), []);
+    assert_eq!(db.repair_files(None).await.unwrap(), []);
+    db.close().await;
+    std::fs::remove_file(path).unwrap();
 }

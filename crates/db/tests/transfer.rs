@@ -182,7 +182,7 @@ async fn seed(s: &Sqlite) -> Seeded {
         sha256: [3; 32],
     };
     assert!(
-        db.publish_patches(&source, &[patch])
+        db.publish_patches((), &source, &[patch])
             .await
             .expect("publish")
     );

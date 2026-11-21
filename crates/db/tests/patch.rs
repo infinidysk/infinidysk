@@ -177,7 +177,7 @@ async fn legacy_retirement_requires_the_whole_candidate_range() {
             partial.source.total = Some(3);
             fixture
                 .db
-                .publish_patches(&fixture.source().await, &[partial])
+                .publish_patches((), &fixture.source().await, &[partial])
                 .await
                 .unwrap();
             assert_eq!(
@@ -196,7 +196,7 @@ async fn legacy_retirement_requires_the_whole_candidate_range() {
                 .await;
             fixture
                 .db
-                .publish_patches(&fixture.source().await, &[patch()])
+                .publish_patches((), &fixture.source().await, &[patch()])
                 .await
                 .unwrap();
             assert_eq!(
@@ -237,7 +237,7 @@ async fn backup_inspection_rejects_catalog_mismatches_even_with_valid_payloads()
         patch.sha256 = Sha256::digest(b"abc").into();
         fixture
             .db
-            .publish_patches(&fixture.source().await, slice::from_ref(&patch))
+            .publish_patches((), &fixture.source().await, slice::from_ref(&patch))
             .await
             .unwrap();
         fixture
@@ -283,7 +283,7 @@ async fn omitted_reads_require_the_exact_owned_nzb_generation_set_file_and_range
         patch.source.message_id = None;
         fixture
             .db
-            .publish_patches(&source, slice::from_ref(&patch))
+            .publish_patches((), &source, slice::from_ref(&patch))
             .await
             .unwrap();
         let key = Omitted {
@@ -354,7 +354,21 @@ async fn omitted_reads_require_the_exact_owned_nzb_generation_set_file_and_range
             .await
             .unwrap();
         assert!(fixture.db.omitted_patch(&key).await.unwrap().is_none());
+        let key = Omitted {
+            generation: 1,
+            ..key
+        };
+        patch.id = PatchId::new();
+        assert!(
+            fixture
+                .db
+                .publish_patches((), &fixture.source().await, slice::from_ref(&patch))
+                .await
+                .unwrap()
+        );
+        assert_eq!(fixture.db.omitted_patch(&key).await.unwrap(), Some(patch));
         fixture.db.delete_item(fixture.file.id).await.unwrap();
+        assert!(fixture.db.blob(fixture.nzb).await.unwrap().is_some());
         assert!(
             fixture
                 .db
@@ -408,7 +422,7 @@ async fn publication_invalidates_after_commit_attempt_including_commit_errors() 
                     if metadata {
                         db.publish_repair_metadata(&source, b"new-meta", None).await
                     } else {
-                        db.publish_patches(&source, &[patch()]).await
+                        db.publish_patches((), &source, &[patch()]).await
                     }
                 });
                 tokio::time::timeout(Duration::from_secs(10), async {
@@ -455,7 +469,7 @@ async fn publishes_references_only_for_the_unchanged_source_and_survives_reopeni
                 .is_none()
         );
         assert!(
-            db.publish_patches(&source, slice::from_ref(&patch))
+            db.publish_patches((), &source, slice::from_ref(&patch))
                 .await
                 .unwrap()
         );
@@ -479,7 +493,7 @@ async fn publishes_references_only_for_the_unchanged_source_and_survives_reopeni
         db.update_blob(fixture.nzb, b"replacement NZB")
             .await
             .unwrap();
-        assert!(!db.publish_patches(&source, &[patch]).await.unwrap());
+        assert!(!db.publish_patches((), &source, &[patch]).await.unwrap());
         assert_eq!(
             db.article_repairs("patch@loopback").await.unwrap(),
             [] as [Patch; 0]
@@ -502,7 +516,7 @@ async fn metadata_and_nzb_aba_changes_reject_stale_publication() {
         assert!(
             fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&first))
+                .publish_patches((), &source, slice::from_ref(&first))
                 .await
                 .unwrap()
         );
@@ -515,7 +529,7 @@ async fn metadata_and_nzb_aba_changes_reject_stale_publication() {
         assert!(
             !fixture
                 .db
-                .publish_patches(&source, &[patch()])
+                .publish_patches((), &source, &[patch()])
                 .await
                 .unwrap()
         );
@@ -538,7 +552,7 @@ async fn metadata_and_nzb_aba_changes_reject_stale_publication() {
         assert!(
             !fixture
                 .db
-                .publish_patches(&refreshed, &[patch()])
+                .publish_patches((), &refreshed, &[patch()])
                 .await
                 .unwrap()
         );
@@ -555,7 +569,7 @@ async fn metadata_and_nzb_aba_changes_reject_stale_publication() {
         assert!(
             fixture
                 .db
-                .publish_patches(&refreshed, slice::from_ref(&fresh))
+                .publish_patches((), &refreshed, slice::from_ref(&fresh))
                 .await
                 .unwrap()
         );
@@ -587,14 +601,14 @@ async fn idempotent_batches_reject_conflicting_ids_articles_and_overlapping_rang
         assert!(
             fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&first))
+                .publish_patches((), &source, slice::from_ref(&first))
                 .await
                 .unwrap()
         );
         assert!(
             fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&first))
+                .publish_patches((), &source, slice::from_ref(&first))
                 .await
                 .unwrap()
         );
@@ -603,7 +617,7 @@ async fn idempotent_batches_reject_conflicting_ids_articles_and_overlapping_rang
         assert!(matches!(
             fixture
                 .db
-                .publish_patches(&source, &[second, conflict])
+                .publish_patches((), &source, &[second, conflict])
                 .await,
             Err(Error::RepairConflict)
         ));
@@ -619,7 +633,7 @@ async fn idempotent_batches_reject_conflicting_ids_articles_and_overlapping_rang
         let mut conflict = range_patch(10, 20);
         conflict.id = first.id;
         assert!(matches!(
-            fixture.db.publish_patches(&source, &[conflict]).await,
+            fixture.db.publish_patches((), &source, &[conflict]).await,
             Err(Error::RepairConflict)
         ));
         let mut identified = range_patch(10, 20);
@@ -628,7 +642,7 @@ async fn idempotent_batches_reject_conflicting_ids_articles_and_overlapping_rang
         assert!(
             fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&identified))
+                .publish_patches((), &source, slice::from_ref(&identified))
                 .await
                 .unwrap()
         );
@@ -636,7 +650,7 @@ async fn idempotent_batches_reject_conflicting_ids_articles_and_overlapping_rang
         duplicate.id = PatchId::new();
         duplicate.source.file = [4; 16];
         assert!(matches!(
-            fixture.db.publish_patches(&source, &[duplicate]).await,
+            fixture.db.publish_patches((), &source, &[duplicate]).await,
             Err(Error::RepairConflict)
         ));
         assert_eq!(
@@ -683,7 +697,7 @@ async fn shared_references_survive_one_owner_but_disappear_with_the_last_owner()
         assert!(
             fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&patch))
+                .publish_patches((), &source, slice::from_ref(&patch))
                 .await
                 .unwrap()
         );
@@ -701,7 +715,7 @@ async fn shared_references_survive_one_owner_but_disappear_with_the_last_owner()
         assert!(
             !fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&patch))
+                .publish_patches((), &source, slice::from_ref(&patch))
                 .await
                 .unwrap()
         );
@@ -757,13 +771,13 @@ async fn source_and_lookup_bounds_reject_invalid_work_without_publication() {
                 .is_none()
         );
         assert!(matches!(
-            fixture.db.publish_patches(&source, &[]).await,
+            fixture.db.publish_patches((), &source, &[]).await,
             Err(Error::RepairBounds(_))
         ));
         assert!(matches!(
             fixture
                 .db
-                .publish_patches(&source, &vec![patch(); MAX_PATCHES + 1])
+                .publish_patches((), &source, &vec![patch(); MAX_PATCHES + 1])
                 .await,
             Err(Error::RepairBounds(_))
         ));
@@ -774,13 +788,13 @@ async fn source_and_lookup_bounds_reject_invalid_work_without_publication() {
         };
         invalid.source.file_length = invalid.source.range.end;
         assert!(matches!(
-            fixture.db.publish_patches(&source, &[invalid]).await,
+            fixture.db.publish_patches((), &source, &[invalid]).await,
             Err(Error::RepairBounds(_))
         ));
         invalid = patch();
         invalid.source.message_id = Some(String::new());
         assert!(matches!(
-            fixture.db.publish_patches(&source, &[invalid]).await,
+            fixture.db.publish_patches((), &source, &[invalid]).await,
             Err(Error::RepairDescriptor(_))
         ));
         assert!(
@@ -810,8 +824,8 @@ async fn concurrent_publications_choose_one_immutable_article() {
         let a = [first.clone()];
         let b = [second.clone()];
         let (a, b) = tokio::join!(
-            fixture.db.publish_patches(&source, &a),
-            fixture.db.publish_patches(&source, &b)
+            fixture.db.publish_patches((), &source, &a),
+            fixture.db.publish_patches((), &source, &b)
         );
         let expected = match (a, b) {
             (Ok(true), Err(Error::RepairConflict)) => first,
@@ -887,7 +901,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert!(
             fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&patch))
+                .publish_patches((), &source, slice::from_ref(&patch))
                 .await
                 .unwrap()
         );
@@ -954,7 +968,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert!(
             fixture
                 .db
-                .publish_patches(&inner, slice::from_ref(&live))
+                .publish_patches((), &inner, slice::from_ref(&live))
                 .await
                 .unwrap()
         );
@@ -980,7 +994,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert!(
             !fixture
                 .db
-                .publish_patches(&inner, &[range_patch(10, 20)])
+                .publish_patches((), &inner, &[range_patch(10, 20)])
                 .await
                 .unwrap()
         );
@@ -1011,7 +1025,13 @@ async fn commit_failure_rolls_back_every_reference_and_retry_stays_safe() {
         ).await;
         let source = fixture.source().await;
         let patches = [range_patch(0, 10), range_patch(10, 20)];
-        assert!(fixture.db.publish_patches(&source, &patches).await.is_err());
+        assert!(
+            fixture
+                .db
+                .publish_patches((), &source, &patches)
+                .await
+                .is_err()
+        );
         let range = ByteRange { start: 0, end: 100 };
         assert_eq!(
             fixture
@@ -1027,7 +1047,13 @@ async fn commit_failure_rolls_back_every_reference_and_retry_stays_safe() {
                 "DROP TRIGGER repair_commit_failure ON repair_patches",
             )
             .await;
-        assert!(fixture.db.publish_patches(&source, &patches).await.unwrap());
+        assert!(
+            fixture
+                .db
+                .publish_patches((), &source, &patches)
+                .await
+                .unwrap()
+        );
         assert_eq!(
             fixture
                 .db
@@ -1055,7 +1081,7 @@ async fn publication_uses_durable_commit_even_when_regular_connections_do_not() 
         assert!(
             fixture
                 .db
-                .publish_patches(&fixture.source().await, &[patch()])
+                .publish_patches((), &fixture.source().await, &[patch()])
                 .await
                 .unwrap()
         );
@@ -1064,7 +1090,7 @@ async fn publication_uses_durable_commit_even_when_regular_connections_do_not() 
 }
 
 #[tokio::test]
-async fn waiting_publications_recheck_changes_and_cancellation_releases_locks() {
+async fn waiting_publications_recheck_changes_and_progress_after_caller_drop() {
     for fixture in fixtures().await {
         for cancel in [false, true] {
             let source = fixture.source().await;
@@ -1073,7 +1099,8 @@ async fn waiting_publications_recheck_changes_and_cancellation_releases_locks() 
                 sqlx::query("UPDATE blobs SET data = $2, generation = generation + 1 WHERE id = $1")
                     .bind(fixture.meta.0).bind(b"changed metadata".as_slice()).execute(&mut *tx).await.unwrap();
                 let patches = [patch()];
-                let mut running = Box::pin(fixture.db.publish_patches(&source, &patches));
+                let (guard, mut released) = tokio::sync::oneshot::channel::<()>();
+                let mut running = Box::pin(fixture.db.publish_patches(guard, &source, &patches));
                 assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut running).await.is_err());
                 // SQLite cannot show the wait; PostgreSQL must report it before the commit.
                 if matches!(fixture.cleanup, Cleanup::Postgres(_, _)) {
@@ -1089,9 +1116,12 @@ async fn waiting_publications_recheck_changes_and_cancellation_releases_locks() 
                 }
                 if cancel {
                     drop(running);
+                    assert!(matches!(released.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
                     tx.commit().await.unwrap();
+                    assert!(tokio::time::timeout(std::time::Duration::from_secs(3), released).await.unwrap().is_err());
                     let source = fixture.source().await;
-                    assert!(tokio::time::timeout(std::time::Duration::from_secs(3), fixture.db.publish_patches(&source, &patches)).await.unwrap().unwrap());
+                    assert!(tokio::time::timeout(std::time::Duration::from_secs(3), fixture.db.publish_patches((), &source, &[patch()])).await.unwrap().unwrap());
+                    assert!(fixture.db.patch_nzb(patches[0].id).await.unwrap().is_none());
                 } else {
                     tx.commit().await.unwrap();
                     assert!(!tokio::time::timeout(std::time::Duration::from_secs(3), running).await.unwrap().unwrap());
@@ -1111,7 +1141,7 @@ async fn deleting_the_nzb_cascades_references_and_corrupt_indexes_never_supply_d
         assert!(
             fixture
                 .db
-                .publish_patches(&source, &[patch()])
+                .publish_patches((), &source, &[patch()])
                 .await
                 .unwrap()
         );
@@ -1192,7 +1222,7 @@ async fn additive_migration_keeps_existing_files_and_starts_their_generation_at_
         assert!(
             fixture
                 .db
-                .publish_patches(&fixture.source().await, &[patch()])
+                .publish_patches((), &fixture.source().await, &[patch()])
                 .await
                 .unwrap()
         );
@@ -1242,7 +1272,7 @@ async fn a_backup_must_carry_every_repair_it_references() {
     assert!(
         fixture
             .db
-            .publish_patches(&fixture.source().await, slice::from_ref(&repair))
+            .publish_patches((), &fixture.source().await, slice::from_ref(&repair))
             .await
             .unwrap()
     );
@@ -1277,7 +1307,7 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
         assert!(
             fixture
                 .db
-                .publish_patches(&source, slice::from_ref(&repair))
+                .publish_patches((), &source, slice::from_ref(&repair))
                 .await
                 .unwrap()
         );
