@@ -3,6 +3,7 @@
 
 mod apply;
 mod csharp;
+pub mod legacy_repairs;
 mod memorypack;
 mod password;
 pub mod postgres;
@@ -45,6 +46,8 @@ const LOG_EVERY: u32 = 30;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("saved C# repair articles could not be preserved: {0}")]
+    LegacyRepairs(#[source] io::Error),
     #[error("no C# database at {0}")]
     NoDatabase(PathBuf),
     #[error("reading the C# database: {0}")]

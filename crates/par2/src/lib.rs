@@ -1,4 +1,4 @@
-//! PAR2 index parsing and per-slice verification (sans-I/O).
+//! PAR2 parsing, verification, and incremental repair (sans-I/O).
 //!
 //! [`read`] takes whatever prefix of a PAR2 file has been fetched and returns the file
 //! descriptions and slice checksums of its recovery set. Damaged packets are skipped by
@@ -8,6 +8,15 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use md5::{Digest, Md5};
+
+mod field;
+mod plan;
+mod repair;
+mod verify;
+
+pub use plan::{RepairSet, Source};
+pub use repair::{Error, Input, Recovered, Recovery, Repair};
+pub use verify::{Verified, Verifier};
 
 const MAGIC: &[u8; 8] = b"PAR2\0PKT";
 const HEADER: usize = 64;
@@ -28,7 +37,7 @@ pub struct Index {
     pub slice_size: u64,
     /// Files in main-packet order (or packet order without a main packet).
     pub files: Vec<File>,
-    /// A recovery-slice packet was seen; everything a client needs precedes it.
+    /// A recovery-slice header was seen; metadata may still be incomplete.
     pub reached_recovery: bool,
     /// The buffer ended inside a packet; more bytes may yield more packets.
     pub truncated: bool,
@@ -61,20 +70,57 @@ pub fn hash_16k(start: &[u8]) -> Id {
 impl Slice {
     /// Checks one slice of file data; the last slice may be short and is zero-padded.
     pub fn matches(&self, slice_size: u64, data: &[u8]) -> bool {
+        Self::checksum(slice_size, data).as_ref() == Some(self)
+    }
+
+    /// Hash one unpadded input slice, including PAR2's final zero padding.
+    pub fn checksum(slice_size: u64, data: &[u8]) -> Option<Self> {
+        // The callback is always false, so cancellation cannot discard a checksum.
+        Self::checksum_cancellable(slice_size, data, &|| false)
+            .ok()
+            .flatten()
+    }
+
+    pub(crate) fn matches_cancellable(
+        &self,
+        slice_size: u64,
+        data: &[u8],
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<bool, Error> {
+        Ok(Self::checksum_cancellable(slice_size, data, cancelled)?.as_ref() == Some(self))
+    }
+
+    fn checksum_cancellable(
+        slice_size: u64,
+        data: &[u8],
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Option<Self>, Error> {
         static ZEROS: [u8; 4096] = [0; 4096];
         let Some(mut pad) = slice_size.checked_sub(data.len() as u64) else {
-            return false;
+            return Ok(None);
         };
         let mut md5 = Md5::new();
-        md5.update(data);
-        let mut crc = infinidysk_yenc::crc32(0, data);
+        let mut crc = 0;
+        for chunk in data.chunks(65_536) {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            md5.update(chunk);
+            crc = infinidysk_yenc::crc32(crc, chunk);
+        }
         while pad > 0 {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
             let n = usize::try_from(pad).map_or(ZEROS.len(), |p| p.min(ZEROS.len()));
             md5.update(&ZEROS[..n]);
             crc = infinidysk_yenc::crc32(crc, &ZEROS[..n]);
             pad -= n as u64;
         }
-        crc == self.crc32 && <[u8; 16]>::from(md5.finalize()) == self.md5
+        Ok(Some(Self {
+            md5: md5.finalize().into(),
+            crc32: crc,
+        }))
     }
 }
 
@@ -84,7 +130,7 @@ struct Packet<'a> {
     body: &'a [u8],
 }
 
-/// A verified non-recovery packet of the scanned buffer.
+/// A verified packet of the scanned buffer.
 struct Found {
     set: Id,
     kind: [u8; 16],
@@ -98,19 +144,22 @@ struct Scan {
     found: Vec<Found>,
     reached_recovery: bool,
     truncated: bool,
+    /// `pos` is a candidate packet that needs more bytes.
+    waiting: bool,
 }
 
 impl Scan {
     /// Scans `buf` from where the previous call stopped; `buf` extends that call's buffer.
     fn run(&mut self, buf: &[u8]) {
         self.truncated = false;
+        self.waiting = false;
         while let Some(p) = buf[self.pos..]
             .windows(MAGIC.len())
             .position(|w| w == MAGIC)
             .map(|p| p + self.pos)
         {
             let Some(header) = buf.get(p..p + HEADER) else {
-                (self.pos, self.truncated) = (p, true);
+                (self.pos, self.truncated, self.waiting) = (p, true, true);
                 return;
             };
             let len = usize::try_from(u64::from_le_bytes(
@@ -127,7 +176,7 @@ impl Scan {
                 self.reached_recovery = true;
             }
             let Some(packet) = p.checked_add(len).and_then(|end| buf.get(p..end)) else {
-                (self.pos, self.truncated) = (p, !recovery);
+                (self.pos, self.truncated, self.waiting) = (p, !recovery, true);
                 return;
             };
             if <[u8; 16]>::from(Md5::digest(&packet[32..])) != header[16..32] {
@@ -135,13 +184,11 @@ impl Scan {
                 continue;
             }
             self.pos = p + len;
-            if !recovery {
-                self.found.push(Found {
-                    set: header[32..48].try_into().expect("16-byte slice"),
-                    kind: kind.try_into().expect("16-byte slice"),
-                    body: p + HEADER..p + len,
-                });
-            }
+            self.found.push(Found {
+                set: header[32..48].try_into().expect("16-byte slice"),
+                kind: kind.try_into().expect("16-byte slice"),
+                body: p + HEADER..p + len,
+            });
         }
         // Magic may straddle the end of `buf`.
         self.pos = self.pos.max(buf.len().saturating_sub(MAGIC.len() - 1));
@@ -156,6 +203,7 @@ impl Scan {
         let packets: Vec<Packet> = self
             .found
             .iter()
+            .filter(|f| &f.kind != RECOVERY)
             .map(|f| Packet {
                 set: f.set,
                 kind: &f.kind,
@@ -182,9 +230,63 @@ pub struct Reader {
 }
 
 impl Reader {
+    /// Admit input and a separate record allowance of one `Found` per minimum-size
+    /// packet. Reserve record capacity within that ceiling, including Vec growth.
+    pub fn push_bounded(&mut self, data: &[u8], byte_limit: usize) -> bool {
+        let Some(length) = self
+            .buf
+            .len()
+            .checked_add(data.len())
+            .filter(|&n| n <= byte_limit)
+        else {
+            return false;
+        };
+        let record_limit = byte_limit / HEADER;
+        let pending = length.saturating_sub(self.scan.pos) / HEADER;
+        let needed = self.scan.found.len() + pending;
+        if self.scan.found.capacity() > record_limit || self.buf.capacity() > byte_limit {
+            return false;
+        }
+        if needed > self.scan.found.capacity() {
+            let target = needed
+                .max(self.scan.found.capacity().saturating_mul(2))
+                .min(record_limit);
+            if self
+                .scan
+                .found
+                .try_reserve_exact(target - self.scan.found.len())
+                .is_err()
+            {
+                return false;
+            }
+        }
+        if length > self.buf.capacity() {
+            let target = length
+                .max(self.buf.capacity().saturating_mul(2))
+                .min(byte_limit);
+            if self.buf.try_reserve_exact(target - self.buf.len()).is_err() {
+                return false;
+            }
+        }
+        self.push(data);
+        true
+    }
+
     pub fn push(&mut self, data: &[u8]) {
         self.buf.extend_from_slice(data);
         self.scan.run(&self.buf);
+    }
+
+    /// A skipped article or a new volume cannot continue an incomplete packet. Whole
+    /// packets buffered after it, such as metadata after recovery data, still count.
+    pub fn end_volume(&mut self) {
+        while self.scan.waiting {
+            self.scan.pos += 1;
+            self.scan.run(&self.buf);
+        }
+        self.scan.pos = self.buf.len();
+        self.scan.reached_recovery = false;
+        self.scan.truncated = false;
     }
 
     /// Bytes pushed so far.
@@ -192,13 +294,40 @@ impl Reader {
         self.buf.len()
     }
 
+    /// Recovery sets with at least one checksum-validated packet.
+    pub fn sets(&self) -> Vec<Id> {
+        self.scan
+            .found
+            .iter()
+            .map(|packet| packet.set)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     pub const fn reached_recovery(&self) -> bool {
         self.scan.reached_recovery
     }
 
-    /// What [`read`] returns for everything pushed so far.
+    /// Equivalent to [`read`] on the concatenated input when no volume boundaries
+    /// were declared. [`Self::end_volume`] prevents packets from spanning a gap.
     pub fn index(&self) -> Index {
         self.scan.index(&self.buf)
+    }
+
+    /// Build a complete repair set from the buffered packets of one or more volumes.
+    /// The caller admits buffered packet storage separately from solver workspace.
+    pub fn repair_set(&self, set: Id) -> Result<RepairSet<'_>, Error> {
+        plan::read(self, set, false)
+    }
+
+    /// File descriptions can verify complete hashes even without IFSC packets.
+    pub fn verification_set(&self, set: Id) -> Result<RepairSet<'_>, Error> {
+        plan::read(self, set, true)
+    }
+
+    pub fn recovery_slices(&self, set: Id, slice_size: usize) -> Result<Vec<Recovery<'_>>, Error> {
+        plan::recovery(self, set, slice_size)
     }
 }
 
@@ -281,6 +410,7 @@ fn build(index: &mut Index, packets: &[Packet]) {
             .iter()
             .enumerate()
             .rev()
+            .filter(|(_, id)| at.contains_key(*id))
             .map(|(i, o)| (*o, i))
             .collect();
         index

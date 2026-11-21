@@ -111,6 +111,9 @@ pub struct Segment {
 /// PAR2 description of a whole file, enough to verify it slice by slice.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Par2Proof {
+    /// Stored separately by metadata blob v4; legacy proof bytes stay unchanged.
+    #[serde(skip)]
+    pub set_id: Option<[u8; 16]>,
     pub file_length: u64,
     pub slice_size: u32,
     pub slice_md5: Vec<[u8; 16]>,

@@ -282,6 +282,7 @@ fn big(head: &[Article]) -> FileMeta {
         out
     };
     let proof = Par2Proof {
+        set_id: None,
         file_length: len,
         slice_size,
         slice_md5: (0..slices).map(|_| md5()).collect(),

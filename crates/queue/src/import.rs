@@ -894,8 +894,11 @@ async fn read_par2(
             break;
         }
         let mut reader = infinidysk_par2::Reader::default();
-        if let Some(b) = &firsts[i] {
-            reader.push(&b.data);
+        let limit = PAR2_MAX_BYTES.min(PAR2_TOTAL_BYTES - bytes);
+        if let Some(b) = &firsts[i]
+            && !reader.push_bounded(&b.data, limit)
+        {
+            continue;
         }
         for segment in nzb.files[i]
             .segments
@@ -913,12 +916,9 @@ async fn read_par2(
                 break;
             };
             articles += 1;
-            if reader.buffered() + body.data.len() > PAR2_MAX_BYTES
-                || bytes + reader.buffered() + body.data.len() > PAR2_TOTAL_BYTES
-            {
+            if !reader.push_bounded(&body.data, limit) {
                 break;
             }
-            reader.push(&body.data);
         }
         bytes += reader.buffered();
         let index = reader.index();
@@ -933,6 +933,7 @@ async fn read_par2(
 
 fn proof(slice_size: u64, f: &infinidysk_par2::File) -> Option<Par2Proof> {
     Some(Par2Proof {
+        set_id: None,
         file_length: f.length,
         slice_size: u32::try_from(slice_size).ok()?,
         slice_md5: f.slices.iter().map(|s| s.md5).collect(),
