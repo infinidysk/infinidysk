@@ -151,18 +151,24 @@ impl<'a> Identity<'a> {
         Ok(())
     }
 
-    pub fn finish(self) -> Result<Option<(usize, Vec<bool>)>, Error> {
+    /// `stored`: the source an exact stored proof names; it settles a tie it is part of.
+    pub fn finish(self, stored: Option<usize>) -> Result<Option<(usize, Vec<bool>)>, Error> {
         let mut matches = self
             .matched
             .iter()
             .enumerate()
             .filter(|(_, matched)| **matched)
             .map(|(i, _)| i);
-        let first = self.proven.or_else(|| matches.next());
+        let mut first = self.proven.or_else(|| matches.next());
         if self.proven.is_none() && matches.next().is_some() {
-            return Err(Error::Ambiguous(
-                "slice evidence matches multiple protected sources",
-            ));
+            match stored.filter(|&source| self.matched.get(source) == Some(&true)) {
+                Some(source) => first = Some(source),
+                None => {
+                    return Err(Error::Ambiguous(
+                        "slice evidence matches multiple protected sources",
+                    ));
+                }
+            }
         }
         Ok(first.map(|source| {
             let mut checked = vec![false; self.sources[source].slices.len()];
@@ -173,5 +179,45 @@ impl<'a> Identity<'a> {
             }
             (source, checked)
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_exact_stored_proof_settles_a_slice_tie_it_is_part_of() {
+        let file = File {
+            id: [0; 16],
+            hash: [0; 16],
+            hash_16k: [0; 16],
+            length: 8,
+            name: String::new(),
+            slices: Vec::new(),
+        };
+        let sources = [file.clone(), file.clone(), file];
+        let tied = |matched: Vec<bool>| Identity {
+            sources: &sources,
+            size: 4,
+            length: Some(8),
+            prefix: Vec::new(),
+            prefix_done: false,
+            proven: None,
+            matched,
+            slice: Vec::new(),
+            next: 0,
+            start: 0,
+            checks: Vec::new(),
+        };
+        let tie = || tied(vec![true, true, false]);
+        assert!(matches!(tie().finish(None), Err(Error::Ambiguous(_))));
+        assert!(matches!(tie().finish(Some(1)), Ok(Some((1, _)))));
+        assert!(matches!(tie().finish(Some(2)), Err(Error::Ambiguous(_))));
+        // A unique match is returned as is; the caller rejects a stored proof it contradicts.
+        assert!(matches!(
+            tied(vec![true, false, false]).finish(Some(2)),
+            Ok(Some((0, _)))
+        ));
     }
 }

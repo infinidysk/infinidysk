@@ -826,7 +826,7 @@ async fn observe(
         }
         at = end;
     }
-    let observed = identity.finish()?;
+    let observed = identity.finish(stored_source)?;
     if let (Some(stored), Some((observed, _))) = (stored_source, &observed)
         && stored != *observed
     {
