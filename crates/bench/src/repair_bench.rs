@@ -128,7 +128,7 @@ impl Fixture {
     }
 }
 
-fn scenarios(filter: &str) -> impl Iterator<Item = super::Scenario> + '_ {
+pub(super) fn scenarios(filter: &str) -> impl Iterator<Item = super::Scenario> + '_ {
     MODES
         .into_iter()
         .filter(move |mode| mode.contains(filter))

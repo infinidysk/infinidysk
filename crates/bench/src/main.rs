@@ -189,7 +189,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?;
     let client_rt = Builder::new_multi_thread().enable_all().build()?;
-    if filter.starts_with("par2-") {
+    if filter.starts_with("par2-")
+        || (!filter.is_empty()
+            && repair_bench::scenarios(&filter).next().is_some()
+            && !SCENARIOS
+                .iter()
+                .any(|scenario| scenario.name.contains(&filter))
+            && !SEEK_SCENARIO.contains(&filter))
+    {
         return repair_bench::run(&filter, json_path.as_deref(), &server_rt, &client_rt);
     }
 
