@@ -57,6 +57,7 @@ async fn read_parity(
     recovery: Option<(Id, usize, usize)>,
 ) -> Result<infinidysk_par2::Reader, Error> {
     let mut reader = infinidysk_par2::Reader::default();
+    let reader_limit = budget.limits.memory_bytes / 3;
     let mut order = Vec::new();
     for file in &nzb.files {
         budget.comparison()?;
@@ -99,7 +100,9 @@ async fn read_parity(
                         .checked_mul(3)
                         .ok_or(Error::Limit("PAR2 metadata"))?,
                 )?;
-                reader.push(&body.data);
+                if !reader.push_bounded(&body.data, reader_limit) {
+                    return Err(Error::Limit("PAR2 metadata"));
+                }
                 if let Some((set, size, count)) = recovery {
                     if reader.recovery_slices(set, size)?.len() >= count + 2 {
                         return Ok(reader);

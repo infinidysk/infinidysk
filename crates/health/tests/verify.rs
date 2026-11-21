@@ -455,6 +455,7 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
         .unwrap()
         .unwrap();
     db.publish_patches(
+        (),
         &source,
         &[Patch {
             id: PatchId::new(),

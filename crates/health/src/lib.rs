@@ -471,7 +471,6 @@ impl Health {
             return Ok(false);
         };
         if status.state != HealthState::Hidden {
-            self.db.request_arr_replacement(id).await?;
             status.state = HealthState::Repairing;
             status.next_check = Some(now_ms());
             self.db.set_health(id, &status, Recheck::None).await?;
@@ -833,7 +832,8 @@ impl Health {
             let reason = "its Arr is rescanning a converted library file";
             return self.retry(item, status, reason, true).await;
         }
-        if self.par2 && self.db.par2_before_arr(item.id).await? {
+        let lookup = self.released(writing, self.owner(item)).await?;
+        if self.par2 && matches!(lookup, Lookup::Unowned(_) | Lookup::Unrepairable(_)) {
             let owner = infinidysk_db::repair::Owner::Item(item.id);
             let result = self.db.par2_result(owner, false).await?;
             let pending = match result {
@@ -862,7 +862,7 @@ impl Health {
                 return Ok(());
             }
         }
-        let (arr, owner, job, job_name) = match self.released(writing, self.owner(item)).await? {
+        let (arr, owner, job, job_name) = match lookup {
             Lookup::Found {
                 arr,
                 owner,

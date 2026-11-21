@@ -881,12 +881,14 @@ impl Queue {
                 ) => return Ok(Outcome::Failed(reason)),
                 Err(error) if self.par2.load(Ordering::Acquire) => {
                     if let Some(inner) = inner {
+                        let nzb_size = inner.xml.len() as u64;
                         let encoded = blocking(move || blob::encode_nzb(&inner.xml)).await?;
                         if !self
                             .db
                             .replace_queued_repair_nzb(
                                 &source,
                                 &encoded,
+                                nzb_size,
                                 inner.total_bytes,
                                 &names::without_password(&job.file_name),
                             )

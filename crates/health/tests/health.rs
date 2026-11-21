@@ -136,7 +136,7 @@ async fn a_check_discards_observations_when_repairs_change_during_provider_reads
                 sha256: [3; 32],
             };
             // Only the SQL publication boundary is exercised; this client never reads the patch.
-            assert!(db.publish_patches(&source, &[patch]).await.unwrap());
+            assert!(db.publish_patches((), &source, &[patch]).await.unwrap());
         }
         drop(paused);
         assert!(
@@ -159,7 +159,7 @@ async fn a_check_discards_observations_when_repairs_change_during_provider_reads
 }
 
 #[tokio::test]
-async fn pending_par2_repair_defers_arr_replacement_and_releases_write_admission() {
+async fn unavailable_arr_falls_back_to_par2_and_releases_write_admission() {
     let (articles, len) = mkv("par2-health");
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
     let (db, item, _) = import(&server, &articles, len).await;

@@ -1223,7 +1223,7 @@ async fn resolved_article_spans_reconstruct_missing_bytes_from_real_parity() {
     .unwrap();
     let mut missing = Vec::new();
     let mut available = Vec::new();
-    for index in 0..set.inputs().len() {
+    for index in 0..set.inputs().unwrap().len() {
         let (source, _) = set.source(index).unwrap();
         let layout = resolved
             .iter()
@@ -1247,7 +1247,7 @@ async fn resolved_article_spans_reconstruct_missing_bytes_from_real_parity() {
     assert_eq!(missing.len(), 2);
     let mut repair = infinidysk_par2::Repair::new(
         set.slice_size(),
-        set.inputs(),
+        set.inputs().unwrap(),
         &missing,
         set.recovery(),
         2_000_000,
@@ -1316,11 +1316,10 @@ async fn resolved_article_spans_reconstruct_missing_bytes_from_real_parity() {
         "durable file alone is invisible"
     );
     assert!(
-        db.publish_patches(&original, std::slice::from_ref(durable.patch()))
+        db.publish_patches(durable, &original, std::slice::from_ref(&patch))
             .await
             .unwrap()
     );
-    drop(durable);
     drop(store);
     db.close().await;
     let db = Db::connect(&url).await.unwrap();
@@ -1531,7 +1530,7 @@ async fn archive_sources_include_complete_posted_volumes_and_ciphertext_without_
                 bytes.extend_from_slice(&volume[offset + range.start..offset + range.end]);
             }
             assert!(
-                set.inputs()[index]
+                set.inputs().unwrap()[index]
                     .checksum
                     .matches(set.slice_size() as u64, &bytes)
             );

@@ -110,6 +110,7 @@ async fn run(
             sources,
         });
     }
+    let inputs = set.inputs().ok_or(Error::Unavailable("slice checksums"))?;
     let cached_article = layouts
         .iter()
         .flat_map(super::Layout::articles)
@@ -125,7 +126,7 @@ async fn run(
             .ok_or(Error::Limit("slice workspace"))?,
     )?;
     budget.metadata(
-        set.inputs()
+        inputs
             .len()
             .checked_mul(32)
             .ok_or(Error::Limit("slice metadata"))?,
@@ -138,7 +139,7 @@ async fn run(
     let mut missing = Vec::new();
     let mut damaged = BTreeSet::new();
     let mut cached = None;
-    for index in 0..set.inputs().len() {
+    for (index, input) in inputs.iter().enumerate() {
         let (source, _) = set
             .source(index)
             .ok_or(Error::Unavailable("source slice"))?;
@@ -159,11 +160,8 @@ async fn run(
                 &mut fetching,
             )
             .await?
-            .is_some_and(|bytes| {
-                set.inputs()[index]
-                    .checksum
-                    .matches(set.slice_size() as u64, &bytes)
-            }) {
+            .is_some_and(|bytes| input.checksum.matches(set.slice_size() as u64, &bytes))
+            {
                 continue;
             }
             missing.push(index);
@@ -270,7 +268,7 @@ async fn run(
         };
         let mut solver = Repair::new(
             set.slice_size(),
-            set.inputs(),
+            inputs,
             &missing,
             recovery,
             budget.limits.memory_bytes,
@@ -278,7 +276,7 @@ async fn run(
         )?;
         budget.metadata(solver.workspace_bytes())?;
         fetching.width = budget.admit_reads(client, 0)?;
-        for index in 0..set.inputs().len() {
+        for index in 0..inputs.len() {
             if missing.binary_search(&index).is_ok() {
                 continue;
             }
@@ -385,7 +383,7 @@ async fn run(
     }
     budget.check()?;
     budget.metadata(
-        set.inputs()
+        inputs
             .len()
             .checked_mul(24)
             .ok_or(Error::Limit("proof output"))?,
@@ -413,7 +411,7 @@ async fn slice(
     cached: &mut Option<(usize, usize, Body)>,
     fetching: &mut Fetch,
 ) -> Result<Option<Vec<u8>>, Error> {
-    let (source, _) = set
+    let (source, range) = set
         .source(index)
         .ok_or(Error::Unavailable("source slice"))?;
     let layout = layouts
@@ -421,8 +419,10 @@ async fn slice(
         .find(|l| l.source() == source)
         .ok_or(Error::Unavailable("source layout"))?;
     let mut data = Vec::new();
-    data.try_reserve_exact(set.inputs()[index].length)
-        .map_err(|_| Error::Allocation)?;
+    data.try_reserve_exact(
+        usize::try_from(range.end - range.start).map_err(|_| Error::Limit("slice length"))?,
+    )
+    .map_err(|_| Error::Allocation)?;
     for (position, range) in layout.spans(set, index)? {
         if cached
             .as_ref()
