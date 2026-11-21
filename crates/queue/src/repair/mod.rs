@@ -36,6 +36,7 @@ pub async fn discover_with_context(
         probe: context.probe,
         progress: context.progress,
         legacy_ids: std::collections::BTreeSet::new(),
+        legacy_bytes: 0,
     };
     budget.scratch(MAX_DECODED_LEN)?;
     let reader = read_parity(client, nzb, &mut budget, None).await?;
@@ -399,6 +400,8 @@ struct Budget {
     probe: Option<infinidysk_core::trace::Probe>,
     progress: Option<Arc<Progress>>,
     legacy_ids: std::collections::BTreeSet<String>,
+    /// Charged bytes of `legacy_ids`.
+    legacy_bytes: usize,
 }
 
 impl Budget {
@@ -431,11 +434,14 @@ impl Budget {
                     .max(1),
             );
             let chunk = &ids[at..at + width];
+            // Concurrent reads split what the parent's scratch leaves, not the whole allowance.
+            let share = self.limits.memory_bytes.saturating_sub(self.scratch) / width;
             let results = stream::iter(chunk.iter().map(|id| {
                 let mut read = Self {
                     limits: Limits {
                         requests: self.limits.requests.min(1),
                         decoded_bytes: self.limits.decoded_bytes.min(MAX_DECODED_LEN as u64),
+                        memory_bytes: share,
                         ..self.limits
                     },
                     scratch: 0,
@@ -446,6 +452,7 @@ impl Budget {
                     probe: self.probe.clone(),
                     progress: self.progress.clone(),
                     legacy_ids: std::collections::BTreeSet::new(),
+                    legacy_bytes: 0,
                 };
                 async move {
                     let limits = read.limits;
@@ -469,10 +476,7 @@ impl Budget {
                     .ok_or(Error::Limit("decoded byte"))?;
                 self.network_bytes += read.network_bytes;
                 for id in read.legacy_ids {
-                    if !self.legacy_ids.contains(&id) {
-                        self.metadata(id.len() + 128)?;
-                        self.legacy_ids.insert(id);
-                    }
+                    self.retain_id(id)?;
                 }
                 output.push(result);
             }
@@ -487,6 +491,21 @@ impl Budget {
         } else {
             Ok(())
         }
+    }
+
+    /// Charges each distinct candidate ID once.
+    fn retain_id(&mut self, id: String) -> Result<(), Error> {
+        if self.legacy_ids.contains(&id) {
+            return Ok(());
+        }
+        let bytes = id
+            .len()
+            .checked_add(128)
+            .ok_or(Error::Limit("candidate identity"))?;
+        self.metadata(bytes)?;
+        self.legacy_bytes += bytes;
+        self.legacy_ids.insert(id);
+        Ok(())
     }
 
     fn metadata(&mut self, bytes: usize) -> Result<(), Error> {
@@ -546,14 +565,7 @@ impl Budget {
                 if body.data.is_empty() || body.data.len() > MAX_DECODED_LEN {
                     return Err(Error::Limit("candidate article"));
                 }
-                if !self.legacy_ids.contains(id) {
-                    self.metadata(
-                        id.len()
-                            .checked_add(128)
-                            .ok_or(Error::Limit("candidate identity"))?,
-                    )?;
-                    self.legacy_ids.insert(id.to_owned());
-                }
+                self.retain_id(id.to_owned())?;
                 return Ok(body);
             }
         }
@@ -609,6 +621,7 @@ fn snapshot(
         probe: None,
         progress: None,
         legacy_ids: std::collections::BTreeSet::new(),
+        legacy_bytes: 0,
     };
     budget.metadata(MAX_DECODED_LEN + PREFIX)?;
     // Conservatively covers Vec/HashSet capacity and per-source working metadata.
@@ -666,20 +679,17 @@ async fn run(
 ) -> Result<Vec<Layout>, Error> {
     let mut resolved: Vec<Option<Layout>> = (0..sources.len()).map(|_| None).collect();
     let mut reason = "a protected source could not be identified; surviving checksums or trusted stored metadata are needed";
-    let retained = |ids: &std::collections::BTreeSet<String>| -> usize {
-        ids.iter().map(|id| id.len() + 128).sum()
-    };
     for (file, candidate) in files.into_iter().enumerate() {
         budget.check()?;
         budget.scratch(0)?;
         let memory = budget.limits.memory_bytes;
-        let legacy = retained(&budget.legacy_ids);
+        let legacy = budget.legacy_bytes;
         let result = observe(client, candidate, sources, size, set_id, metadata, budget).await;
         // Candidate buffers are gone; only successful output metadata and retained
         // candidate IDs remain live.
         budget.scratch(0)?;
         budget.limits.memory_bytes = memory;
-        budget.metadata(retained(&budget.legacy_ids) - legacy)?;
+        budget.metadata(budget.legacy_bytes - legacy)?;
         match result {
             Ok(Some((source, articles, verified, checked))) => {
                 budget.metadata(checked.len())?;
@@ -826,7 +836,7 @@ async fn observe(
         }
         at = end;
     }
-    let observed = identity.finish(stored_source)?;
+    let observed = identity.finish(stored_source, budget)?;
     if let (Some(stored), Some((observed, _))) = (stored_source, &observed)
         && stored != *observed
     {

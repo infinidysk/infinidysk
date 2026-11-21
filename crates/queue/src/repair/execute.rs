@@ -96,6 +96,19 @@ async fn run(
             )?
             .finish(|| cancel.is_cancelled())?;
         }
+        for layout in &layouts {
+            let ids: usize = layout
+                .articles()
+                .iter()
+                .map(|article| {
+                    size_of::<infinidysk_core::Segment>()
+                        + article.id.as_ref().map_or(0, String::len)
+                })
+                .sum();
+            let slices = set.sources()[layout.source()].file.slices.len()
+                * (size_of::<[u8; 16]>() + size_of::<u32>());
+            budget.metadata(ids.saturating_add(slices))?;
+        }
         let sources = layouts
             .iter()
             .map(|layout| VerifiedSource::new(&set, layout))

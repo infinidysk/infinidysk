@@ -138,6 +138,11 @@ impl Slots {
     }
 
     pub fn finish(self, length: u64) -> Result<Vec<Article>, Error> {
+        if self.length.is_some_and(|observed| observed != length) {
+            return Err(Error::Changed(
+                "observed file length disagrees with the selected source",
+            ));
+        }
         let mut articles = Vec::new();
         articles
             .try_reserve_exact(self.parts.len())

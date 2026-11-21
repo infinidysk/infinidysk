@@ -152,16 +152,39 @@ impl<'a> Identity<'a> {
     }
 
     /// `stored`: the source an exact stored proof names; it settles a tie it is part of.
-    pub fn finish(self, stored: Option<usize>) -> Result<Option<(usize, Vec<bool>)>, Error> {
-        let mut matches = self
-            .matched
-            .iter()
-            .enumerate()
-            .filter(|(_, matched)| **matched)
-            .map(|(i, _)| i);
-        let mut first = self.proven.or_else(|| matches.next());
-        if self.proven.is_none() && matches.next().is_some() {
-            match stored.filter(|&source| self.matched.get(source) == Some(&true)) {
+    /// A slice only one candidate matches disproves the others.
+    pub fn finish(
+        self,
+        stored: Option<usize>,
+        budget: &mut Budget,
+    ) -> Result<Option<(usize, Vec<bool>)>, Error> {
+        let candidates: Vec<usize> = (0..self.matched.len())
+            .filter(|&i| self.matched[i])
+            .collect();
+        let mut first = self.proven.or_else(|| candidates.first().copied());
+        if self.proven.is_none() && candidates.len() > 1 {
+            let mut distinct = None;
+            let mut contested = false;
+            for &(index, checksum) in &self.checks {
+                let mut only = None;
+                let mut count = 0;
+                for &i in &candidates {
+                    budget.comparison()?;
+                    if self.sources[i].slices.get(index) == Some(&checksum) {
+                        only = Some(i);
+                        count += 1;
+                    }
+                }
+                if count == 1
+                    && let Some(only) = only
+                {
+                    contested |= distinct.is_some_and(|d| d != only);
+                    distinct = Some(only);
+                }
+            }
+            match distinct.filter(|_| !contested).or_else(|| {
+                stored.filter(|&source| !contested && self.matched.get(source) == Some(&true))
+            }) {
                 Some(source) => first = Some(source),
                 None => {
                     return Err(Error::Ambiguous(
@@ -186,18 +209,43 @@ impl<'a> Identity<'a> {
 mod tests {
     use super::*;
 
+    fn slice(bytes: &[u8]) -> Slice {
+        Slice::checksum(4, bytes).expect("4 bytes fit a 4-byte slice")
+    }
+
+    fn budget() -> Budget {
+        Budget {
+            limits: crate::repair::Limits {
+                requests: 0,
+                decoded_bytes: 0,
+                memory_bytes: 0,
+                comparisons: 1_000,
+                retained_bytes: 0,
+            },
+            scratch: 0,
+            cancel: tokio_util::sync::CancellationToken::new(),
+            network_bytes: 0,
+            source: None,
+            candidates: None,
+            probe: None,
+            progress: None,
+            legacy_ids: std::collections::BTreeSet::new(),
+            legacy_bytes: 0,
+        }
+    }
+
     #[test]
-    fn an_exact_stored_proof_settles_a_slice_tie_it_is_part_of() {
-        let file = File {
+    fn shared_slice_evidence_needs_a_distinguishing_slice_or_a_stored_proof() {
+        let file = |last: &[u8]| File {
             id: [0; 16],
             hash: [0; 16],
             hash_16k: [0; 16],
             length: 8,
             name: String::new(),
-            slices: Vec::new(),
+            slices: vec![slice(b"same"), slice(last)],
         };
-        let sources = [file.clone(), file.clone(), file];
-        let tied = |matched: Vec<bool>| Identity {
+        let sources = [file(b"aaaa"), file(b"bbbb"), file(b"cccc")];
+        let tied = |matched: Vec<bool>, checks: Vec<(usize, Slice)>| Identity {
             sources: &sources,
             size: 4,
             length: Some(8),
@@ -208,16 +256,25 @@ mod tests {
             slice: Vec::new(),
             next: 0,
             start: 0,
-            checks: Vec::new(),
+            checks,
         };
-        let tie = || tied(vec![true, true, false]);
-        assert!(matches!(tie().finish(None), Err(Error::Ambiguous(_))));
-        assert!(matches!(tie().finish(Some(1)), Ok(Some((1, _)))));
-        assert!(matches!(tie().finish(Some(2)), Err(Error::Ambiguous(_))));
+        let tie = || tied(vec![true, true, false], vec![(0, slice(b"same"))]);
+        let b = &mut budget();
+        assert!(matches!(tie().finish(None, b), Err(Error::Ambiguous(_))));
+        assert!(matches!(tie().finish(Some(1), b), Ok(Some((1, _)))));
+        assert!(matches!(tie().finish(Some(2), b), Err(Error::Ambiguous(_))));
         // A unique match is returned as is; the caller rejects a stored proof it contradicts.
         assert!(matches!(
-            tied(vec![true, false, false]).finish(Some(2)),
+            tied(vec![true, false, false], vec![(0, slice(b"same"))]).finish(Some(2), b),
             Ok(Some((0, _)))
+        ));
+        let distinguished = tied(
+            vec![true, true, false],
+            vec![(0, slice(b"same")), (1, slice(b"aaaa"))],
+        );
+        assert!(matches!(
+            distinguished.finish(None, b),
+            Ok(Some((0, checked))) if checked == [true, true]
         ));
     }
 }
