@@ -538,6 +538,34 @@ async fn bounded_execution_verifies_whole_sources_before_returning_replacement_a
     covered.clear();
     infinidysk_queue::repair::refresh_metadata(&mut target, &result.sources, &mut covered);
     assert_eq!(covered, [false]);
+
+    // A part whose data runs past the verified sizes keeps its layout uncovered.
+    let reach = source.segments.size();
+    let mut target = infinidysk_core::FileMeta::Multipart(infinidysk_core::MultipartFile {
+        parts: vec![infinidysk_core::FilePart {
+            segments: source.segments.clone(),
+            offset: 0,
+            data: infinidysk_core::ByteRange {
+                start: 0,
+                end: reach + 1,
+            },
+            split_after: false,
+            proof: None,
+        }],
+        crypt: None,
+    });
+    if let infinidysk_core::FileMeta::Multipart(file) = &mut target {
+        file.parts[0].segments.items.last_mut().unwrap().size += 1;
+    }
+    let before = target.clone();
+    covered.clear();
+    assert!(!infinidysk_queue::repair::refresh_metadata(
+        &mut target,
+        &result.sources,
+        &mut covered
+    ));
+    assert_eq!(covered, [false]);
+    assert_eq!(target, before);
 }
 
 #[tokio::test]

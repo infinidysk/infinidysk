@@ -166,12 +166,16 @@ pub fn refresh_metadata(
     let old = meta.clone();
     let matched = match meta {
         FileMeta::Nzb(file) => {
-            vec![refresh(&mut file.segments, &mut file.proof, 0, sources)]
+            let end = file.segments.size();
+            vec![refresh(&mut file.segments, &mut file.proof, 0, end, sources)]
         }
         FileMeta::Multipart(file) => file
             .parts
             .iter_mut()
-            .map(|part| refresh(&mut part.segments, &mut part.proof, part.offset, sources))
+            .map(|part| {
+                let end = part.data.end;
+                refresh(&mut part.segments, &mut part.proof, part.offset, end, sources)
+            })
             .collect(),
     };
     if meta.size() != old.size() {
@@ -185,10 +189,13 @@ pub fn refresh_metadata(
     *meta != old
 }
 
+/// Takes the sizes of the one source that posted `segments` at `offset`, if they still
+/// reach `end`.
 fn refresh(
     segments: &mut Segments,
     proof: &mut Option<Par2Proof>,
     offset: u64,
+    end: u64,
     sources: &[VerifiedSource],
 ) -> bool {
     let matches = sources
@@ -212,6 +219,10 @@ fn refresh(
         })
         .collect::<Vec<_>>();
     if let [(source, items)] = matches.as_slice() {
+        let reach = items.iter().map(|s| u64::from(s.size)).sum::<u64>();
+        if offset.saturating_add(reach) < end {
+            return false;
+        }
         for (current, verified) in segments.items.iter_mut().zip(*items) {
             current.size = verified.size;
         }
