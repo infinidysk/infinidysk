@@ -223,6 +223,7 @@ impl From<infinidysk_par2::Error> for Error {
                 required,
                 available: limit,
             },
+            infinidysk_par2::Error::Cancelled => Self::Cancelled,
             error => Self::Content(error),
         }
     }
@@ -829,4 +830,15 @@ async fn observe(
         verified && checked.iter().all(|checked| *checked),
         checked,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_cancelled_par2_computation_is_a_cancellation() {
+        assert!(matches!(
+            super::Error::from(infinidysk_par2::Error::Cancelled),
+            super::Error::Cancelled
+        ));
+    }
 }
