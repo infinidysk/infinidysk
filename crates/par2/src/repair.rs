@@ -5,6 +5,7 @@ use md5::{Digest, Md5};
 use crate::field::FIELD;
 use crate::{HEADER, Id, MAGIC, RECOVERY, Slice};
 
+// ponytail: cap implicit zero hashing at 256 MiB until callers admit a padding-work budget.
 pub(super) const MAX_PADDING_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -180,11 +181,16 @@ impl<'a> Repair<'a> {
         let mut exponents = reserved(count)?;
         for index in selected {
             check_cancel(&cancelled)?;
-            let mut row = filled(slice_size, 0)?;
-            row.copy_from_slice(recovery[index].data);
+            let mut row = reserved(slice_size)?;
+            for chunk in recovery[index].data.chunks(64 * 1024) {
+                check_cancel(&cancelled)?;
+                row.extend_from_slice(chunk);
+            }
             rows.push(row);
             exponents.push(recovery[index].exponent);
         }
+        let seen = filled(inputs.len(), false)?;
+        check_cancel(&cancelled)?;
         Ok(Self {
             size: slice_size,
             inputs,
@@ -192,7 +198,7 @@ impl<'a> Repair<'a> {
             exponents,
             rows,
             inverse,
-            seen: filled(inputs.len(), false)?,
+            seen,
             remaining: inputs.len() - count,
             cancelled: false,
             workspace_bytes: required,

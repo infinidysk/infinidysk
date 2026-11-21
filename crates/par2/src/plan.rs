@@ -39,9 +39,10 @@ impl RepairSet<'_> {
         &self.sources
     }
 
-    /// Complete repair inputs require `Reader::repair_set`; verification can lack IFSC.
-    pub fn inputs(&self) -> &[Input] {
-        &self.inputs
+    /// Global repair inputs, absent if a verification plan lacks any slice checksums.
+    pub fn inputs(&self) -> Option<&[Input]> {
+        (self.inputs.len() == self.sources.last().map_or(0, |source| source.slices.end))
+            .then_some(&self.inputs)
     }
 
     pub fn recovery(&self) -> &[Recovery<'_>] {

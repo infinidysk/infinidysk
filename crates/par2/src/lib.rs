@@ -230,6 +230,48 @@ pub struct Reader {
 }
 
 impl Reader {
+    /// Admit input and a separate record allowance of one `Found` per minimum-size
+    /// packet. Reserve record capacity within that ceiling, including Vec growth.
+    pub fn push_bounded(&mut self, data: &[u8], byte_limit: usize) -> bool {
+        let Some(length) = self
+            .buf
+            .len()
+            .checked_add(data.len())
+            .filter(|&n| n <= byte_limit)
+        else {
+            return false;
+        };
+        let record_limit = byte_limit / HEADER;
+        let pending = length.saturating_sub(self.scan.pos) / HEADER;
+        let needed = self.scan.found.len() + pending;
+        if self.scan.found.capacity() > record_limit || self.buf.capacity() > byte_limit {
+            return false;
+        }
+        if needed > self.scan.found.capacity() {
+            let target = needed
+                .max(self.scan.found.capacity().saturating_mul(2))
+                .min(record_limit);
+            if self
+                .scan
+                .found
+                .try_reserve_exact(target - self.scan.found.len())
+                .is_err()
+            {
+                return false;
+            }
+        }
+        if length > self.buf.capacity() {
+            let target = length
+                .max(self.buf.capacity().saturating_mul(2))
+                .min(byte_limit);
+            if self.buf.try_reserve_exact(target - self.buf.len()).is_err() {
+                return false;
+            }
+        }
+        self.push(data);
+        true
+    }
+
     pub fn push(&mut self, data: &[u8]) {
         self.buf.extend_from_slice(data);
         self.scan.run(&self.buf);

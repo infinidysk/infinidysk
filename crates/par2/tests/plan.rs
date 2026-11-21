@@ -26,6 +26,7 @@ fn verification_without_first_file_checksums_keeps_global_source_indices() {
         reader.push(p);
     }
     let set = reader.verification_set(id).unwrap();
+    assert!(set.inputs().is_none());
     assert_eq!(set.source(0), full.source(0));
     assert_eq!(set.source(second_start), full.source(second_start));
     assert_eq!(set.sources()[0].slices, first.slices);
@@ -49,7 +50,7 @@ fn a_damaged_recovery_header_does_not_hide_later_packets_in_the_volume() {
     assert_eq!(damaged.verification_set(id).unwrap().sources().len(), 2);
     damaged.push(VOLUME);
     let set = damaged.repair_set(id).unwrap();
-    assert_eq!(set.inputs().len(), 27);
+    assert_eq!(set.inputs().unwrap().len(), 27);
     assert_eq!(set.recovery().len(), 3);
 }
 
@@ -58,18 +59,18 @@ fn plans_and_reconstructs_a_complete_independent_set() {
     let reader = reader();
     let set = reader.repair_set(read(INDEX).set_id.unwrap()).unwrap();
     assert_eq!(set.sources().len(), 2);
-    assert_eq!(set.inputs().len(), 27);
+    assert_eq!(set.inputs().unwrap().len(), 27);
     assert_eq!(set.recovery().len(), 3);
     let mut repair = Repair::new(
         set.slice_size(),
-        set.inputs(),
+        set.inputs().unwrap(),
         &[0, 26],
         set.recovery(),
         2_000_000,
         || false,
     )
     .unwrap();
-    for (i, input) in set.inputs().iter().enumerate() {
+    for (i, input) in set.inputs().unwrap().iter().enumerate() {
         let (source, range) = set.source(i).unwrap();
         assert_eq!(range.end - range.start, input.length as u64);
         let data: Vec<u8> = (range.start..range.end)
@@ -152,6 +153,18 @@ fn rehash(packet: &mut [u8]) {
     packet[16..32].copy_from_slice(&hash);
 }
 
+#[test]
+fn bounded_reader_admits_minimum_size_packets_up_to_the_limit() {
+    let data = packet([1; 16], &[0; 16], &[]).repeat(33);
+    let mut reader = Reader::default();
+    for chunk in data.chunks(63) {
+        assert!(reader.push_bounded(chunk, data.len()));
+    }
+    assert!(!reader.push_bounded(&[0], data.len()));
+    assert_eq!(reader.buffered(), data.len());
+    assert_eq!(reader.sets(), [[1; 16]]);
+}
+
 fn main_packet() -> &'static [u8] {
     packets(INDEX)
         .into_iter()
@@ -182,9 +195,9 @@ fn recovery_packets_do_not_imply_that_metadata_is_complete() {
         }
     }
     let complete = partial.repair_set(set).unwrap();
-    assert_eq!(complete.inputs().len(), 27);
+    assert_eq!(complete.inputs().unwrap().len(), 27);
     assert_eq!(complete.recovery().len(), 3);
-    assert_eq!(reader.repair_set(set).unwrap().inputs().len(), 27);
+    assert_eq!(reader.repair_set(set).unwrap().inputs().unwrap().len(), 27);
 }
 
 #[test]
@@ -204,7 +217,7 @@ fn non_recoverable_files_do_not_shift_global_slice_indices() {
     assert_eq!(reader.index().files.len(), 2);
     assert_eq!(plan.sources().len(), 1);
     assert_eq!(plan.sources()[0].file.id.as_slice(), &main[76..92]);
-    assert_eq!(plan.sources()[0].slices, 0..plan.inputs().len());
+    assert_eq!(plan.sources()[0].slices, 0..plan.inputs().unwrap().len());
     assert!(plan.recovery().is_empty());
 }
 
@@ -239,7 +252,7 @@ fn empty_source_files_need_no_ifsc_or_global_slice() {
     let plan = reader.repair_set(set).unwrap();
     assert_eq!(plan.sources()[0].slices, 0..0);
     assert_eq!(plan.source(0).unwrap().0, 1);
-    assert_eq!(plan.inputs().len(), 27);
+    assert_eq!(plan.inputs().unwrap().len(), 27);
 }
 
 #[test]
@@ -413,7 +426,7 @@ fn accepts_the_input_limit_and_rejects_larger_descriptions_before_building_input
         let plan = reader.repair_set(set);
         if length == 131_072 {
             let plan = plan.unwrap();
-            assert_eq!(plan.inputs().len(), 32_768);
+            assert_eq!(plan.inputs().unwrap().len(), 32_768);
             assert_eq!(plan.source(32_767), Some((0, 131_068..131_072)));
         } else {
             assert!(plan.is_err());
