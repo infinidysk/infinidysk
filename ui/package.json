@@ -16,7 +16,7 @@
     "@tanstack/react-query": "^5.107.1",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
-    "lucide-react": "^1.70.0",
+    "lucide-react": "^1.73.0",
     "openapi-fetch": "^0.17.0",
     "radix-ui": "^1.8.1",
     "react": "^19.3.1",
@@ -33,6 +33,6 @@
     "shadcn": "^4.23.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.7"
+    "vite": "^8.3.8"
   }
 }
