@@ -510,7 +510,10 @@ mod tests {
         assert!(matches!(
             judge(
                 Some(old),
-                &Structure::Damaged { offset: 16, size: 4 },
+                &Structure::Damaged {
+                    offset: 16,
+                    size: 4
+                },
                 source(&meta),
                 100,
                 50

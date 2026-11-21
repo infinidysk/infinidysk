@@ -167,14 +167,26 @@ pub fn refresh_metadata(
     let matched = match meta {
         FileMeta::Nzb(file) => {
             let end = file.segments.size();
-            vec![refresh(&mut file.segments, &mut file.proof, 0, end, sources)]
+            vec![refresh(
+                &mut file.segments,
+                &mut file.proof,
+                0,
+                end,
+                sources,
+            )]
         }
         FileMeta::Multipart(file) => file
             .parts
             .iter_mut()
             .map(|part| {
                 let end = part.data.end;
-                refresh(&mut part.segments, &mut part.proof, part.offset, end, sources)
+                refresh(
+                    &mut part.segments,
+                    &mut part.proof,
+                    part.offset,
+                    end,
+                    sources,
+                )
             })
             .collect(),
     };
