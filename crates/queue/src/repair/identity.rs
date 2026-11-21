@@ -22,6 +22,11 @@ impl<'a> Identity<'a> {
         self.proven
     }
 
+    /// Whether observed bytes are checked against slice checksums, which needs a slice buffer.
+    pub fn checks_slices(&self) -> bool {
+        self.checks.capacity() > 0
+    }
+
     pub fn new(sources: &'a [File], size: usize, budget: &mut Budget) -> Result<Self, Error> {
         let count = sources
             .iter()

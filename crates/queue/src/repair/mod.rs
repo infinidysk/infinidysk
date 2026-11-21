@@ -731,12 +731,17 @@ async fn observe(
     let mut slots = Slots::new(file, budget)?;
     let stored_source = metadata::restore(metadata, &mut slots, sources, set_id, size, budget)?;
     let mut identity = Identity::new(sources, size, budget)?;
+    if identity.checks_slices() {
+        // Reserved before reads are admitted, so no body is fetched for a buffer that cannot fit.
+        budget.scratch(size)?;
+    }
     // The prefix first, so the read width fits what is left.
     budget.metadata(PREFIX)?;
     let width = budget.admit_reads(client, size)?;
     let mut prefix = Vec::new();
     let mut verifier = None;
     let mut intact = true;
+    let mut length_checked = false;
     let mut offset = 0;
     let mut at = 0;
     while at < slots.len() {
@@ -754,8 +759,12 @@ async fn observe(
             match results.next().expect("one result per requested article") {
                 Ok(body) => {
                     slots.observe(i, &body, budget)?;
-                    if !sources.iter().any(|source| source.length == body.file_size) {
-                        return Ok(None);
+                    // Slots holds every later body to this length.
+                    if !length_checked {
+                        if !sources.iter().any(|source| source.length == body.file_size) {
+                            return Ok(None);
+                        }
+                        length_checked = true;
                     }
                     identity.feed(&body, budget)?;
                     if body.offset != offset {
