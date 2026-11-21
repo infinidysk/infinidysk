@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Info, Loader2, Pause, Play, RotateCcw, Search, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { ChevronRight, Download, Info, Loader2, Pause, Play, RotateCcw, Search, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import { ago, bytes, duration, stamp } from "../format";
 import { useSettings } from "../settings";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -247,14 +248,15 @@ function AddNzbs() {
   );
 }
 
-/** Finished downloads an Arr will not import for a reason only the user can settle. */
+/** Finished downloads an Arr will not import for a reason only the user can settle, counted per Arr. */
 function ArrIssues() {
   const status = useQuery({
     queryKey: ["arr-status"],
     queryFn: () => body(api.GET("/api/v1/arr/status")),
     refetchInterval: 10000,
   });
-  const issues = status.data?.instances.flatMap((i) => i.queue_issues.map((issue) => ({ arr: i.name, ...issue }))) ?? [];
+  const instances = status.data?.instances.filter((i) => i.queue_issues.length > 0) ?? [];
+  const issues = instances.flatMap((i) => i.queue_issues.map((issue) => ({ arr: i.name, ...issue })));
   if (issues.length === 0) return null;
   return (
     <Alert className="mb-6">
@@ -263,21 +265,30 @@ function ArrIssues() {
         {issues.length === 1 ? "1 download needs" : `${issues.length} downloads need`} you in the Arr before it can import
       </AlertTitle>
       <AlertDescription>
-        <ul className="w-full divide-y">
-          {issues.map((issue, i) => (
-            <li key={i} className="min-w-0 py-2">
-              <div className="text-foreground truncate" title={issue.title}>
-                <ReleaseName name={issue.title} />
-                <span className="text-muted-foreground"> · {issue.arr}</span>
-              </div>
-              {issue.messages.map((m, j) => (
-                <div key={j} className="truncate text-xs" title={m}>
-                  {m}
-                </div>
+        <div>{instances.map((i) => `${i.queue_issues.length} in ${i.name}`).join(" · ")}</div>
+        <Collapsible className="group/issues w-full">
+          <CollapsibleTrigger className="text-muted-foreground hover:text-foreground relative mt-2 flex items-center gap-1 rounded-sm text-xs font-medium tracking-wide uppercase outline-none after:absolute after:-inset-x-2 after:-inset-y-3 focus-visible:ring-3 focus-visible:ring-ring/50">
+            <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/issues:rotate-90" />
+            Downloads
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <ul className="w-full divide-y">
+              {issues.map((issue, i) => (
+                <li key={i} className="min-w-0 py-2">
+                  <div className="text-foreground truncate" title={issue.title}>
+                    <ReleaseName name={issue.title} />
+                    <span className="text-muted-foreground"> · {issue.arr}</span>
+                  </div>
+                  {issue.messages.map((m, j) => (
+                    <div key={j} className="truncate text-xs" title={m}>
+                      {m}
+                    </div>
+                  ))}
+                </li>
               ))}
-            </li>
-          ))}
-        </ul>
+            </ul>
+          </CollapsibleContent>
+        </Collapsible>
       </AlertDescription>
     </Alert>
   );
