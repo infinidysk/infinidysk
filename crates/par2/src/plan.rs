@@ -259,7 +259,7 @@ pub(super) fn recovery(
         .iter()
         .filter(|p| p.set == set && &p.kind == RECOVERY)
     {
-        let row = Recovery::read(
+        let row = Recovery::scanned(
             &reader.buf[packet.body.start - HEADER..packet.body.end],
             set,
             slice_size,

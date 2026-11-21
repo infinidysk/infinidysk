@@ -32,6 +32,28 @@ fn verification_without_first_file_checksums_keeps_global_source_indices() {
 }
 
 #[test]
+fn a_damaged_recovery_header_does_not_hide_later_packets_in_the_volume() {
+    let at = VOLUME
+        .windows(16)
+        .position(|w| w == b"PAR 2.0\0RecvSlic")
+        .unwrap()
+        - 48;
+    let mut header = VOLUME[at..at + 64].to_vec();
+    header[8..16].copy_from_slice(&(1u64 << 40).to_le_bytes());
+    let mut volume = header;
+    volume.extend_from_slice(INDEX);
+    let mut damaged = Reader::default();
+    damaged.push(&volume);
+    damaged.end_volume();
+    let id = read(INDEX).set_id.unwrap();
+    assert_eq!(damaged.verification_set(id).unwrap().sources().len(), 2);
+    damaged.push(VOLUME);
+    let set = damaged.repair_set(id).unwrap();
+    assert_eq!(set.inputs().len(), 27);
+    assert_eq!(set.recovery().len(), 3);
+}
+
+#[test]
 fn plans_and_reconstructs_a_complete_independent_set() {
     let reader = reader();
     let set = reader.repair_set(read(INDEX).set_id.unwrap()).unwrap();
@@ -58,7 +80,12 @@ fn plans_and_reconstructs_a_complete_independent_set() {
             repair.feed(i, &data, || false).unwrap();
         }
     }
-    for recovered in repair.finish(|| false).unwrap() {
+    let recovered = repair.finish(|| false).unwrap();
+    assert_eq!(
+        recovered.iter().map(|r| r.index).collect::<Vec<_>>(),
+        [0, 26]
+    );
+    for recovered in recovered {
         let (_, range) = set.source(recovered.index).unwrap();
         let expected: Vec<u8> = (range.start..range.end)
             .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])

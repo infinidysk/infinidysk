@@ -45,6 +45,15 @@ pub struct Recovery<'a> {
 impl<'a> Recovery<'a> {
     /// Verify one complete recovery packet without copying its data.
     pub fn read(packet: &'a [u8], set: Id, slice_size: usize) -> Result<Self, Error> {
+        let row = Self::scanned(packet, set, slice_size)?;
+        if <[u8; 16]>::from(Md5::digest(&packet[32..])) != packet[16..32] {
+            return Err(Error::Invalid("recovery packet length or checksum"));
+        }
+        Ok(row)
+    }
+
+    /// [`Self::read`] for a packet whose MD5 the scanner already checked.
+    pub(crate) fn scanned(packet: &'a [u8], set: Id, slice_size: usize) -> Result<Self, Error> {
         if slice_size == 0 || !slice_size.is_multiple_of(4) {
             return Err(Error::Invalid(
                 "slice size must be a positive multiple of four",
@@ -58,9 +67,7 @@ impl<'a> Recovery<'a> {
             return Err(Error::Invalid("recovery packet identity or length"));
         }
         let length = u64::from_le_bytes(packet[8..16].try_into().expect("checked packet header"));
-        if usize::try_from(length) != Ok(packet.len())
-            || <[u8; 16]>::from(Md5::digest(&packet[32..])) != packet[16..32]
-        {
+        if usize::try_from(length) != Ok(packet.len()) {
             return Err(Error::Invalid("recovery packet length or checksum"));
         }
         Ok(Self {
@@ -253,17 +260,21 @@ impl<'a> Repair<'a> {
             {
                 add_scaled(&mut data, row, coefficient, &cancelled)?;
             }
-            if !self.inputs[index].checksum.matches_cancellable(
-                self.size as u64,
-                &data,
-                &cancelled,
-            )? {
+            let length = self.inputs[index].length;
+            // PAR2 zero-pads a short final slice; anything else there is not this input.
+            if data[length..].iter().any(|&b| b != 0)
+                || !self.inputs[index].checksum.matches_cancellable(
+                    self.size as u64,
+                    &data[..length],
+                    &cancelled,
+                )?
+            {
                 return Err(Error::Slice {
                     index,
                     reason: "reconstructed checksum mismatch",
                 });
             }
-            data.truncate(self.inputs[index].length);
+            data.truncate(length);
             output.push(Recovered { index, data });
         }
         Ok(output)

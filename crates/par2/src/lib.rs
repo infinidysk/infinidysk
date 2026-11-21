@@ -144,19 +144,22 @@ struct Scan {
     found: Vec<Found>,
     reached_recovery: bool,
     truncated: bool,
+    /// `pos` is a candidate packet that needs more bytes.
+    waiting: bool,
 }
 
 impl Scan {
     /// Scans `buf` from where the previous call stopped; `buf` extends that call's buffer.
     fn run(&mut self, buf: &[u8]) {
         self.truncated = false;
+        self.waiting = false;
         while let Some(p) = buf[self.pos..]
             .windows(MAGIC.len())
             .position(|w| w == MAGIC)
             .map(|p| p + self.pos)
         {
             let Some(header) = buf.get(p..p + HEADER) else {
-                (self.pos, self.truncated) = (p, true);
+                (self.pos, self.truncated, self.waiting) = (p, true, true);
                 return;
             };
             let len = usize::try_from(u64::from_le_bytes(
@@ -173,7 +176,7 @@ impl Scan {
                 self.reached_recovery = true;
             }
             let Some(packet) = p.checked_add(len).and_then(|end| buf.get(p..end)) else {
-                (self.pos, self.truncated) = (p, !recovery);
+                (self.pos, self.truncated, self.waiting) = (p, !recovery, true);
                 return;
             };
             if <[u8; 16]>::from(Md5::digest(&packet[32..])) != header[16..32] {
@@ -232,8 +235,13 @@ impl Reader {
         self.scan.run(&self.buf);
     }
 
-    /// A skipped article or a new volume cannot continue an incomplete packet.
+    /// A skipped article or a new volume cannot continue an incomplete packet. Whole
+    /// packets buffered after it, such as metadata after recovery data, still count.
     pub fn end_volume(&mut self) {
+        while self.scan.waiting {
+            self.scan.pos += 1;
+            self.scan.run(&self.buf);
+        }
         self.scan.pos = self.buf.len();
         self.scan.reached_recovery = false;
         self.scan.truncated = false;

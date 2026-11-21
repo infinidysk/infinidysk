@@ -249,7 +249,9 @@ fn reconstructs_odd_final_slices_with_nonzero_exponents() {
                     repair.feed(i, bytes, || false).unwrap();
                 }
             }
-            for output in repair.finish(|| false).unwrap() {
+            let output = repair.finish(|| false).unwrap();
+            assert_eq!(output.iter().map(|o| o.index).collect::<Vec<_>>(), missing);
+            for output in output {
                 assert_eq!(output.data, slices[output.index]);
             }
         }
@@ -259,6 +261,44 @@ fn reconstructs_odd_final_slices_with_nonzero_exponents() {
 fn rehash(packet: &mut [u8]) {
     let hash = Md5::digest(&packet[32..]);
     packet[16..32].copy_from_slice(&hash);
+}
+
+#[test]
+fn a_reconstructed_short_slice_must_have_zero_padding() {
+    use infinidysk_par2::Slice;
+    let set = [7; 16];
+    let row = |data: &[u8; 4]| {
+        let mut packet = b"PAR2\0PKT".to_vec();
+        packet.extend_from_slice(&72u64.to_le_bytes());
+        packet.extend_from_slice(&[0; 16]);
+        packet.extend_from_slice(&set);
+        packet.extend_from_slice(b"PAR 2.0\0RecvSlic");
+        packet.extend_from_slice(&0u32.to_le_bytes());
+        packet.extend_from_slice(data);
+        rehash(&mut packet);
+        packet
+    };
+    let finish = |packet: &[u8], checksum| {
+        let rows = [Recovery::read(packet, set, 4).unwrap()];
+        let inputs = [Input {
+            length: 1,
+            checksum,
+        }];
+        Repair::new(4, &inputs, &[0], &rows, LIMIT, || false)
+            .unwrap()
+            .finish(|| false)
+    };
+    // Checksums that cover the padding bytes cannot hide them.
+    let unpadded = Slice {
+        md5: Md5::digest(b"abcd").into(),
+        crc32: infinidysk_yenc::crc32(0, b"abcd"),
+    };
+    assert!(matches!(
+        finish(&row(b"abcd"), unpadded),
+        Err(Error::Slice { index: 0, .. })
+    ));
+    let padded = Slice::checksum(4, b"a").unwrap();
+    assert_eq!(finish(&row(b"a\0\0\0"), padded).unwrap()[0].data, b"a");
 }
 
 #[test]
@@ -279,7 +319,9 @@ fn selects_independent_spares_after_a_dependent_row() {
     for (i, data) in slices.iter().enumerate().skip(2) {
         repair.feed(i, data, || false).unwrap();
     }
-    for output in repair.finish(|| false).unwrap() {
+    let output = repair.finish(|| false).unwrap();
+    assert_eq!(output.iter().map(|o| o.index).collect::<Vec<_>>(), [0, 1]);
+    for output in output {
         assert_eq!(output.data, slices[output.index]);
     }
     assert!(matches!(
@@ -314,11 +356,13 @@ fn verifies_reconstructed_bytes_even_when_packet_md5_is_valid() {
 fn cancellation_after_a_partial_feed_prevents_reuse() {
     let (size, inputs, slices, rows) = fixture();
     let mut repair = Repair::new(size, &inputs, &[0, 1], &rows, LIMIT, || false).unwrap();
+    assert_eq!((size, slices[2].len()), (4096, 4096));
     let calls = std::cell::Cell::new(0);
+    // Calls: feed, checksum, first row entry and chunk, then the second row entry.
     let result = repair.feed(2, &slices[2], || {
         let count = calls.get();
         calls.set(count + 1);
-        count >= 3
+        count >= 4
     });
     assert!(matches!(result, Err(Error::Cancelled)));
     assert!(matches!(
@@ -354,12 +398,13 @@ fn workspace_limit_is_checked_before_reconstruction() {
 fn a_panicking_callback_cannot_leave_partial_rows_reusable() {
     let (size, inputs, slices, rows) = fixture();
     let mut repair = Repair::new(size, &inputs, &[0, 1], &rows, LIMIT, || false).unwrap();
+    assert_eq!((size, slices[2].len()), (4096, 4096));
     let calls = std::cell::Cell::new(0);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = repair.feed(2, &slices[2], || {
             let count = calls.get();
             calls.set(count + 1);
-            assert!(count < 3, "callback failure after the first row");
+            assert!(count < 4, "callback failure after the first row");
             false
         });
     }));
