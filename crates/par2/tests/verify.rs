@@ -64,6 +64,18 @@ fn detects_content_mismatch_and_contradictory_hashes() {
         Err(Error::Slice { index: 0, .. })
     ));
     assert!(verifier.finish(|| false).is_err());
+    let bytes: Vec<_> = (0..usize::try_from(file.length).unwrap())
+        .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
+        .collect();
+    let mut wrong_hash = file.hash;
+    wrong_hash[0] ^= 1;
+    let mut verifier =
+        Verifier::new(file.length, wrong_hash, index.slice_size, &file.slices).unwrap();
+    verifier.push(&bytes, || false).unwrap();
+    assert!(matches!(
+        verifier.finish(|| false),
+        Err(Error::FileChecksum)
+    ));
     let mut verifier = Verifier::new(3, Md5::digest(b"abc").into(), 0, &[]).unwrap();
     verifier.push(b"def", || false).unwrap();
     assert!(matches!(

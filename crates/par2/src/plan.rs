@@ -251,6 +251,11 @@ pub(super) fn recovery(
     set: Id,
     slice_size: usize,
 ) -> Result<Vec<Recovery<'_>>, Error> {
+    if slice_size == 0 || !slice_size.is_multiple_of(4) {
+        return Err(Error::Invalid(
+            "slice size must be a positive multiple of four",
+        ));
+    }
     let mut recovery: Vec<Recovery<'_>> = reserved(0)?;
     let mut exponents: HashMap<u32, usize> = HashMap::new();
     for packet in reader
@@ -259,6 +264,9 @@ pub(super) fn recovery(
         .iter()
         .filter(|p| p.set == set && &p.kind == RECOVERY)
     {
+        if packet.body.len().checked_sub(4) != Some(slice_size) {
+            continue;
+        }
         let row = Recovery::scanned(
             &reader.buf[packet.body.start - HEADER..packet.body.end],
             set,

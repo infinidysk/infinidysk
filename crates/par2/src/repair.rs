@@ -5,6 +5,8 @@ use md5::{Digest, Md5};
 use crate::field::FIELD;
 use crate::{HEADER, Id, MAGIC, RECOVERY, Slice};
 
+pub(super) const MAX_PADDING_BYTES: u64 = 256 * 1024 * 1024;
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error("invalid PAR2 input: {0}")]
@@ -126,6 +128,12 @@ impl<'a> Repair<'a> {
             || missing.last().is_some_and(|&i| i >= inputs.len())
         {
             return Err(Error::Invalid("input lengths or missing indices"));
+        }
+        let mut padding_left = MAX_PADDING_BYTES;
+        for input in inputs {
+            padding_left = padding_left
+                .checked_sub((slice_size - input.length) as u64)
+                .ok_or(Error::Invalid("checksum padding exceeds limit"))?;
         }
         if recovery
             .iter()

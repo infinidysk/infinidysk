@@ -298,6 +298,10 @@ fn a_reconstructed_short_slice_must_have_zero_padding() {
         Err(Error::Slice { index: 0, .. })
     ));
     let padded = Slice::checksum(4, b"a").unwrap();
+    assert!(matches!(
+        finish(&row(b"abcd"), padded),
+        Err(Error::Slice { .. })
+    ));
     assert_eq!(finish(&row(b"a\0\0\0"), padded).unwrap()[0].data, b"a");
 }
 

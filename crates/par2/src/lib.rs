@@ -267,7 +267,8 @@ impl Reader {
         self.scan.reached_recovery
     }
 
-    /// What [`read`] returns for everything pushed so far.
+    /// Equivalent to [`read`] on the concatenated input when no volume boundaries
+    /// were declared. [`Self::end_volume`] prevents packets from spanning a gap.
     pub fn index(&self) -> Index {
         self.scan.index(&self.buf)
     }

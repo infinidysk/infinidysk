@@ -38,6 +38,12 @@ impl<'a> Verifier<'a> {
         {
             return Err(Error::Invalid("slice checksum count or size"));
         }
+        if !slices.is_empty()
+            && !length.is_multiple_of(slice_size)
+            && slice_size - length % slice_size > crate::repair::MAX_PADDING_BYTES
+        {
+            return Err(Error::Invalid("checksum padding exceeds limit"));
+        }
         Ok(Self {
             length,
             expected_hash: hash,

@@ -475,6 +475,8 @@ fn incomplete_and_corrupt_recovery_packets_are_never_counted() {
     assert!(reader.repair_set(set).unwrap().recovery().is_empty());
     reader.push(&row[68..]);
     assert_eq!(reader.repair_set(set).unwrap().recovery().len(), 1);
+    reader.push(&packet(set, b"PAR 2.0\0RecvSlic", &[0; 8]));
+    assert_eq!(reader.repair_set(set).unwrap().recovery().len(), 1);
     let mut wrong = row.to_vec();
     wrong[68] ^= 1;
     reader.push(&wrong);
