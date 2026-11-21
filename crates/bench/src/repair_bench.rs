@@ -153,9 +153,9 @@ pub(super) fn run(
     server_rt: &Runtime,
     client_rt: &Runtime,
 ) -> Result<()> {
-    let root =
-        Scratch(std::env::temp_dir().join(format!("infinidysk-par2-bench-{}", ItemId::new())));
-    std::fs::create_dir(&root.0)?;
+    let path = std::env::temp_dir().join(format!("infinidysk-par2-bench-{}", ItemId::new()));
+    std::fs::create_dir(&path)?;
+    let root = Scratch(path);
     let fixture = Fixture::generate(&root.0)?;
     let mut report = Map::new();
     for scenario in scenarios(filter) {
@@ -222,6 +222,9 @@ pub(super) fn run(
                     }
                     let playback_metrics = if playing {
                         sessions.store(true, Ordering::Relaxed);
+                        if checking.as_ref().is_some_and(tokio::task::JoinHandle::is_finished) {
+                            return Err("availability check finished before playback started".into());
+                        }
                         let (bytes, timing) = read(&scenario, Arc::clone(&client), Arc::clone(&layout), true, true, None).await?;
                         sessions.store(false, Ordering::Relaxed);
                         assert!(bytes == playback.data, "playback bytes differ from fixture");
