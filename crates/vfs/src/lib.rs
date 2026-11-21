@@ -27,7 +27,7 @@ use infinidysk_stream::{Budget, Cache, Fault, Gaps};
 use uuid::Uuid;
 
 pub use fence::{
-    ArmedWrites, Publication, ReadFence, ReadLease, ReadVersion, RetiredWrites, WriteLease,
+    ArmedWrites, Publication, ReadFence, ReadLease, ReadVersion, RetiredWrites, WriteLease, Writers,
 };
 pub use reader::{PartsReader, Reader};
 pub use session::{

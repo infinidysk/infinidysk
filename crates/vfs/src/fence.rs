@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::io;
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
@@ -235,13 +237,47 @@ impl Fences {
     }
 }
 
+/// A publication's item writers. Borrowing the publication makes the writers drop
+/// before global admission reopens.
+#[must_use]
+pub struct Writers<'a> {
+    leases: Vec<WriteLease>,
+    _publication: PhantomData<&'a Publication>,
+}
+
+impl Deref for Writers<'_> {
+    type Target = [WriteLease];
+
+    fn deref(&self) -> &[WriteLease] {
+        &self.leases
+    }
+}
+
+impl DerefMut for Writers<'_> {
+    fn deref_mut(&mut self) -> &mut [WriteLease] {
+        &mut self.leases
+    }
+}
+
+impl<'w> IntoIterator for &'w mut Writers<'_> {
+    type Item = &'w mut WriteLease;
+    type IntoIter = std::slice::IterMut<'w, WriteLease>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.leases.iter_mut()
+    }
+}
+
 impl Publication {
-    pub async fn writers(&self) -> Vec<WriteLease> {
-        let mut writers = Vec::with_capacity(self.fences.len());
+    pub async fn writers(&self) -> Writers<'_> {
+        let mut leases = Vec::with_capacity(self.fences.len());
         for fence in &self.fences {
-            writers.push(fence.write().await);
+            leases.push(fence.write().await);
         }
-        writers
+        Writers {
+            leases,
+            _publication: PhantomData,
+        }
     }
 }
 
