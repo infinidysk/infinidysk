@@ -1207,7 +1207,7 @@ async fn fetch(
         Some(key) => client.repaired_omitted(key).await,
         None => client.repaired(id, begin).await,
     }
-    .map_err(io::Error::other)?;
+    .map_err(|error| io::Error::other(Arc::new(error)))?;
     if let Some(body) = repaired {
         if body.data.len() != size {
             return Err(io::Error::new(
