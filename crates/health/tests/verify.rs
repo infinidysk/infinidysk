@@ -426,7 +426,19 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
     };
     let corrupt = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let fault = Arc::clone(&corrupt);
+    let posted = post("verify", "a.bin", &data, ARTICLE);
+    let non_spot = posted[2].message_id.clone();
+    let non_spot_body = Body {
+        data: bytes::Bytes::copy_from_slice(&data[2 * ARTICLE..3 * ARTICLE]),
+        offset: (2 * ARTICLE) as u64,
+        part: Some(3),
+        ..body.clone()
+    };
     let lookup: infinidysk_nntp::RepairLookup = Box::new(move |requested| {
+        if matches!(requested, RepairKey::Article(id) if id == non_spot) {
+            let repaired = non_spot_body.clone();
+            return Some(Box::pin(async move { Ok(Some(repaired)) }));
+        }
         if !matches!(requested, RepairKey::Omitted(requested) if *requested == key) {
             return None;
         }
@@ -440,13 +452,13 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
             }
         }))
     });
-    let articles = post("verify", "a.bin", &data, ARTICLE)
+    let articles = posted
         .into_iter()
         .enumerate()
-        .filter_map(|(i, article)| (i != 1).then_some(article));
-    let server = LoopbackServer::start_stalling(articles, 0, Duration::from_millis(100))
-        .await
-        .unwrap();
+        .filter_map(|(i, article)| (i != 1 && i != 2).then_some(article))
+        .collect::<Vec<_>>();
+    let first = articles[0].message_id.clone();
+    let server = LoopbackServer::start(articles).await.unwrap();
     let (_scratch, db, item, health) =
         stored_with_repairs(&server, &data, Some(proof), Some((key.nzb, lookup))).await;
     let source = db
@@ -474,17 +486,21 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
     .await
     .unwrap();
     let before = db.health(item.id).await.unwrap();
+    let options = AvailabilityOptions::default();
+    let progress = Arc::clone(&options.progress);
     assert!(matches!(
         health
-            .check_availability(
-                item.id,
-                &CancellationToken::new(),
-                AvailabilityOptions::default()
-            )
+            .check_availability(item.id, &CancellationToken::new(), options)
             .await
             .unwrap(),
         Availability::Available { .. }
     ));
+    assert_eq!(
+        progress
+            .body_bytes
+            .load(std::sync::atomic::Ordering::Relaxed),
+        (4 * ARTICLE + data.chunks(ARTICLE).last().unwrap().len()) as u64
+    );
     assert_eq!(db.health(item.id).await.unwrap(), before);
     assert!(health.step().await.unwrap());
     assert_eq!(
@@ -516,7 +532,7 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
         infinidysk_db::HealthState::Healthy
     );
     corrupt.store(false, std::sync::atomic::Ordering::Relaxed);
-    let bodies = server.body_commands();
+    let (arrived, release) = server.hold_article(&first);
     let running = {
         let health = Arc::clone(&health);
         let id = item.id;
@@ -530,14 +546,12 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
                 .await
         })
     };
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while server.body_commands() == bodies {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("verification has captured its source");
+    tokio::time::timeout(Duration::from_secs(3), arrived)
+        .await
+        .unwrap()
+        .unwrap();
     db.update_blob(key.nzb, b"changed original").await.unwrap();
+    release.send(()).unwrap();
     assert!(matches!(
         running.await.unwrap().unwrap(),
         Availability::Changed
@@ -662,13 +676,10 @@ async fn wait_for_body(server: &LoopbackServer) {
 #[tokio::test]
 async fn metadata_changed_during_verification_invalidates_the_result() {
     let (data, proof) = content();
-    let server = LoopbackServer::start_stalling(
-        post("verify", "a.bin", &data, ARTICLE),
-        0,
-        Duration::from_millis(200),
-    )
-    .await
-    .unwrap();
+    let articles = post("verify", "a.bin", &data, ARTICLE);
+    let first = articles[0].message_id.clone();
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let (arrived, release) = server.hold_article(&first);
     let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let id = item.id;
     let running = tokio::spawn(async move {
@@ -680,7 +691,10 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
             )
             .await
     });
-    wait_for_body(&server).await;
+    tokio::time::timeout(Duration::from_secs(3), arrived)
+        .await
+        .unwrap()
+        .unwrap();
     let blob_id = item.meta_blob.unwrap();
     let mut meta = blob::decode_meta(&db.blob(blob_id).await.unwrap().unwrap()).unwrap();
     let FileMeta::Nzb(ref mut file) = meta else {
@@ -690,6 +704,7 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
     db.update_blob(blob_id, &blob::encode_meta(&meta).unwrap())
         .await
         .unwrap();
+    release.send(()).unwrap();
     assert!(matches!(
         running.await.unwrap().unwrap(),
         Availability::Changed
@@ -699,13 +714,10 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
 #[tokio::test]
 async fn publication_drains_existing_verification_and_holds_new_verification() {
     let (data, proof) = content();
-    let server = LoopbackServer::start_stalling(
-        post("verify", "a.bin", &data, ARTICLE),
-        0,
-        Duration::from_millis(150),
-    )
-    .await
-    .unwrap();
+    let articles = post("verify", "a.bin", &data, ARTICLE);
+    let first = articles[0].message_id.clone();
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let (arrived, release) = server.hold_article(&first);
     let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let checking = tokio::spawn({
         let health = Arc::clone(&health);
@@ -720,12 +732,16 @@ async fn publication_drains_existing_verification_and_holds_new_verification() {
                 .unwrap()
         }
     });
-    wait_for_body(&server).await;
+    tokio::time::timeout(Duration::from_secs(3), arrived)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(15), db.pause_writes())
             .await
             .is_err()
     );
+    release.send(()).unwrap();
     assert!(matches!(
         checking.await.unwrap(),
         Availability::Available { .. }
@@ -839,13 +855,10 @@ async fn aborting_the_caller_releases_verification_admission() {
 #[tokio::test]
 async fn unchanged_metadata_remains_valid_after_a_blob_epoch_change() {
     let (data, proof) = content();
-    let server = LoopbackServer::start_stalling(
-        post("verify", "a.bin", &data, ARTICLE),
-        0,
-        Duration::from_millis(200),
-    )
-    .await
-    .unwrap();
+    let articles = post("verify", "a.bin", &data, ARTICLE);
+    let first = articles[0].message_id.clone();
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let (arrived, release) = server.hold_article(&first);
     let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let running = tokio::spawn(async move {
         health
@@ -856,10 +869,14 @@ async fn unchanged_metadata_remains_valid_after_a_blob_epoch_change() {
             )
             .await
     });
-    wait_for_body(&server).await;
+    tokio::time::timeout(Duration::from_secs(3), arrived)
+        .await
+        .unwrap()
+        .unwrap();
     let blob_id = item.meta_blob.unwrap();
     let bytes = db.blob(blob_id).await.unwrap().unwrap();
     db.update_blob(blob_id, &bytes).await.unwrap();
+    release.send(()).unwrap();
     assert!(matches!(
         running.await.unwrap().unwrap(),
         Availability::Available { .. }

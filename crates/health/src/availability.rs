@@ -201,7 +201,8 @@ impl Health {
                                 progress.checked.fetch_add(1, Ordering::Release);
                                 return Ok(Probe::Present);
                             }
-                            let result = if body {
+                            let mut result = None;
+                            if body || direct.client.has_repair_lookup() {
                                 let _permit = body_permits
                                     .acquire()
                                     .await
@@ -214,20 +215,49 @@ impl Health {
                                 {
                                     return Err("source read allowance exceeded");
                                 }
-                                let (result, bytes) =
-                                    check::fetch(direct, segment, begin, proof).await;
-                                if let Some(bytes) = bytes {
+                                let used = if body {
+                                    let (probe, bytes) =
+                                        check::fetch(direct, segment, begin, proof).await;
+                                    result = Some(probe);
+                                    bytes.map(|bytes| bytes.len())
+                                } else {
+                                    match direct.client.repaired(&segment.id, None).await {
+                                        Ok(Some(repair)) => {
+                                            result = Some(Probe::Present);
+                                            Some(repair.data.len())
+                                        }
+                                        Ok(None) => Some(0),
+                                        Err(error) => {
+                                            result = Some(Probe::Inconclusive(error));
+                                            None
+                                        }
+                                    }
+                                };
+                                if let Some(used) = used {
                                     progress
                                         .body_bytes
-                                        .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                                        .fetch_add(used as u64, Ordering::Relaxed);
                                     remaining.fetch_add(
-                                        MAX_DECODED_LEN as u64 - bytes.len() as u64,
+                                        MAX_DECODED_LEN as u64 - used as u64,
                                         Ordering::Relaxed,
                                     );
                                 }
-                                result
-                            } else {
-                                check::stat(direct, segment).await
+                            }
+                            let result = match result {
+                                Some(probe) => probe,
+                                None => match direct
+                                    .client
+                                    .provider_stat(
+                                        &segment.id,
+                                        infinidysk_nntp::Workload::Health,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(()) => Probe::Present,
+                                    Err(SourceError::NotFound) => Probe::Missing,
+                                    Err(error) => Probe::Inconclusive(error),
+                                },
                             };
                             if let Some(receipt) = &mut receipt {
                                 **receipt = matches!(result, Probe::Present);
