@@ -1747,7 +1747,7 @@ async fn check_file_names_a_1x_database() {
 }
 
 #[tokio::test]
-async fn requested_checks_and_repairs_precede_routine_checks() {
+async fn due_repairs_run_before_new_checks_and_later_work_waits_in_the_schedule() {
     let db = Db::connect("sqlite::memory:").await.expect("db");
     let root = db
         .item(ItemId::CONTENT)
@@ -1755,11 +1755,12 @@ async fn requested_checks_and_repairs_precede_routine_checks() {
         .expect("root")
         .expect("content");
     let names = [
-        "routine.mkv",
+        "unchecked.mkv",
         "repair.mkv",
         "hidden.mkv",
         "requested.mkv",
         "playback.mkv",
+        "later.mkv",
     ];
     let mut files = Vec::new();
     let mut blobs = Vec::new();
@@ -1771,15 +1772,16 @@ async fn requested_checks_and_repairs_precede_routine_checks() {
         blobs.push((blob, b"metadata".as_slice()));
     }
     db.insert(&files, &blobs).await.expect("insert");
-    for (index, state, reason) in [
-        (1, HealthState::Repairing, Recheck::None),
-        (2, HealthState::Hidden, Recheck::None),
-        (3, HealthState::Healthy, Recheck::User),
-        (4, HealthState::Suspect, Recheck::Playback),
+    for (index, state, next_check, reason) in [
+        (1, HealthState::Repairing, 1, Recheck::None),
+        (2, HealthState::Hidden, 2, Recheck::None),
+        (3, HealthState::Healthy, 1, Recheck::User),
+        (4, HealthState::Suspect, 1, Recheck::Playback),
+        (5, HealthState::Hidden, 1_000, Recheck::None),
     ] {
         let status = HealthStatus {
             state,
-            next_check: Some(if index == 2 { 2 } else { 1 }),
+            next_check: Some(next_check),
             ..HealthStatus::default()
         };
         db.set_health(files[index].id, &status, Recheck::None)
@@ -1789,7 +1791,15 @@ async fn requested_checks_and_repairs_precede_routine_checks() {
             .await
             .expect("recheck");
     }
-    let work = db.due_health_work(10, true, 10).await.expect("work");
-    let actual: Vec<_> = work.into_iter().map(|(item, _)| item.id).collect();
-    assert_eq!(actual, [4, 3, 1, 2, 0].map(|index| files[index].id));
+    let ids = |work: Vec<(Item, HealthStatus)>| {
+        work.into_iter()
+            .map(|(item, _)| item.id)
+            .collect::<Vec<_>>()
+    };
+
+    let due = ids(db.due_health_work(10, true, 10).await.expect("due"));
+    let schedule = ids(db.health_schedule(10, true, 10).await.expect("schedule"));
+
+    assert_eq!(due, [4, 1, 2, 0, 3].map(|index| files[index].id));
+    assert_eq!(schedule, [4, 1, 2, 0, 3, 5].map(|index| files[index].id));
 }

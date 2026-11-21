@@ -2129,12 +2129,34 @@ impl Db {
     }
 
     /// Up to `limit` items with health work due at `now`, most urgent first: playback
-    /// reports, never checked, user rechecks, then by schedule (newest release on ties).
-    /// Without `routine` only rechecks and pending repairs are returned.
-    // ponytail: never-checked rows are not in the `next_health_check` index; a scan is
-    // fine at library scale and polls are rare.
+    /// reports, due repairs and hidden follow-ups, never checked, user rechecks, then by
+    /// schedule (newest release on ties). Without `routine` only rechecks and pending
+    /// repairs are returned.
     pub async fn due_health_work(
         &self,
+        now: i64,
+        routine: bool,
+        limit: i64,
+    ) -> Result<Vec<(Item, HealthStatus)>, Error> {
+        self.health_work(now, now, routine, limit).await
+    }
+
+    /// Up to `limit` items with health work at any time, in the order
+    /// [`Self::due_health_work`] takes them at `now`, then later work by due time.
+    pub async fn health_schedule(
+        &self,
+        now: i64,
+        routine: bool,
+        limit: i64,
+    ) -> Result<Vec<(Item, HealthStatus)>, Error> {
+        self.health_work(i64::MAX, now, routine, limit).await
+    }
+
+    // ponytail: never-checked rows are not in the `next_health_check` index; a scan is
+    // fine at library scale and polls are rare.
+    async fn health_work(
+        &self,
+        until: i64,
         now: i64,
         routine: bool,
         limit: i64,
@@ -2145,16 +2167,18 @@ impl Db {
                 (recheck_requested <> 0 AND health_state NOT IN (4, 5)) \
                 OR (COALESCE(next_health_check, 0) <= $2 \
                     AND (health_state IN (4, 5) OR ($3 AND health_state <> 7)))) \
-             ORDER BY CASE WHEN recheck_requested = 2 THEN 0 WHEN recheck_requested = 1 THEN 1 \
-                WHEN health_state IN (4, 5) THEN 2 WHEN health_state = 0 THEN 3 ELSE 4 END, \
+             ORDER BY CASE WHEN recheck_requested = 2 THEN 0 \
+                WHEN health_state IN (4, 5) AND COALESCE(next_health_check, 0) <= $5 THEN 1 \
+                WHEN health_state = 0 THEN 2 WHEN recheck_requested = 1 THEN 3 ELSE 4 END, \
                 COALESCE(next_health_check, 0), COALESCE(release_date, created_at) DESC \
              LIMIT $4"
         );
         let rows: Vec<HealthWorkRow> = on!(self, pool => sqlx::query_as(sql)
             .bind(ItemKind::Directory as i16)
-            .bind(now)
+            .bind(until)
             .bind(routine)
             .bind(limit)
+            .bind(now)
             .fetch_all(pool)
             .await?);
         rows.into_iter().map(TryInto::try_into).collect()
