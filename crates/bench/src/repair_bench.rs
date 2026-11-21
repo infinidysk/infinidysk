@@ -153,12 +153,16 @@ pub(super) fn run(
     server_rt: &Runtime,
     client_rt: &Runtime,
 ) -> Result<()> {
+    let mut selected = scenarios(filter).peekable();
+    if selected.peek().is_none() {
+        return Err(format!("no PAR2 scenario matches {filter}").into());
+    }
     let path = std::env::temp_dir().join(format!("infinidysk-par2-bench-{}", ItemId::new()));
     std::fs::create_dir(&path)?;
     let root = Scratch(path);
     let fixture = Fixture::generate(&root.0)?;
     let mut report = Map::new();
-    for scenario in scenarios(filter) {
+    for scenario in selected {
         let mode = scenario.name;
         let (playback, layout) = generate(&scenario);
         let (articles, nzb) = fixture.posting(mode)?;
@@ -175,7 +179,6 @@ pub(super) fn run(
             let metrics = client_rt.block_on(async {
                 let client = client(&scenario, server.addr().port())?;
                 let permits = client.free_permits();
-                let cpu = usage::cpu();
                 let stop = CancellationToken::new();
                 if mode.starts_with("par2-availability") {
                     let db = Db::connect("sqlite::memory:").await?;
@@ -201,6 +204,7 @@ pub(super) fn run(
                     let idle = mode.ends_with("-idle");
                     let playing = idle || mode.ends_with("-active");
                     let foreground = Arc::clone(&sessions);
+                    let cpu = usage::cpu();
                     let checking = (!idle).then(|| tokio::spawn(async move {
                         let started = Instant::now();
                         let evidence = Arc::new(Evidence::default());
@@ -249,6 +253,7 @@ pub(super) fn run(
                         "playback": playback_metrics, "preemptions": preemptions,
                         "cpuMs": usage::cpu_ms_since(cpu), "maxRssBytes": usage::max_rss_bytes(), "permitsRestored": true }));
                 }
+                let cpu = usage::cpu();
                 if mode == "par2-verify" {
                     let started = Instant::now();
                     let result = execute(Arc::clone(&client), Arc::clone(&nzb), &stop, true).await?;
@@ -332,9 +337,6 @@ pub(super) fn run(
             runs.push(metrics);
         }
         report.insert(mode.to_owned(), Value::Array(runs));
-    }
-    if report.is_empty() {
-        return Err("no PAR2 scenarios match the filter".into());
     }
     if let Some(path) = json_path {
         std::fs::write(
