@@ -159,7 +159,7 @@ impl Health {
                 meter: None,
             };
             let result = runtime.block_on(async {
-                let (segments, _, _) = check::flatten(&meta);
+                let (segments, _, corrupt) = check::flatten(&meta);
                 let total = segments.len();
                 options
                     .progress
@@ -176,7 +176,10 @@ impl Health {
                     .iter()
                     .enumerate()
                     .map(|(i, &(segment, begin, proof))| {
-                        let body = segment.id.is_empty() || [0, total / 2, total - 1].contains(&i);
+                        // STAT cannot clear a recorded corrupt article; only its body can.
+                        let body = segment.id.is_empty()
+                            || corrupt.contains(&i)
+                            || [0, total / 2, total - 1].contains(&i);
                         let slot = evidence.filter(|_| !segment.id.is_empty()).map(|evidence| {
                             evidence.slot(Key {
                                 epoch,

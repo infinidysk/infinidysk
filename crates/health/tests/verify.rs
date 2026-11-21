@@ -180,6 +180,41 @@ async fn availability_checks_all_articles_without_a_proof_or_a_full_download() {
 }
 
 #[tokio::test]
+async fn availability_reads_the_body_of_a_recorded_corrupt_article() {
+    let (data, _) = content();
+    let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
+        .await
+        .unwrap();
+    let (_scratch, db, item, health) = stored(&server, &data, None).await;
+    let blob_id = item.meta_blob.expect("stored item has metadata");
+    let raw = db.blob(blob_id).await.unwrap().expect("metadata is stored");
+    let FileMeta::Nzb(mut file) = blob::decode_meta(&raw).unwrap() else {
+        unreachable!()
+    };
+    file.segments.corrupt = vec![2];
+    db.update_blob(blob_id, &blob::encode_meta(&FileMeta::Nzb(file)).unwrap())
+        .await
+        .unwrap();
+    let result = health
+        .check_availability(
+            item.id,
+            &CancellationToken::new(),
+            AvailabilityOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, Availability::Available { .. }),
+        "{result:?}"
+    );
+    assert_eq!(
+        server.body_commands(),
+        4,
+        "STAT cannot clear a corrupt article"
+    );
+}
+
+#[tokio::test]
 async fn availability_probes_continue_while_a_body_spot_check_waits() {
     let (data, _) = content();
     let articles = post("verify", "a.bin", &data, ARTICLE);
