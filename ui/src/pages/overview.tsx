@@ -1,11 +1,11 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, CircleAlert, Info } from "lucide-react";
+import { ChevronRight, CircleAlert, Info, Star, X } from "lucide-react";
 import { type PointerEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, body, type Schemas } from "../api/client";
 import { ago, bytes, duration, stamp } from "../format";
 import { cn } from "@/lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -87,6 +87,9 @@ export function WriterError({ error }: { error?: string | null }) {
 
 export function Overview() {
   const [span, setSpan] = useState<Window>("24h");
+  const [starNoticeDismissed, setStarNoticeDismissed] = useState(
+    () => localStorage.getItem("infinidysk.dismissed-github-star-notice") === "true",
+  );
   // Kept fresh by the `live` server-sent event; the request only fills the first paint.
   const live = useQuery({
     queryKey: ["live"],
@@ -98,6 +101,33 @@ export function Overview() {
   return (
     <>
       <PageHeader title="Overview" />
+      {!starNoticeDismissed && (
+        <Alert className="mb-6">
+          <Star className="text-primary" />
+          <AlertTitle>Enjoying infinidysk?</AlertTitle>
+          <AlertAction>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Dismiss GitHub star notice"
+              onClick={() => {
+                localStorage.setItem("infinidysk.dismissed-github-star-notice", "true");
+                setStarNoticeDismissed(true);
+              }}
+            >
+              <X />
+            </Button>
+          </AlertAction>
+          <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span>GitHub stars help increase our CodeRabbit review rate limits and make the project easier to discover.</span>
+            <Button asChild size="sm" variant="outline">
+              <a href="https://github.com/infinidysk/infinidysk" target="_blank" rel="noreferrer">
+                <Star /> Star on GitHub
+              </a>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       <Imported />
       <Leftovers />
       <WriterError error={live.data?.writer_error ?? history.data?.writer_error} />
