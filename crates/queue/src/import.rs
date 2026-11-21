@@ -993,13 +993,13 @@ async fn read_par2(
                         && (p.hash, p.hash_16k, p.length, &p.name)
                             == (f.hash, f.hash_16k, f.length, &f.name)
                         && (f.slices.is_empty() || p.slices.is_empty() || f.slices == p.slices);
-                if !compatible {
-                    previous.0 = None;
-                } else {
+                if compatible {
                     previous.1 = previous.1.max(index.slice_size);
                     if previous.2.slices.is_empty() {
                         previous.2.slices = f.slices;
                     }
+                } else {
+                    previous.0 = None;
                 }
             } else {
                 seen.insert(key, files.len());
