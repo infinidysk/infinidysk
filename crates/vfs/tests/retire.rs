@@ -57,7 +57,7 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
     };
     let crypt = Crypt {
         key: Key::Aes256([9; 32]),
-        iv: [3; 16],
+        iv: uuid::Uuid::new_v4().into_bytes(),
         size: 8185,
     };
     for mode in 0..6 {

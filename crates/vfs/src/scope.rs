@@ -54,6 +54,32 @@ impl Effects {
         self.articles.contains(id)
     }
 
+    pub(crate) fn remember_shared(&self, scope: &Scope, retained: &mut BTreeSet<String>) {
+        if scope.nzb == Some(self.nzb) || self.articles.is_empty() {
+            return;
+        }
+        let Some(meta) = scope.meta.upgrade() else {
+            return;
+        };
+        let mut remember = |segments: &infinidysk_core::Segments| {
+            retained.extend(
+                segments
+                    .items
+                    .iter()
+                    .filter(|segment| self.contains(&segment.id))
+                    .map(|segment| segment.id.clone()),
+            );
+        };
+        match meta.as_ref() {
+            FileMeta::Nzb(file) => remember(&file.segments),
+            FileMeta::Multipart(file) => {
+                for part in &file.parts {
+                    remember(&part.segments);
+                }
+            }
+        }
+    }
+
     pub(crate) fn touches(&self, ids: &BTreeSet<String>) -> bool {
         self.articles.iter().any(|id| ids.contains(id))
     }

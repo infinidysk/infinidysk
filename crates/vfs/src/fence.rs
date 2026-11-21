@@ -205,17 +205,15 @@ impl Fences {
         let mut fences: Vec<_> = live
             .iter()
             .filter(|inner| {
-                effects.touches(
-                    &inner
-                        .accessed
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner),
-                ) || inner
-                    .scopes
+                let scopes = inner.scopes.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut retained = inner
+                    .accessed
                     .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .iter()
-                    .any(|scope| effects.affects(scope))
+                    .unwrap_or_else(PoisonError::into_inner);
+                for scope in scopes.iter() {
+                    effects.remember_shared(scope, &mut retained);
+                }
+                scopes.iter().any(|scope| scope.nzb == Some(nzb)) || effects.touches(&retained)
             })
             .map(|inner| ReadFence {
                 inner: Arc::clone(inner),
@@ -539,6 +537,65 @@ impl Drop for Inner {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn reconciliation_selects_an_unread_alias_after_its_metadata_expires() {
+        use infinidysk_core::{ByteRange, NzbFile, PatchId, Segment, Segments, repair::Source};
+        let registry = Fences::default();
+        let meta = Arc::new(FileMeta::Nzb(NzbFile {
+            segments: Segments {
+                items: vec![Segment {
+                    id: "shared@test".into(),
+                    size: 1,
+                    fallbacks: vec![],
+                }],
+                ..Segments::default()
+            },
+            proof: None,
+        }));
+        let alias = registry.get(ItemId::new());
+        assert!(matches!(
+            registry.admit(
+                registry.stamp(),
+                alias.item(),
+                Scope::new(Some(BlobId::new()), &meta)
+            ),
+            Admission::Ready(_)
+        ));
+        let nzb = BlobId::new();
+        let patches = [Patch {
+            id: PatchId::new(),
+            source: Source {
+                set: [1; 16],
+                file: [2; 16],
+                range: ByteRange { start: 0, end: 1 },
+                file_length: 1,
+                message_id: Some("shared@test".into()),
+                part: None,
+                total: None,
+            },
+            sha256: [0; 32],
+        }];
+        let publication = registry.publish(nzb, &patches).unwrap();
+        let mut writers = publication.writers().await;
+        assert_eq!(writers.len(), 1);
+        writers[0].block();
+        drop(writers);
+        drop(publication);
+        drop(meta);
+        assert!(alias.read().await.is_err());
+        let retry = registry.publish(nzb, &patches).unwrap();
+        let mut writers = retry.writers().await;
+        assert_eq!(writers.len(), 1);
+        writers[0]
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
+        drop(writers);
+        assert!(alias.read().await.is_ok());
+    }
 
     #[tokio::test]
     async fn expired_metadata_keeps_only_accessed_articles_and_new_fetches_wait() {
