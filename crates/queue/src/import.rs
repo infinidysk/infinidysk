@@ -411,11 +411,16 @@ impl Articles for Job {
                 if let Some(data) = cached {
                     return Ok(data);
                 }
-                Ok(self
-                    .client
-                    .provider_body_with(id, Workload::Queue, Some(&probe), None, begin)
-                    .await?
-                    .data)
+                let body = if self.inspected() {
+                    self.client
+                        .body_unremembered(id, Workload::Queue, Some(&probe), begin)
+                        .await?
+                } else {
+                    self.client
+                        .provider_body_with(id, Workload::Queue, Some(&probe), None, begin)
+                        .await?
+                };
+                Ok(body.data)
             }
             .await;
             self.progress.answer();

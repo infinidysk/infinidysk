@@ -37,6 +37,7 @@ pub async fn discover_with_context(
         progress: context.progress,
         legacy_ids: std::collections::BTreeSet::new(),
     };
+    budget.scratch(MAX_DECODED_LEN)?;
     let reader = read_parity(client, nzb, &mut budget, None).await?;
     if reader.sets().is_empty() {
         return Err(Error::Unavailable("no verified PAR2 packets are available"));

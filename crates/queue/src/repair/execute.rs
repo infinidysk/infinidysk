@@ -537,7 +537,10 @@ async fn fetch_article(
             },
             file_length,
         };
-        client.repaired_omitted(&key).await.map_err(Error::Source)?
+        tokio::select! {
+            () = budget.cancel.cancelled() => return Err(Error::Cancelled),
+            body = client.repaired_omitted(&key) => body.map_err(Error::Source)?,
+        }
     } else {
         None
     };

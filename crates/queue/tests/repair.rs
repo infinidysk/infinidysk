@@ -1112,6 +1112,19 @@ async fn memory_limits_report_the_required_and_available_bytes() {
     let a = post("memory-a", "a.bin", &data(100_000), 7000);
     let nzb = document(&[("one", &a)]);
     let server = LoopbackServer::start(a).await.unwrap();
+    assert!(matches!(
+        infinidysk_queue::repair::discover(
+            &client(&server),
+            &nzb,
+            Limits {
+                memory_bytes: 128,
+                ..limits()
+            },
+            &CancellationToken::new()
+        )
+        .await,
+        Err(Error::Memory { available: 128, .. })
+    ));
     let reader = metadata();
     let set = reader.repair_set(reader.sets()[0]).unwrap();
     let error = resolve(

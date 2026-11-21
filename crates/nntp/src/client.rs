@@ -179,6 +179,10 @@ impl Client {
         let _ = self.repairs.set(lookup);
     }
 
+    pub fn has_repair_lookup(&self) -> bool {
+        self.repairs.get().is_some()
+    }
+
     /// Whether callers must check repairs before bypassing this client with cached/filler bytes.
     pub fn may_repair(&self, key: RepairKey<'_>) -> bool {
         self.repairs.get().and_then(|lookup| lookup(key)).is_some()
@@ -492,13 +496,26 @@ impl Client {
         probe: Option<&Probe>,
         begin: Option<u64>,
     ) -> Result<Body, Error> {
+        if let Some(body) = self.repaired(message_id, begin).await? {
+            return Ok(body);
+        }
+        self.provider_hedge(message_id, probe, begin).await
+    }
+
+    /// Race a provider read after the caller has checked and validated repairs.
+    pub async fn provider_hedge(
+        &self,
+        message_id: &str,
+        probe: Option<&Probe>,
+        begin: Option<u64>,
+    ) -> Result<Body, Error> {
         let tag = Tag {
             probe: probe.cloned(),
             begin,
             fresh: true,
             ..Tag::UNTRACKED
         };
-        self.body_tagged(message_id, tag).await
+        self.provider_body_tagged(message_id, tag).await
     }
 
     async fn body_tagged(&self, message_id: &str, tag: Tag) -> Result<Body, Error> {

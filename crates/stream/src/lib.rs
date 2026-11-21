@@ -1244,7 +1244,7 @@ async fn fetch(
             }
             Source::Hedge(Some(cache)) => cache.hedge(client, id, begin, probe).await,
             Source::Hedge(None) => client
-                .hedge(id, probe, begin)
+                .provider_hedge(id, probe, begin)
                 .await
                 .map(|body| body.data)
                 .map_err(Arc::new),
