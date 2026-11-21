@@ -664,14 +664,20 @@ async fn run(
 ) -> Result<Vec<Layout>, Error> {
     let mut resolved: Vec<Option<Layout>> = (0..sources.len()).map(|_| None).collect();
     let mut reason = "a protected source could not be identified; surviving checksums or trusted stored metadata are needed";
+    let retained = |ids: &std::collections::BTreeSet<String>| -> usize {
+        ids.iter().map(|id| id.len() + 128).sum()
+    };
     for (file, candidate) in files.into_iter().enumerate() {
         budget.check()?;
         budget.scratch(0)?;
         let memory = budget.limits.memory_bytes;
+        let legacy = retained(&budget.legacy_ids);
         let result = observe(client, candidate, sources, size, set_id, metadata, budget).await;
-        // Candidate buffers are gone; only successful output metadata remains live.
+        // Candidate buffers are gone; only successful output metadata and retained
+        // candidate IDs remain live.
         budget.scratch(0)?;
         budget.limits.memory_bytes = memory;
+        budget.metadata(retained(&budget.legacy_ids) - legacy)?;
         match result {
             Ok(Some((source, articles, verified, checked))) => {
                 budget.metadata(checked.len())?;
@@ -723,8 +729,9 @@ async fn observe(
     let mut slots = Slots::new(file, budget)?;
     let stored_source = metadata::restore(metadata, &mut slots, sources, set_id, size, budget)?;
     let mut identity = Identity::new(sources, size, budget)?;
-    let width = budget.admit_reads(client, size)?;
+    // The prefix first, so the read width fits what is left.
     budget.metadata(PREFIX)?;
+    let width = budget.admit_reads(client, size)?;
     let mut prefix = Vec::new();
     let mut verifier = None;
     let mut intact = true;
