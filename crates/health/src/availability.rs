@@ -330,6 +330,10 @@ impl Health {
         {
             return Ok(Availability::Changed);
         }
+        // Eviction takes no write permit; one committed during the reads above shows here.
+        if self.db.repair_epoch() != epoch {
+            return Ok(Availability::Changed);
+        }
         Ok(result)
     }
 }
