@@ -197,6 +197,8 @@ pub struct Db {
     writes: Arc<RwLock<()>>,
     /// See [`Db::blob_epoch`].
     blob_epoch: Arc<AtomicU64>,
+    /// See [`Db::repair_epoch`].
+    repair_epoch: Arc<AtomicU64>,
     repair_present: Arc<AtomicBool>,
 }
 
@@ -1084,6 +1086,7 @@ impl Db {
             nzb_retention_ms: Arc::new(AtomicI64::new(30 * DAY_MS)),
             writes: Arc::default(),
             blob_epoch: Arc::default(),
+            repair_epoch: Arc::default(),
             repair_present: Arc::new(AtomicBool::new(repair_present)),
         })
     }
@@ -2091,6 +2094,11 @@ impl Db {
     /// and health observations must be refreshed when their epoch changes.
     pub fn blob_epoch(&self) -> u64 {
         self.blob_epoch.load(Ordering::Acquire)
+    }
+
+    /// Changes after repair patches are published or evicted in this process.
+    pub fn repair_epoch(&self) -> u64 {
+        self.repair_epoch.load(Ordering::Acquire)
     }
 
     /// Every stored config entry as `(key, value)`.

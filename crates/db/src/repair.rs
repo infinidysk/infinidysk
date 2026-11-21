@@ -274,6 +274,7 @@ impl Db {
                 .bind(nzb).fetch_all(&mut *tx).await?;
             let committed = tx.commit().await;
             self.blob_epoch.fetch_add(1, Ordering::Release);
+            self.repair_epoch.fetch_add(1, Ordering::Release);
             committed?;
             items
         });
@@ -532,6 +533,7 @@ impl Db {
             // Released health observations must retry even after an uncertain COMMIT.
             let committed = tx.commit().await;
             self.blob_epoch.fetch_add(1, Ordering::Release);
+            self.repair_epoch.fetch_add(1, Ordering::Release);
             committed?;
         });
         Ok(true)

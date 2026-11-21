@@ -1305,6 +1305,7 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
     for fixture in fixtures().await {
         let source = fixture.source().await;
         let repair = patch();
+        let published = fixture.db.repair_epoch();
         assert!(
             fixture
                 .db
@@ -1312,6 +1313,7 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
                 .await
                 .unwrap()
         );
+        assert!(fixture.db.repair_epoch() > published);
         let mut status = fixture.db.health(fixture.file.id).await.unwrap().unwrap().1;
         status.state = infinidysk_db::HealthState::Healthy;
         fixture
@@ -1320,11 +1322,13 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
             .await
             .unwrap();
         let before = fixture.db.blob_epoch();
+        let evicted = fixture.db.repair_epoch();
         assert_eq!(
             fixture.db.evict_patch(repair.id).await.unwrap(),
             vec![(fixture.file.id, fixture.file.path.clone())]
         );
         assert!(fixture.db.blob_epoch() > before);
+        assert!(fixture.db.repair_epoch() > evicted);
         assert_eq!(
             fixture
                 .db

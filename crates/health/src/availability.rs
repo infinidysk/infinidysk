@@ -53,6 +53,7 @@ impl Default for AvailabilityOptions {
 
 #[derive(Hash, PartialEq, Eq)]
 struct Key {
+    epoch: u64,
     source: Option<(BlobId, i64)>,
     id: String,
     begin: Option<u64>,
@@ -114,11 +115,8 @@ impl Health {
         if self.playback_active() {
             return Ok(Availability::Yielded);
         }
-        let writing = tokio::select! {
-            biased;
-            () = stopped.cancelled() => return Ok(Availability::Cancelled),
-            writing = self.db.write_permit() => writing,
-        };
+        // Repair publication and eviction advance it; a scan spanning one reports `Changed`.
+        let epoch = self.db.repair_epoch();
         let Some(item) = self.db.item(id).await? else {
             return Ok(Availability::Unavailable("file no longer exists"));
         };
@@ -154,7 +152,7 @@ impl Health {
         let client = Arc::clone(&self.client);
         let streaming = Arc::clone(&self.streaming);
         let runtime = tokio::runtime::Handle::current();
-        let (meta, result, writing) = tokio::task::spawn_blocking(move || {
+        let (meta, result) = tokio::task::spawn_blocking(move || {
             let direct = Direct {
                 client: &client,
                 source,
@@ -181,6 +179,7 @@ impl Health {
                         let body = segment.id.is_empty() || [0, total / 2, total - 1].contains(&i);
                         let slot = evidence.filter(|_| !segment.id.is_empty()).map(|evidence| {
                             evidence.slot(Key {
+                                epoch,
                                 source,
                                 id: segment.id.clone(),
                                 begin: body.then_some(begin).flatten(),
@@ -218,8 +217,14 @@ impl Health {
                                 let used = if body {
                                     let (probe, bytes) =
                                         check::fetch(direct, segment, begin, proof).await;
+                                    // A missing article decoded nothing.
+                                    let used = match (&probe, bytes) {
+                                        (_, Some(bytes)) => Some(bytes.len()),
+                                        (Probe::Missing, None) => Some(0),
+                                        _ => None,
+                                    };
                                     result = Some(probe);
-                                    bytes.map(|bytes| bytes.len())
+                                    used
                                 } else {
                                     match direct.client.repaired(&segment.id, None).await {
                                         Ok(Some(repair)) => {
@@ -296,12 +301,20 @@ impl Health {
                     Availability::Damaged { missing, corrupt }
                 }
             });
-            (meta, result, writing)
+            (meta, result)
         })
         .await?;
-        let _writing = writing;
+        // Waits out a publication in progress, so its epoch change is visible below.
+        let _writing = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Ok(Availability::Cancelled),
+            writing = self.db.write_permit() => writing,
+        };
         if cancel.is_cancelled() {
             return Ok(Availability::Cancelled);
+        }
+        if self.db.repair_epoch() != epoch {
+            return Ok(Availability::Changed);
         }
         let Some(current) = self.db.item(id).await? else {
             return Ok(Availability::Changed);

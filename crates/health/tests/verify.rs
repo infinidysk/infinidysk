@@ -19,7 +19,7 @@ struct Scratch(std::path::PathBuf);
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).expect("test database directory is removed");
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -306,9 +306,9 @@ async fn stored_with_repairs(
     proof: Option<Par2Proof>,
     repairs: Option<(BlobId, infinidysk_nntp::RepairLookup)>,
 ) -> (Scratch, Db, Item, Arc<Health>) {
-    let scratch =
-        Scratch(std::env::temp_dir().join(format!("infinidysk-verify-{}", ItemId::new())));
-    std::fs::create_dir(&scratch.0).expect("isolated database directory is created");
+    let dir = std::env::temp_dir().join(format!("infinidysk-verify-{}", ItemId::new()));
+    std::fs::create_dir(&dir).expect("isolated database directory is created");
+    let scratch = Scratch(dir);
     let path = scratch.0.join("verify.sqlite");
     let db = Db::connect(&format!("sqlite:{}", path.display()))
         .await
@@ -596,6 +596,28 @@ async fn availability_obeys_the_source_read_allowance_without_changing_health() 
 }
 
 #[tokio::test]
+async fn missing_spot_checks_refund_their_read_allowance() {
+    let (data, _) = content();
+    let server = LoopbackServer::start([]).await.unwrap();
+    let (_scratch, _, item, health) = stored(&server, &data, None).await;
+    assert!(matches!(
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions {
+                    concurrency: 1,
+                    decoded_bytes: infinidysk_nntp::MAX_DECODED_LEN as u64,
+                    ..AvailabilityOptions::default()
+                }
+            )
+            .await
+            .unwrap(),
+        Availability::Damaged { .. }
+    ));
+}
+
+#[tokio::test]
 async fn availability_does_not_require_slice_checksums() {
     let (data, mut proof) = content();
     proof.slice_md5.clear();
@@ -712,48 +734,36 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
 }
 
 #[tokio::test]
-async fn publication_drains_existing_verification_and_holds_new_verification() {
+async fn a_held_body_lets_writes_pause_and_the_verdict_waits_for_the_pause() {
     let (data, proof) = content();
     let articles = post("verify", "a.bin", &data, ARTICLE);
     let first = articles[0].message_id.clone();
     let server = LoopbackServer::start(articles).await.unwrap();
     let (arrived, release) = server.hold_article(&first);
     let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
-    let checking = tokio::spawn({
-        let health = Arc::clone(&health);
-        async move {
-            health
-                .check_availability(
-                    item.id,
-                    &CancellationToken::new(),
-                    AvailabilityOptions::default(),
-                )
-                .await
-                .unwrap()
-        }
+    let mut checking = tokio::spawn(async move {
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default(),
+            )
+            .await
+            .unwrap()
     });
     tokio::time::timeout(Duration::from_secs(3), arrived)
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(15), db.pause_writes())
-            .await
-            .is_err()
-    );
+    let publication = tokio::time::timeout(Duration::from_secs(3), db.pause_writes())
+        .await
+        .expect("provider I/O holds no write permit");
     release.send(()).unwrap();
-    assert!(matches!(
-        checking.await.unwrap(),
-        Availability::Available { .. }
-    ));
-    let publication = db.pause_writes().await;
-    let cancel = CancellationToken::new();
-    let checking = health.check_availability(item.id, &cancel, AvailabilityOptions::default());
-    tokio::pin!(checking);
     assert!(
-        tokio::time::timeout(Duration::from_millis(15), &mut checking)
+        tokio::time::timeout(Duration::from_millis(50), &mut checking)
             .await
-            .is_err()
+            .is_err(),
+        "the verdict waits for the pause to end"
     );
     drop(publication);
     assert!(matches!(
