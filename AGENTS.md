@@ -90,6 +90,7 @@ Known failures (provider errors, missing articles, timeouts, auth failures, miss
 - [Conventional Commits](https://www.conventionalcommits.org/) for commits and PR titles: `<type>(<scope>): <short imperative description>`. release-please reads them.
 - PR titles describe the change for **end users**; commit messages carry the technical detail.
 - Non-behavior work (CI, tests, docs, `AGENTS.md`, skills, tooling) is `chore(<scope>)`; never bare `docs` / `ci` / `test`. Breaking changes use `!`. Never edit `CHANGELOG.md` by hand.
+- When a task makes several commits, push once, after the last commit. Every push starts a CI run, so do not push between commits.
 - Types, scopes and examples: `infinidysk-commits` (see Load on demand).
 
 ## Never write media titles
