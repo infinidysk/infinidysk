@@ -718,6 +718,19 @@ impl Health {
                 next.state = state;
                 next.repair_attempts = 0;
                 next.next_check = Some(cadence(item.release_date.unwrap_or(item.created_at), now));
+                if state == HealthState::Degraded && self.par2 && settings.auto_repair {
+                    match self
+                        .db
+                        .request_par2(infinidysk_db::repair::Owner::Item(item.id), false, now)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(infinidysk_db::Error::RepairQueueFull) => {
+                            next.next_check = Some(now + MINUTE_MS);
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
                 self.record(item, result, Repair::None, &message).await?;
                 if settings.media_probe
                     && self.analyzer.is_some()
@@ -809,15 +822,6 @@ impl Health {
         if !settings.auto_repair {
             return self.give_up(item, status, "automatic repair is off").await;
         }
-        if status.repair_attempts >= REPAIR_BUDGET {
-            return self
-                .give_up(
-                    item,
-                    status,
-                    "repeated replacements brought no working copy",
-                )
-                .await;
-        }
         let now = now_ms();
         if (self.in_use)(item.id) {
             tracing::debug!(path = %item.path, "file is open; repair waits");
@@ -832,7 +836,11 @@ impl Health {
             let reason = "its Arr is rescanning a converted library file";
             return self.retry(item, status, reason, true).await;
         }
-        let lookup = self.released(writing, self.owner(item)).await?;
+        let lookup = if status.repair_attempts >= REPAIR_BUDGET {
+            Lookup::Unrepairable("repeated replacements brought no working copy".to_owned())
+        } else {
+            self.released(writing, self.owner(item)).await?
+        };
         if self.par2 && matches!(lookup, Lookup::Unowned(_) | Lookup::Unrepairable(_)) {
             let owner = infinidysk_db::repair::Owner::Item(item.id);
             let result = self.db.par2_result(owner, false).await?;
@@ -851,7 +859,11 @@ impl Health {
                     return Ok(());
                 }
                 Some(_) => false,
-                None => self.db.request_par2(owner, false, now).await?.is_some(),
+                None => match self.db.request_par2(owner, false, now).await {
+                    Ok(job) => job.is_some(),
+                    Err(infinidysk_db::Error::RepairQueueFull) => true,
+                    Err(error) => return Err(error.into()),
+                },
             };
             if pending {
                 let next = HealthStatus {
@@ -976,6 +988,11 @@ impl Health {
         } else {
             next.repair_attempts += 1;
             if next.repair_attempts >= REPAIR_BUDGET {
+                if self.par2 {
+                    next.next_check = Some(now);
+                    self.db.set_health(item.id, &next, status.recheck).await?;
+                    return Ok(());
+                }
                 return self.give_up(item, next, message).await;
             }
             let backoff = (HOUR_MS << (next.repair_attempts - 1)).min(DAY_MS);
@@ -1045,7 +1062,8 @@ impl Health {
                 transient: true, ..
             } => {}
             _ if status.hidden_until.is_some_and(|t| now >= t) => {
-                if status.repair_attempts >= REPAIR_BUDGET {
+                let exhausted = status.repair_attempts >= REPAIR_BUDGET;
+                if exhausted && !(self.par2 && settings.auto_repair) {
                     return self
                         .give_up(
                             item,
@@ -1058,7 +1076,11 @@ impl Health {
                     item,
                     HealthResult::Missing,
                     Repair::None,
-                    "no replacement arrived in time; asking again",
+                    if exhausted {
+                        "no replacement arrived after repeated requests; checking PAR2 repair"
+                    } else {
+                        "no replacement arrived in time; asking again"
+                    },
                 )
                 .await?;
                 next.state = HealthState::Repairing;

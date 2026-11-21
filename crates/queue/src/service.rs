@@ -899,14 +899,19 @@ impl Queue {
                             ));
                         }
                     }
-                    if self.db.par2_result(repair_owner, false).await?.is_none()
-                        && self
-                            .db
-                            .request_par2(repair_owner, false, now_ms())
-                            .await?
-                            .is_some()
-                    {
-                        return Ok(Outcome::Retry(format!("Waiting for PAR2 repair: {error}")));
+                    if self.db.par2_result(repair_owner, false).await?.is_none() {
+                        match self.db.request_par2(repair_owner, false, now_ms()).await {
+                            Ok(Some(_)) => {
+                                return Ok(Outcome::Retry(format!(
+                                    "Waiting for PAR2 repair: {error}"
+                                )));
+                            }
+                            Err(infinidysk_db::Error::RepairQueueFull) => {
+                                return Ok(Outcome::Retry("The repair queue is full.".to_owned()));
+                            }
+                            Ok(None) => {}
+                            Err(error) => return Err(error.into()),
+                        }
                     }
                     return Ok(Outcome::Failed(error.to_string()));
                 }

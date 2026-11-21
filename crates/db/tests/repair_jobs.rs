@@ -51,7 +51,7 @@ async fn capacity_bounds(db: &Db) {
         .unwrap()
         .unwrap();
     assert_eq!(db.par2_pending().await.unwrap(), QUEUE_CAPACITY);
-    let full = |r: Result<Option<uuid::Uuid>, Error>| matches!(r, Err(Error::RepairBounds(_)));
+    let full = |r: Result<Option<uuid::Uuid>, Error>| matches!(r, Err(Error::RepairQueueFull));
     let next = Owner::Item(items[last + 1]);
     assert!(full(db.request_par2(next, false, 11).await));
     assert!(full(db.request_par2(next, true, 11).await));
@@ -69,7 +69,7 @@ async fn capacity_bounds(db: &Db) {
     let check = db.request_par2(next, true, 13).await.unwrap().unwrap();
     assert!(matches!(
         db.restart_par2(repair, 14).await,
-        Err(Error::RepairBounds(_))
+        Err(Error::RepairQueueFull)
     ));
     db.cancel_par2(check, 15).await.unwrap();
     db.restart_par2(repair, 16).await.unwrap();

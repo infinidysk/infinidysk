@@ -153,6 +153,8 @@ pub enum Error {
     RepairDescriptor(#[from] infinidysk_core::repair::Error),
     #[error("repair publication exceeds its {0} bound")]
     RepairBounds(&'static str),
+    #[error("the repair queue is full")]
+    RepairQueueFull,
     #[error("repair publication conflicts with an immutable reference")]
     RepairConflict,
 }
