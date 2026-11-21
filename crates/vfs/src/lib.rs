@@ -670,6 +670,8 @@ impl Vfs {
     }
 
     async fn opening(&self, item: &Item) -> Result<Opening, Error> {
+        // A health write can advance the metadata generation mid-open; reload a few times.
+        let mut stale = 0;
         loop {
             let stamp = self.fences.stamp();
             let (generation, meta) = self.meta(item).await?;
@@ -686,7 +688,15 @@ impl Vfs {
                     if stamp != self.fences.stamp() {
                         continue;
                     }
-                    let source = self.repair_context(item, generation, &meta).await?;
+                    let Some(source) = self.repair_context(item, generation, &meta).await? else {
+                        stale += 1;
+                        if stale >= 3 {
+                            return Err(Error::Corrupt(
+                                "repair metadata changed while opening file",
+                            ));
+                        }
+                        continue;
+                    };
                     return Ok(Opening {
                         meta,
                         source,
@@ -703,9 +713,9 @@ impl Vfs {
         item: &Item,
         meta_generation: i64,
         meta: &FileMeta,
-    ) -> Result<Option<(BlobId, i64)>, Error> {
+    ) -> Result<Option<Option<(BlobId, i64)>>, Error> {
         let Some((metadata, nzb)) = item.meta_blob.zip(item.nzb_blob) else {
-            return Ok(None);
+            return Ok(Some(None));
         };
         let Some((generation, current)) =
             self.db.repair_generations(item.id, metadata, nzb).await?
@@ -713,14 +723,15 @@ impl Vfs {
             return if self.db.may_have_repairs() && meta.has_placeholders() {
                 Err(Error::Corrupt("repair source changed while opening file"))
             } else {
-                Ok(None)
+                Ok(Some(None))
             };
         };
         // Cached metadata can straddle a blob update; never pair it with newer NZB bytes.
+        // `None` asks the caller to reload the metadata and admit again.
         if current != meta_generation {
-            return Err(Error::Corrupt("repair metadata changed while opening file"));
+            return Ok(None);
         }
-        Ok(Some((nzb, generation)))
+        Ok(Some(Some((nzb, generation))))
     }
 
     /// The file's decoded metadata and its blob generation; concurrent first opens
