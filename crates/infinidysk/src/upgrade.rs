@@ -1417,21 +1417,23 @@ pub async fn serve_import(
     let importing = async {
         loop {
             let clock = std::sync::Mutex::new(ProgressClock::default());
-            let result = if matches!(import_needed(db, config, &vars).await, Ok(false)) {
-                infinidysk_import::legacy_repairs::stage(config, db)
+            let result = match import_needed(db, config, &vars).await {
+                Err(error) => Err(error),
+                Ok(false) => infinidysk_import::legacy_repairs::stage(config, db)
                     .await
-                    .map_err(Into::into)
-            } else {
-                import_with_progress(db, config, &vars, default_cache_dir, |progress| {
-                    let elapsed = clock
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .elapsed(progress, Instant::now());
-                    server.status.send_modify(|status| {
-                        status.progress = Some(UpgradeProgress::new(progress, elapsed));
-                    });
-                })
-                .await
+                    .map_err(Into::into),
+                Ok(true) => {
+                    import_with_progress(db, config, &vars, default_cache_dir, |progress| {
+                        let elapsed = clock
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .elapsed(progress, Instant::now());
+                        server.status.send_modify(|status| {
+                            status.progress = Some(UpgradeProgress::new(progress, elapsed));
+                        });
+                    })
+                    .await
+                }
             };
             match result {
                 Ok(()) => break,

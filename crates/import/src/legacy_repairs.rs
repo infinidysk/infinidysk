@@ -133,12 +133,24 @@ pub async fn stage(config: &Path, db: &Db) -> Result<(), crate::Error> {
         let root = File::from(nix::fcntl::open(&path, OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC, Mode::empty())
             .map_err(|error| crate::Error::LegacyRepairs(error.into()))?);
         let mut copied = 0;
+        let mut scan_error = None;
+        let mut record_error = |error: io::Error| {
+            tracing::warn!(reason = %error, "cannot enumerate all C# repair files; staging will need a retry");
+            scan_error.get_or_insert(error);
+        };
         for shard in std::fs::read_dir(&path).map_err(crate::Error::LegacyRepairs)? {
-            let shard = shard.map_err(crate::Error::LegacyRepairs)?;
-            if !shard.file_type().map_err(crate::Error::LegacyRepairs)?.is_dir() { continue; }
+            let shard = match shard.and_then(|entry| Ok((entry.file_type()?, entry))) {
+                Ok((kind, entry)) if kind.is_dir() => entry,
+                Ok(_) => continue,
+                Err(error) => { record_error(error); continue; }
+            };
             let mut candidates = std::collections::BTreeSet::new();
-            for entry in std::fs::read_dir(shard.path()).map_err(crate::Error::LegacyRepairs)? {
-                let entry = entry.map_err(crate::Error::LegacyRepairs)?;
+            let entries = match std::fs::read_dir(shard.path()) {
+                Ok(entries) => entries,
+                Err(error) => { record_error(io::Error::new(error.kind(), format!("{}: {error}", shard.path().display()))); continue; }
+            };
+            for entry in entries {
+                let entry = match entry { Ok(entry) => entry, Err(error) => { record_error(error); continue; } };
                 let name = entry.file_name();
                 let Some(hash) = name.to_str().map(|name| name.strip_suffix(".h").unwrap_or(name)).filter(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase())) else { continue };
                 candidates.insert(hash.to_owned());
@@ -163,6 +175,7 @@ pub async fn stage(config: &Path, db: &Db) -> Result<(), crate::Error> {
                 copied += 1;
             }
         }
+        if let Some(error) = scan_error { return Err(crate::Error::LegacyRepairs(error)); }
         runtime.block_on(db.write_config(&[("legacy.repair.staged", "1"), ("legacy.repair.staged_at_ms", &infinidysk_db::now_ms().to_string())], &[]))?;
         tracing::warn!(articles = copied, reason = "saved C# articles need complete PAR2 verification before normal reads can use them", "C# repair bytes preserved for migration");
         Ok(())
