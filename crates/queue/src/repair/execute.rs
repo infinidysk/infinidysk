@@ -261,7 +261,14 @@ async fn run(
                 Some((id, set.slice_size(), missing.len())),
             )
             .await?;
-            rows = supplemental.recovery_slices(id, set.slice_size())?;
+            // Keep the rows already buffered: the provider may no longer serve them.
+            // The solver selects independent rows, so a repeated exponent adds nothing.
+            rows = set
+                .recovery()
+                .iter()
+                .copied()
+                .chain(supplemental.recovery_slices(id, set.slice_size())?)
+                .collect::<Vec<_>>();
             rows.as_slice()
         } else {
             set.recovery()
