@@ -462,7 +462,7 @@ async fn slice(
 struct Fetch {
     width: usize,
     source: usize,
-    ready: VecDeque<(usize, Option<Body>)>,
+    ready: VecDeque<(usize, Result<Option<Body>, Error>)>,
 }
 
 impl Fetch {
@@ -495,33 +495,39 @@ impl Fetch {
                 let article = &layout.articles()[index];
                 let body = if article.id.is_some() {
                     match bodies.next().expect("one result per requested article") {
-                        Ok(body) => Some(body),
+                        Ok(body) => Ok(Some(body)),
                         Err(Error::Source(
                             ReadError::NotFound
                             | ReadError::Yenc(_)
                             | ReadError::CrcMismatch { .. }
                             | ReadError::TooLarge,
-                        )) => None,
-                        Err(error) => return Err(error),
+                        )) => Ok(None),
+                        Err(error) => Err(error),
                     }
                 } else {
-                    fetch_article(client, set, layout, index, budget).await?
+                    Ok(None)
                 };
-                if body.as_ref().is_some_and(|body| {
-                    body.offset != article.range.start
-                        || body.data.len() as u64 != article.range.end - article.range.start
-                        || body.file_size != set.sources()[layout.source()].file.length
-                }) {
-                    return Err(Error::Changed("article layout changed"));
-                }
                 self.ready.push_back((index, body));
             }
         }
-        Ok(self
+        let (_, body) = self
             .ready
             .pop_front()
-            .expect("requested article queued above")
-            .1)
+            .expect("requested article queued above");
+        let article = &layout.articles()[position];
+        let body = if article.id.is_none() {
+            fetch_article(client, set, layout, position, budget).await?
+        } else {
+            body?
+        };
+        if body.as_ref().is_some_and(|body| {
+            body.offset != article.range.start
+                || body.data.len() as u64 != article.range.end - article.range.start
+                || body.file_size != set.sources()[layout.source()].file.length
+        }) {
+            return Err(Error::Changed("article layout changed"));
+        }
+        Ok(body)
     }
 }
 

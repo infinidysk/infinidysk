@@ -77,7 +77,7 @@ async fn read_parity(
         let mut classified = false;
         // The set this file's packets belong to; another set's metadata must not
         // end its read or stand in for its index.
-        let mut own: Option<Id> = None;
+        let start = reader.buffered();
         for segment in &file.segments {
             if classified && !parity {
                 break;
@@ -97,9 +97,6 @@ async fn read_parity(
             };
             classified = true;
             parity |= body.data.starts_with(b"PAR2\0PKT");
-            if own.is_none() && body.data.starts_with(b"PAR2\0PKT") {
-                own = body.data.get(32..48).and_then(|id| id.try_into().ok());
-            }
             if parity {
                 // Vec capacity growth and scanner packet records have separate headroom.
                 budget.metadata(
@@ -116,20 +113,24 @@ async fn read_parity(
                         return Ok(reader);
                     }
                 } else if reader.reached_recovery()
-                    && own.is_some_and(|set| reader.repair_set(set).is_ok())
+                    && reader
+                        .volume_set(start)
+                        .is_some_and(|set| reader.repair_set(set).is_ok())
                 {
                     break;
                 }
             }
         }
+        reader.end_volume();
         if recovery.is_none()
             && volume_stem(&name).is_none()
             && let Some(stem) = name.strip_suffix(".par2")
-            && own.is_some_and(|set| reader.repair_set(set).is_ok())
+            && reader
+                .volume_set(start)
+                .is_some_and(|set| reader.repair_set(set).is_ok())
         {
             indexes.insert(stem.to_owned());
         }
-        reader.end_volume();
     }
     Ok(reader)
 }
@@ -586,7 +587,7 @@ impl Budget {
             progress.finish(matches!(result, Err(infinidysk_nntp::Error::NotFound)));
         }
         let bytes = match &result {
-            Ok(body) => body.data.len(),
+            Ok(body) => body.data.len().min(MAX_DECODED_LEN),
             Err(infinidysk_nntp::Error::NotFound) => 0,
             Err(_) => MAX_DECODED_LEN,
         };
@@ -598,7 +599,10 @@ impl Budget {
         if result.is_ok() {
             self.network_bytes += bytes as u64;
         }
-        if bytes > MAX_DECODED_LEN {
+        if result
+            .as_ref()
+            .is_ok_and(|body| body.data.len() > MAX_DECODED_LEN)
+        {
             return Err(Error::Source(infinidysk_nntp::Error::TooLarge));
         }
         result.map_err(Error::Source)

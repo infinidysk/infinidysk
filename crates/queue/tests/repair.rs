@@ -42,6 +42,14 @@ fn document_xml(files: &[(&str, &[Article])]) -> String {
     xml
 }
 
+struct Cleanup(std::path::PathBuf);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn client(server: &LoopbackServer) -> Arc<Client> {
     let endpoint = Endpoint::new(
         "127.0.0.1",
@@ -699,7 +707,7 @@ async fn missing_reads_report_progress_while_another_reply_waits() {
             .await
         }
     });
-    let observed = tokio::time::timeout(Duration::from_secs(5), async {
+    let observed = tokio::time::timeout(Duration::from_secs(2), async {
         while progress.requests().1 == 0 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -1258,6 +1266,7 @@ async fn resolved_article_spans_reconstruct_missing_bytes_from_real_parity() {
     let nzb = nzb::parse(xml.as_bytes()).unwrap();
     let root = std::env::temp_dir().join(format!("infinidysk-published-{}", JobId::new()));
     std::fs::create_dir(&root).unwrap();
+    let _cleanup = Cleanup(root.clone());
     let url = format!("sqlite:{}", root.join("data.sqlite").display());
     let db = Db::connect(&url).await.unwrap();
     let job = QueueEntry {

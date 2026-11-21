@@ -294,6 +294,13 @@ impl Reader {
         self.buf.len()
     }
 
+    /// The first checksum-validated packet starting at or after the volume boundary.
+    pub fn volume_set(&self, start: usize) -> Option<Id> {
+        let found = &self.scan.found;
+        let index = found.partition_point(|packet| packet.body.start - HEADER < start);
+        found.get(index).map(|packet| packet.set)
+    }
+
     /// Recovery sets with at least one checksum-validated packet.
     pub fn sets(&self) -> Vec<Id> {
         self.scan
