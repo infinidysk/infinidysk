@@ -1745,3 +1745,63 @@ async fn check_file_names_a_1x_database() {
     assert!(check.incompatible.is_some(), "{check:?}");
     remove_set(&path);
 }
+
+#[tokio::test]
+async fn due_repairs_run_before_new_checks_and_later_work_waits_in_the_schedule() {
+    let db = Db::connect("sqlite::memory:").await.expect("db");
+    let root = db
+        .item(ItemId::CONTENT)
+        .await
+        .expect("root")
+        .expect("content");
+    let names = [
+        "unchecked.mkv",
+        "repair.mkv",
+        "hidden.mkv",
+        "requested.mkv",
+        "playback.mkv",
+        "later.mkv",
+        "postponed.mkv",
+    ];
+    let mut files = Vec::new();
+    let mut blobs = Vec::new();
+    for name in names {
+        let mut file = Item::child(&root, name, ItemKind::NzbFile).expect("file");
+        let blob = BlobId::new();
+        file.meta_blob = Some(blob);
+        files.push(file);
+        blobs.push((blob, b"metadata".as_slice()));
+    }
+    db.insert(&files, &blobs).await.expect("insert");
+    for (index, state, next_check, reason) in [
+        (1, HealthState::Repairing, 1, Recheck::None),
+        (2, HealthState::Hidden, 2, Recheck::None),
+        (3, HealthState::Healthy, 1, Recheck::User),
+        (4, HealthState::Suspect, 1, Recheck::Playback),
+        (5, HealthState::Hidden, 1_000, Recheck::None),
+        (6, HealthState::Unchecked, 2_000, Recheck::None),
+    ] {
+        let status = HealthStatus {
+            state,
+            next_check: Some(next_check),
+            ..HealthStatus::default()
+        };
+        db.set_health(files[index].id, &status, Recheck::None)
+            .await
+            .expect("state");
+        db.request_recheck(files[index].id, reason)
+            .await
+            .expect("recheck");
+    }
+    let ids = |work: Vec<(Item, HealthStatus)>| {
+        work.into_iter()
+            .map(|(item, _)| item.id)
+            .collect::<Vec<_>>()
+    };
+
+    let due = ids(db.due_health_work(10, true, 10).await.expect("due"));
+    let schedule = ids(db.health_schedule(10, true, 10).await.expect("schedule"));
+
+    assert_eq!(due, [4, 1, 2, 0, 3].map(|index| files[index].id));
+    assert_eq!(schedule, [4, 1, 2, 0, 3, 5, 6].map(|index| files[index].id));
+}

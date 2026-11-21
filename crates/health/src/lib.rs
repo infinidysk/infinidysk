@@ -427,7 +427,7 @@ impl Health {
         limit: i64,
     ) -> Result<Vec<(Item, HealthStatus)>, infinidysk_db::Error> {
         let routine = self.settings.borrow().enabled;
-        self.db.due_health_work(i64::MAX, routine, limit).await
+        self.db.health_schedule(now_ms(), routine, limit).await
     }
 
     /// Asks for a check of `id` soon; an `action_needed` file starts over as unchecked.
