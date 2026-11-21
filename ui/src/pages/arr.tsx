@@ -61,7 +61,7 @@ export function ArrInstances({ title, description }: { title: string; descriptio
   const arr = view.settings.arr_instances;
   const existing = editing !== null && arr.some((a) => a.id === editing.id);
   const store = (next: Arr[], after?: () => void) =>
-    save.mutate({ ...view.settings, arr_instances: next }, { onSuccess: after });
+    save.mutate({ settings: { ...view.settings, arr_instances: next }, indexers_revision: view.indexers_revision }, { onSuccess: after });
   const add = () => {
     save.reset();
     setEditing({ id: uuid(), name: "", profile: "sonarr", url: "", api_key: "", enabled: true });

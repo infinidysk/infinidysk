@@ -656,6 +656,9 @@ pub async fn serve(
     database.resume().await;
     let admin = Arc::new(Admin {
         config: Arc::clone(&config),
+        search_refs: admin::SearchReferences::default(),
+        indexer_work: tokio::sync::Semaphore::new(admin::INDEXER_WORK_LIMIT),
+        indexer_downloads: tokio::sync::Semaphore::new(admin::INDEXER_DOWNLOAD_LIMIT),
         queue: Arc::clone(&queue),
         client,
         vfs,

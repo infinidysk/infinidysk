@@ -143,7 +143,7 @@ export function Providers({ title, description }: { title: string; description: 
   const view = settings.data;
   const locked = view.locked.some((path) => path === "providers" || path.startsWith("providers."));
   // Show the pending save at once, so a drop does not snap back while it saves.
-  const providers = (save.isPending ? save.variables?.providers : undefined) ?? view.settings.providers;
+  const providers = (save.isPending ? save.variables?.settings.providers : undefined) ?? view.settings.providers;
   const levels = levelsOf(providers);
   const backbones = new Map(catalog.data.backbones.map((b) => [b.id, b.name]));
   // Hue by catalog position, so a backbone keeps its color across visits.
@@ -161,7 +161,7 @@ export function Providers({ title, description }: { title: string; description: 
 
   const store = (next: Provider[], after?: () => void) => {
     const doc: Settings = { ...view.settings, providers: compact(next) };
-    save.mutate(doc, {
+    save.mutate({ settings: doc, indexers_revision: view.indexers_revision }, {
       onSuccess: () => {
         void queryClient.invalidateQueries({ queryKey: STATUS });
         after?.();

@@ -580,8 +580,13 @@ static IPV4: LazyLock<Regex> = LazyLock::new(|| {
 static IPV6: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\w.:]*:[\w.:]*").expect("the pattern is a valid literal"));
 
+static HTTP_URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)https?://[^\s"<>\\]+"#).expect("the pattern is a valid literal")
+});
+
 /// Removes secrets from text; public IP addresses get stable per-pack aliases.
 struct Redactor {
+    indexer_keys: Vec<String>,
     /// Longest first, so a secret containing another is replaced whole.
     secrets: Vec<String>,
     ips: HashMap<IpAddr, usize>,
@@ -606,6 +611,7 @@ impl Redactor {
         .map(|s| s.0.clone())
         .chain(settings.providers.iter().map(|p| p.username.clone()))
         .filter(|s| s.chars().count() >= 4)
+        .chain(settings.indexers.iter().map(|i| i.api_key.0.clone()))
         .flat_map(|s| {
             // As it appears inside JSON strings too.
             let escaped = serde_json::to_string(&s).unwrap_or_default();
@@ -621,6 +627,13 @@ impl Redactor {
         secrets.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
         secrets.dedup();
         Self {
+            indexer_keys: settings
+                .indexers
+                .iter()
+                .map(|i| &i.api_key.0)
+                .filter(|key| !key.is_empty())
+                .cloned()
+                .collect(),
             secrets,
             ips: HashMap::new(),
             secrets_found: 0,
@@ -629,7 +642,28 @@ impl Redactor {
     }
 
     fn redact(&mut self, text: &str) -> String {
-        let mut text = text.to_owned();
+        let mut text = if self.indexer_keys.is_empty() {
+            text.to_owned()
+        } else {
+            HTTP_URL
+                .replace_all(text, |m: &Captures| {
+                    let raw = &m[0];
+                    // The raw text first: a URL that does not parse can still carry a key.
+                    let url = reqwest::Url::parse(raw).ok();
+                    if self.indexer_keys.iter().any(|key| {
+                        crate::fetch::contains_api_key(raw, key)
+                            || url.as_ref().is_some_and(|url| {
+                                crate::newznab::base_url_contains_key(raw, url, key)
+                            })
+                    }) {
+                        self.secrets_found += 1;
+                        REDACTED.to_owned()
+                    } else {
+                        raw.to_owned()
+                    }
+                })
+                .into_owned()
+        };
         for secret in &self.secrets {
             let n = text.matches(secret.as_str()).count();
             if n > 0 {
@@ -682,6 +716,51 @@ const fn public_v6(ip: Ipv6Addr) -> bool {
 mod tests {
     use super::*;
     use crate::config::{Provider, Secret};
+
+    #[test]
+    fn redacts_urls_with_encoded_indexer_keys() {
+        let mut settings = Settings::default();
+        settings.indexers.push(crate::config::Indexer {
+            api_key: Secret("fake key".into()),
+            ..Default::default()
+        });
+        let mut redactor = Redactor::new(&settings);
+        for url in [
+            "https://indexer.invalid/fake%2520key/api",
+            "https://indexer.invalid/api?source=fake+key",
+            // An invalid port makes the URL unparsable; the raw text is still checked.
+            "https://indexer.invalid:bad/fake%20key",
+        ] {
+            let line = format!("log: {url}");
+            assert_eq!(redactor.redact(&line), "log: [REDACTED]");
+        }
+    }
+
+    #[test]
+    fn redacts_indexer_credentials_from_queue_history_logs_and_notes() {
+        let mut settings = Settings::default();
+        settings.indexers.push(crate::config::Indexer {
+            id: uuid::Uuid::now_v7(),
+            name: "test".into(),
+            base_url: "https://indexer.example/api".into(),
+            api_key: crate::config::Secret("mock-indexer-key".into()),
+            enabled: true,
+        });
+        let mut redactor = Redactor::new(&settings);
+        for field in [
+            "queue: mock-indexer-key.nzb",
+            "history: mock-indexer-key failed",
+            "note: mock-indexer-key",
+            "log: mock-indexer-key",
+        ] {
+            let output = redactor.redact(field);
+            assert!(!output.contains("mock-indexer-key"));
+            assert!(output.contains("[REDACTED]"));
+        }
+        settings.indexers[0].api_key = crate::config::Secret("xy".into());
+        let mut short = Redactor::new(&settings);
+        assert_eq!(short.redact("file xy.nzb"), "file [REDACTED].nzb");
+    }
 
     #[test]
     fn redacts_secrets_credentials_and_public_addresses() {
