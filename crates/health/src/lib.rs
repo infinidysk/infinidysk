@@ -718,6 +718,8 @@ impl Health {
                 next.state = state;
                 next.repair_attempts = 0;
                 next.next_check = Some(cadence(item.release_date.unwrap_or(item.created_at), now));
+                // One automatic PAR2 attempt per NZB generation: a finished job for the
+                // same generation covers later damage too, so none is queued for it.
                 if state == HealthState::Degraded && self.par2 && settings.auto_repair {
                     match self
                         .db
@@ -821,6 +823,10 @@ impl Health {
     ) -> Result<(), Error> {
         if !settings.auto_repair {
             return self.give_up(item, status, "automatic repair is off").await;
+        }
+        if !self.par2 && status.repair_attempts >= REPAIR_BUDGET {
+            let reason = "repeated replacements brought no working copy";
+            return self.give_up(item, status, reason).await;
         }
         let now = now_ms();
         if (self.in_use)(item.id) {

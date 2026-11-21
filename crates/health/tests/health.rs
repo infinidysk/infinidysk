@@ -217,6 +217,31 @@ async fn exhausted_arr_attempts_fall_back_to_par2() {
 }
 
 #[tokio::test]
+async fn exhausted_arr_attempts_give_up_without_par2_even_while_open() {
+    let (articles, len) = mkv("spent-no-par2");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (calls, arr) = fake_sonarr().await;
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_in_use(move |id| id == item.id);
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Repairing;
+    status.repair_attempts = 3;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    assert!(health.step().await.unwrap());
+    assert!(calls.0.lock().unwrap().is_empty());
+    assert_eq!(
+        db.health(item.id).await.unwrap().unwrap().1.state,
+        HealthState::ActionNeeded
+    );
+}
+
+#[tokio::test]
 async fn unavailable_arr_falls_back_to_par2_and_releases_write_admission() {
     let (articles, len) = mkv("par2-health");
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
