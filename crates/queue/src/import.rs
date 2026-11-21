@@ -474,15 +474,15 @@ fn job(
 }
 
 /// The files of `nzb` before filtering and naming: first articles, PAR2 names, segment
-/// layouts, then archive members. `at` gets the time each step ended; `percent` only
-/// sizes the progress estimate.
+/// layouts, then archive members, with the missing-data error of any dropped sidecar.
+/// `at` gets the time each step ended; `percent` only sizes the progress estimate.
 async fn plan(
     job: &Arc<Job>,
     nzb: &Nzb,
     percent: u8,
     started: Instant,
     at: &mut Timings,
-) -> Result<Vec<Output>, Error> {
+) -> Result<(Vec<Output>, Option<Error>), Error> {
     let data: Vec<_> = nzb
         .files
         .iter()
@@ -688,7 +688,7 @@ async fn plan(
     {
         return Err(error);
     }
-    Ok(outputs)
+    Ok((outputs, dropped_missing))
 }
 
 /// Imports `nzb` into `category`. Non-media files with missing articles are left out;
@@ -715,7 +715,7 @@ pub async fn import(
     let started = Instant::now();
     let job = &job(client, rules, password, progress, None, source);
     let mut at = Timings::default();
-    let outputs = plan(job, nzb, rules.check_percent, started, &mut at).await?;
+    let (outputs, dropped_missing) = plan(job, nzb, rules.check_percent, started, &mut at).await?;
     let [firsts_at, par2_at, layouts_at, sets_at] =
         [at.headers, at.par2, at.layouts, at.archives].map(Option::unwrap_or_default);
 
@@ -723,11 +723,14 @@ pub async fn import(
         return Ok(Imported::Nzb(inner));
     }
     let outputs = filter(outputs, job);
-    if outputs.is_empty() {
-        return Err(Error::Unrepairable("No importable files found.".to_owned()));
-    }
     let required = rules.owners.get(&category.to_lowercase());
-    require(&outputs, required.map_or(&[], Vec::as_slice))?;
+    let usable = if outputs.is_empty() {
+        Err(Error::Unrepairable("No importable files found.".to_owned()))
+    } else {
+        require(&outputs, required.map_or(&[], Vec::as_slice))
+    };
+    // A dropped file may have been the wanted media under an obfuscated name.
+    usable.map_err(|error| dropped_missing.unwrap_or(error))?;
     let outputs = name(outputs, release, usize::MAX).await;
     let outputs = check_articles(job, outputs, rules.check_percent).await?;
     let check_at = started.elapsed();
@@ -2179,7 +2182,9 @@ fn require(outputs: &[Output], kinds: &[media::Kind]) -> Result<(), Error> {
         })
     };
     if kinds.contains(&media::Kind::Video) && outputs.iter().any(disc) {
-        return Err(failed("Full disc releases are not supported."));
+        return Err(Error::Unrepairable(
+            "Full disc releases are not supported.".to_owned(),
+        ));
     }
     if kinds.is_empty()
         || outputs
@@ -2198,7 +2203,10 @@ fn require(outputs: &[Output], kinds: &[media::Kind]) -> Result<(), Error> {
     .filter(|(k, _)| kinds.contains(k))
     .map(|(_, word)| word)
     .collect();
-    Err(failed(format!("No {} files found.", wanted.join(" or "))))
+    Err(Error::Unrepairable(format!(
+        "No {} files found.",
+        wanted.join(" or ")
+    )))
 }
 
 /// Renames obfuscated videos and gives duplicate paths a ` (n)` suffix. Deobfuscates the

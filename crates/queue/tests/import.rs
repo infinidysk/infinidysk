@@ -608,6 +608,40 @@ async fn compressed_archives_fail_without_starting_a_repair_download() {
     assert!(db.claim_par2(i64::MAX).await.unwrap().is_none());
 }
 
+#[tokio::test]
+async fn category_rejections_fail_without_starting_a_repair_download() {
+    let data = sevenzip(&[("BDMV/STREAM/00001.m2ts", &mkv(4096, 4))]);
+    let articles = post("category-policy", "source.7z", &data, 7000);
+    let xml = nzb(&[("source.7z", &articles, data.len(), 7000)]);
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let queue = queue_on(&[&server]).await;
+    let db = queue.db().clone();
+    queue.update_rules(|rules| {
+        rules.owners.insert("tv".into(), vec![media::Kind::Video]);
+    });
+    queue.enable_par2();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &xml,
+        )
+        .await
+        .unwrap();
+    assert!(queue.process_next().await);
+    let history = db.history_entry(id).await.unwrap().unwrap();
+    assert_eq!(history.status, JobStatus::Failed);
+    assert_eq!(
+        history.fail_message.as_deref(),
+        Some("Full disc releases are not supported.")
+    );
+    assert!(db.claim_par2(i64::MAX).await.unwrap().is_none());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn par2_names_obfuscated_files() {
     check_par2_names(0).await;

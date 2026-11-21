@@ -540,7 +540,8 @@ impl Inspector {
             (Err(job.over(TOO_MANY_FILES)), Step::Starting)
         } else {
             let planning = async {
-                let outputs = plan(job, nzb, rules.check_percent, started, &mut timings).await?;
+                let (outputs, _) =
+                    plan(job, nzb, rules.check_percent, started, &mut timings).await?;
                 // An import stops at an unreadable member before it looks for an NZB file.
                 let inner = if job.went_past() {
                     None
