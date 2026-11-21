@@ -179,6 +179,14 @@ async fn source_reads_overlap_a_stalled_first_article_and_cancel_cleanly() {
             .await
         }
     });
+    // Another resolution may hold the shared permit first; only the overlap is timed.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while server.body_commands() < 1 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
     let overlap = tokio::time::timeout(Duration::from_millis(500), async {
         while server.body_commands() < 2 {
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -625,7 +633,8 @@ async fn missing_reads_report_progress_while_another_reply_waits() {
     let nzb = Arc::new(document(&[("one", &a), ("two", &b)]));
     let first = a[0].message_id.clone();
     let server = LoopbackServer::start([a[0].clone()]).await.unwrap();
-    server.stall_article(&first, 1, Duration::from_secs(1));
+    // Held well past the wait below, so only a read beside it can report the miss.
+    server.stall_article(&first, 1, Duration::from_secs(60));
     let reader = Arc::new(metadata());
     let set = reader.sets()[0];
     let progress = Arc::new(infinidysk_queue::repair::Progress::default());

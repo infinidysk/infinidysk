@@ -56,6 +56,7 @@ async fn waiting_segment_admission_leaves_memory_for_other_readers() {
     tokio::time::timeout(Duration::from_secs(1), entered.notified())
         .await
         .unwrap();
+    assert_eq!(budget.available(), 3, "a waiting reader holds no memory");
     {
         let mut free = make_reader();
         let mut bytes = Vec::new();
