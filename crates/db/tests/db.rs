@@ -1761,6 +1761,7 @@ async fn due_repairs_run_before_new_checks_and_later_work_waits_in_the_schedule(
         "requested.mkv",
         "playback.mkv",
         "later.mkv",
+        "postponed.mkv",
     ];
     let mut files = Vec::new();
     let mut blobs = Vec::new();
@@ -1778,6 +1779,7 @@ async fn due_repairs_run_before_new_checks_and_later_work_waits_in_the_schedule(
         (3, HealthState::Healthy, 1, Recheck::User),
         (4, HealthState::Suspect, 1, Recheck::Playback),
         (5, HealthState::Hidden, 1_000, Recheck::None),
+        (6, HealthState::Unchecked, 2_000, Recheck::None),
     ] {
         let status = HealthStatus {
             state,
@@ -1801,5 +1803,5 @@ async fn due_repairs_run_before_new_checks_and_later_work_waits_in_the_schedule(
     let schedule = ids(db.health_schedule(10, true, 10).await.expect("schedule"));
 
     assert_eq!(due, [4, 1, 2, 0, 3].map(|index| files[index].id));
-    assert_eq!(schedule, [4, 1, 2, 0, 3, 5].map(|index| files[index].id));
+    assert_eq!(schedule, [4, 1, 2, 0, 3, 5, 6].map(|index| files[index].id));
 }
