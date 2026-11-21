@@ -812,6 +812,7 @@ async fn source_and_lookup_bounds_reject_invalid_work_without_publication() {
                 .unwrap()
                 .is_none()
         );
+        assert_eq!(fixture.db.repair_files(None).await.unwrap(), []);
         fixture.close().await;
     }
 }

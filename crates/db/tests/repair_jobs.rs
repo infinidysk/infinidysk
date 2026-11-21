@@ -417,6 +417,13 @@ async fn durable_requests(db: &mut Db, url: &str) {
     db.finish_par2(restarted.claim(), 3, "late completion", 999, 99, 19, None)
         .await
         .unwrap();
+    db.update_par2_requests(restarted.claim(), 9, 1)
+        .await
+        .unwrap();
+    db.update_availability_progress(restarted.claim(), 2, 9)
+        .await
+        .unwrap();
+    db.set_par2_verified(restarted.claim(), 900).await.unwrap();
     let final_job = db
         .par2_result(Owner::Item(item.id), false)
         .await
@@ -429,6 +436,14 @@ async fn durable_requests(db: &mut Db, url: &str) {
             final_job.updated_at
         ),
         (200, 50, 18)
+    );
+    assert_eq!(
+        (
+            final_job.completed_requests,
+            final_job.checked_articles,
+            final_job.verified_bytes
+        ),
+        (0, 0, 0)
     );
     assert_eq!(
         db.par2_result(Owner::Item(item.id), false)
@@ -606,7 +621,17 @@ async fn escalation_fencing(db: &Db) {
     let current = db.claim_par2_lane(12, true, false).await.unwrap().unwrap();
     assert_eq!(current.id, id);
     assert!(!db.escalate_par2(old.claim(), 13).await.unwrap());
-    assert!(db.escalate_par2(current.claim(), 14).await.unwrap());
+    let source = db
+        .repair_source(Owner::Item(item.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        db.publish_repair_metadata(&source, b"new-meta", None)
+            .await
+            .unwrap()
+    );
+    assert!(!db.escalate_par2(current.claim(), 14).await.unwrap());
 }
 
 async fn stale_claims(db: &Db) {

@@ -73,7 +73,7 @@ impl Db {
         if missing < 0 || completed < missing {
             return Err(Error::RepairBounds("request progress"));
         }
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET completed_requests = $2, missing_requests = $3 WHERE id = $1 AND claim_generation = $4 AND state IN (1, 6)")
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET completed_requests = $2, missing_requests = $3 WHERE id = $1 AND claim_generation = $4 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL))")
             .bind(claim.id).bind(completed).bind(missing).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
@@ -101,7 +101,7 @@ impl Db {
                     .bind(claim.id).execute(&mut *tx).await?;
             }
             let source: Option<(Uuid, i64, Option<i64>)> = sqlx::query_as(
-                "UPDATE repair_jobs SET state = 5, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $3 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) RETURNING nzb_blob, generation, scan_at")
+                "UPDATE repair_jobs SET state = 5, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $3 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) AND EXISTS (SELECT 1 FROM items i JOIN blobs m ON m.id = i.meta_blob WHERE i.id = repair_jobs.item_id AND i.nzb_blob = repair_jobs.nzb_blob AND m.id = repair_jobs.meta_blob AND m.generation = repair_jobs.meta_generation) RETURNING nzb_blob, generation, scan_at")
                 .bind(claim.id).bind(now).bind(claim.generation).fetch_optional(&mut *tx).await?;
             let Some((nzb, generation, scan_at)) = source else {
                 // Release the write lock before another claim can use a pooled connection.
@@ -131,7 +131,7 @@ impl Db {
         if checked < 0 || total < checked {
             return Err(Error::RepairBounds("article progress"));
         }
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET checked_articles = $2, total_articles = $3 WHERE id = $1 AND claim_generation = $4 AND state IN (1, 6)")
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET checked_articles = $2, total_articles = $3 WHERE id = $1 AND claim_generation = $4 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL))")
             .bind(claim.id).bind(checked).bind(total).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
@@ -220,7 +220,7 @@ impl Db {
         if bytes < 0 {
             return Err(Error::RepairBounds("verified byte count"));
         }
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET verified_bytes = $2 WHERE id = $1 AND claim_generation = $3 AND state IN (1, 6)")
+        on!(self, pool => sqlx::query("UPDATE repair_jobs SET verified_bytes = $2 WHERE id = $1 AND claim_generation = $3 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL))")
             .bind(claim.id).bind(bytes).bind(claim.generation).execute(pool).await?.rows_affected());
         Ok(())
     }
