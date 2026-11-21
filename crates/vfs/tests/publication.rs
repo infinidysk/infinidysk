@@ -198,7 +198,13 @@ async fn cancelled_admission_releases_partial_writers_and_pending_opens() {
             .is_err()
     );
     drop(publication);
-    assert!(opening.await.unwrap().is_some());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), opening)
+            .await
+            .expect("dropping the publication wakes the blocked open")
+            .unwrap()
+            .is_some()
+    );
     drop(reader);
     drop(handles);
 }
