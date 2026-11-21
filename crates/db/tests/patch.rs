@@ -929,21 +929,21 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert_eq!(raw, b"new NZB");
         assert_ne!(changed, source);
         assert!(
-            !fixture
+            fixture
                 .db
                 .replace_queued_repair_nzb(&source, b"inner NZB", 9, 200, "inner.nzb")
                 .await
                 .unwrap()
+                .is_none()
         );
-        assert!(
-            fixture
-                .db
-                .replace_queued_repair_nzb(&changed, b"inner NZB", 9, 200, "inner.nzb")
-                .await
-                .unwrap()
-        );
+        let promoted = fixture
+            .db
+            .replace_queued_repair_nzb(&changed, b"inner NZB", 9, 200, "inner.nzb")
+            .await
+            .unwrap();
         let queued = fixture.db.queue().await.unwrap();
         let current = queued.iter().find(|queued| queued.id == job.id).unwrap();
+        assert_eq!(promoted, Some(current.nzb_blob));
         assert_ne!(current.nzb_blob, job.nzb_blob);
         assert_eq!(current.file_name, "inner.nzb");
         assert_eq!(current.total_bytes, 200);
@@ -958,11 +958,12 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert_eq!(inner.nzb(), current.nzb_blob);
         assert_eq!(inner.generation(), 0);
         assert!(
-            !fixture
+            fixture
                 .db
                 .replace_queued_repair_nzb(&changed, b"stale replacement", 17, 300, "stale.nzb")
                 .await
                 .unwrap()
+                .is_none()
         );
         let mut live = patch.clone();
         live.id = PatchId::new();
@@ -1305,6 +1306,17 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
     for fixture in fixtures().await {
         let source = fixture.source().await;
         let repair = patch();
+        let defect = infinidysk_db::Defect {
+            offset: 0,
+            size: 1,
+            seen_at: 1,
+            source: 7,
+        };
+        fixture
+            .db
+            .set_structural(fixture.file.id, Some(&defect), true)
+            .await
+            .unwrap();
         let published = fixture.db.repair_epoch();
         assert!(
             fixture
@@ -1314,6 +1326,14 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
                 .unwrap()
         );
         assert!(fixture.db.repair_epoch() > published);
+        let probe = fixture.db.media_probe(fixture.file.id).await.unwrap();
+        assert_eq!(probe.defect, None, "publication starts the evidence over");
+        assert!(probe.structural_hold);
+        fixture
+            .db
+            .set_structural(fixture.file.id, Some(&defect), true)
+            .await
+            .unwrap();
         let mut status = fixture.db.health(fixture.file.id).await.unwrap().unwrap().1;
         status.state = infinidysk_db::HealthState::Healthy;
         fixture
@@ -1329,6 +1349,16 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
         );
         assert!(fixture.db.blob_epoch() > before);
         assert!(fixture.db.repair_epoch() > evicted);
+        assert_eq!(
+            fixture
+                .db
+                .media_probe(fixture.file.id)
+                .await
+                .unwrap()
+                .defect,
+            None,
+            "eviction starts the evidence over"
+        );
         assert_eq!(
             fixture
                 .db

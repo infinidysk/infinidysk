@@ -234,6 +234,8 @@ enum Outcome {
         inner: Option<Inner>,
     },
     Failed(String),
+    /// Failed after the attempt replaced the queued NZB; history names the replacement.
+    FailedAs(Box<QueueEntry>, String),
     Retry(String),
     /// The watchdog cancelled it.
     Stuck,
@@ -668,6 +670,7 @@ impl Queue {
                     .map_err(Error::from)
             }
             Outcome::Failed(reason) => self.fail(job, started, reason).await,
+            Outcome::FailedAs(failed, reason) => self.fail(&failed, started, reason).await,
             Outcome::Stuck if job.stuck_count.saturating_add(1) >= STUCK_LIMIT => {
                 let reason = "Import stalled three times.".to_owned();
                 self.fail(job, started, reason).await
@@ -880,24 +883,31 @@ impl Queue {
                     | import::Error::Unsupported(reason),
                 ) => return Ok(Outcome::Failed(reason)),
                 Err(error) if self.par2.load(Ordering::Acquire) => {
+                    let mut failed = job.clone();
                     if let Some(inner) = inner {
                         let nzb_size = inner.xml.len() as u64;
+                        let file_name = names::without_password(&job.file_name);
                         let encoded = blocking(move || blob::encode_nzb(&inner.xml)).await?;
-                        if !self
+                        let Some(promoted) = self
                             .db
                             .replace_queued_repair_nzb(
                                 &source,
                                 &encoded,
                                 nzb_size,
                                 inner.total_bytes,
-                                &names::without_password(&job.file_name),
+                                &file_name,
                             )
                             .await?
-                        {
+                        else {
                             return Ok(Outcome::Retry(
                                 "The stored NZB changed during the import.".to_owned(),
                             ));
-                        }
+                        };
+                        // Failed history must name the NZB the queue row now holds.
+                        failed.nzb_blob = promoted;
+                        failed.nzb_size = nzb_size;
+                        failed.total_bytes = inner.total_bytes;
+                        failed.file_name = file_name;
                     }
                     if self.db.par2_result(repair_owner, false).await?.is_none() {
                         match self.db.request_par2(repair_owner, false, now_ms()).await {
@@ -913,7 +923,7 @@ impl Queue {
                             Err(error) => return Err(error.into()),
                         }
                     }
-                    return Ok(Outcome::Failed(error.to_string()));
+                    return Ok(Outcome::FailedAs(Box::new(failed), error.to_string()));
                 }
                 Err(error) => return Ok(Outcome::Failed(error.to_string())),
             };

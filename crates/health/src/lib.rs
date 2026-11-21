@@ -702,7 +702,16 @@ impl Health {
                 }
                 let source = structure::source(&meta);
                 let verdict =
-                    structure::judge(probe.defect, &found, source, now, SUSPECT_RECHECK_MS);
+                    match structure::judge(probe.defect, &found, source, now, SUSPECT_RECHECK_MS) {
+                        // Repair publication forgets the defect but leaves its hold.
+                        Verdict::Nothing
+                            if probe.structural_hold
+                                && matches!(found, structure::Structure::Sound) =>
+                        {
+                            Verdict::Clear
+                        }
+                        verdict => verdict,
+                    };
                 if self
                     .structural(item, status, &mut next, verdict, now)
                     .await?

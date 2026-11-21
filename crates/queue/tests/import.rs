@@ -639,6 +639,12 @@ async fn category_rejections_fail_without_starting_a_repair_download() {
         history.fail_message.as_deref(),
         Some("Full disc releases are not supported.")
     );
+    assert!(
+        db.par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert!(db.claim_par2(i64::MAX).await.unwrap().is_none());
 }
 
