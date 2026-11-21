@@ -361,6 +361,7 @@ impl TryFrom<i16> for HealthState {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(i16)]
 pub enum Recheck {
+    Deferred = -1,
     #[default]
     None = 0,
     User = 1,
@@ -407,6 +408,7 @@ impl TryFrom<HealthWorkRow> for (Item, HealthStatus) {
             repair_attempts: r.repair_attempts,
             hidden_until: r.hidden_until,
             recheck: match r.recheck_requested {
+                -1 => Recheck::Deferred,
                 0 => Recheck::None,
                 1 => Recheck::User,
                 2 => Recheck::Playback,
@@ -2210,11 +2212,11 @@ impl Db {
         // 4 = repairing, 5 = hidden, 7 = ignored.
         let sql = select_health!(
             "WHERE kind <> $1 AND meta_blob IS NOT NULL AND ( \
-                (recheck_requested <> 0 AND health_state NOT IN (4, 5)) \
+                (recheck_requested > 0 AND health_state NOT IN (4, 5)) \
                 OR (COALESCE(next_health_check, 0) <= $2 \
-                    AND (health_state IN (4, 5) OR ($3 AND health_state <> 7)))) \
+                    AND (recheck_requested = -1 OR health_state IN (4, 5) OR ($3 AND health_state <> 7)))) \
              ORDER BY CASE WHEN COALESCE(next_health_check, 0) > $5 \
-                    AND (recheck_requested = 0 OR health_state IN (4, 5)) THEN 5 \
+                    AND (recheck_requested <= 0 OR health_state IN (4, 5)) THEN 5 \
                 WHEN recheck_requested = 2 THEN 0 WHEN health_state IN (4, 5) THEN 1 \
                 WHEN health_state = 0 THEN 2 WHEN recheck_requested = 1 THEN 3 ELSE 4 END, \
                 COALESCE(next_health_check, 0), COALESCE(release_date, created_at) DESC \
@@ -2247,9 +2249,20 @@ impl Db {
         status: &HealthStatus,
         handled: Recheck,
     ) -> Result<(), Error> {
+        self.set_health_recheck(id, status, handled, Recheck::None)
+            .await
+    }
+
+    pub async fn set_health_recheck(
+        &self,
+        id: ItemId,
+        status: &HealthStatus,
+        handled: Recheck,
+        pending: Recheck,
+    ) -> Result<(), Error> {
         let sql = "UPDATE items SET health_state = $2, last_health_check = $3, \
                    next_health_check = $4, repair_attempts = $5, hidden_until = $6, \
-                   recheck_requested = CASE WHEN recheck_requested = $7 THEN 0 \
+                   recheck_requested = CASE WHEN recheck_requested = $7 THEN $9 \
                    ELSE recheck_requested END, suspect_since = $8 WHERE id = $1";
         let suspect_since = status
             .suspect_since
@@ -2263,6 +2276,7 @@ impl Db {
             .bind(status.hidden_until)
             .bind(handled as i16)
             .bind(suspect_since)
+            .bind(pending as i16)
             .execute(pool)
             .await?
             .rows_affected());

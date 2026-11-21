@@ -172,11 +172,11 @@ async fn availability_checks_all_articles_without_a_proof_or_a_full_download() {
         .await
         .unwrap();
     assert!(
-        matches!(result, Availability::Available { .. }),
+        matches!(result, Availability::Available { articles } if articles == total as u64),
         "{result:?}"
     );
-    assert!(server.body_commands() <= 3);
-    assert!(server.body_commands() < total);
+    assert_eq!(server.body_commands(), 3);
+    assert_eq!(server.stat_commands(), total - 3);
 }
 
 #[tokio::test]

@@ -236,6 +236,23 @@ async fn exercise(db: &Db) {
     };
     assert_eq!(due(true).await, [file.id], "only files with metadata");
     assert_eq!(due(false).await, [] as [ItemId; 0], "routine checks off");
+    let delayed = HealthStatus {
+        state: HealthState::Degraded,
+        next_check: Some(101),
+        ..HealthStatus::default()
+    };
+    db.set_health_recheck(file.id, &delayed, Recheck::None, Recheck::Deferred)
+        .await
+        .expect("schedule deferred repair");
+    assert_eq!(due(false).await, [] as [ItemId; 0]);
+    assert_eq!(
+        db.due_health_work(101, false, 10)
+            .await
+            .expect("due repair")[0]
+            .0
+            .id,
+        file.id
+    );
     db.request_recheck(file.id, Recheck::Playback)
         .await
         .expect("recheck");

@@ -525,6 +525,11 @@ mod tests {
         };
         file.parts[1].proof.as_mut().unwrap().file_id = [2; 16];
         file.parts[0].offset = u64::MAX - 4;
+        file.parts[0].data = ByteRange {
+            start: u64::MAX - 4,
+            end: u64::MAX,
+        };
+        assert!(Bytes::new(&articles, &meta).is_none());
         let opts = crate::check::Options {
             percent: 100,
             tolerant: false,

@@ -241,7 +241,7 @@ impl Health {
         self
     }
 
-    /// Try durable local reconstruction before requesting an Arr replacement.
+    /// Try PAR2 for degraded files and when Arr cannot replace a broken file or has exhausted its attempts.
     #[must_use]
     pub const fn with_par2(mut self) -> Self {
         self.par2 = true;
@@ -588,6 +588,7 @@ impl Health {
             },
             proven: false,
         };
+        let repair_epoch = self.db.repair_epoch();
         let source = self.omitted_source(item, blob_id, &meta).await?;
         let original = source.map(|source| (source, meta.clone()));
         let client = check::Direct {
@@ -599,8 +600,7 @@ impl Health {
         let (outcome, changed, head) = self
             .released(writing, check::run(&client, &mut meta, &item.name, &opts))
             .await;
-        if self.db.blob_epoch() != observed {
-            self.db.postpone_health(item.id, now_ms()).await?;
+        if self.db.blob_epoch() != observed || self.db.repair_epoch() != repair_epoch {
             return Ok(());
         }
         if let Some((source, original)) = original {
@@ -622,6 +622,7 @@ impl Health {
                 .await?;
         }
         let probe = self.db.media_probe(item.id).await?;
+        let mut pending = Recheck::None;
         let now = now_ms();
         let mut next = HealthStatus {
             last_check: Some(now),
@@ -696,8 +697,7 @@ impl Health {
                 let found = self
                     .released(writing, structure::walk(&client, &meta, &item.name, head))
                     .await;
-                if self.db.blob_epoch() != observed {
-                    self.db.postpone_health(item.id, now_ms()).await?;
+                if self.db.blob_epoch() != observed || self.db.repair_epoch() != repair_epoch {
                     return Ok(());
                 }
                 let source = structure::source(&meta);
@@ -738,6 +738,7 @@ impl Health {
                         Ok(_) => {}
                         Err(infinidysk_db::Error::RepairQueueFull) => {
                             next.next_check = Some(now + MINUTE_MS);
+                            pending = Recheck::Deferred;
                         }
                         Err(error) => return Err(error.into()),
                     }
@@ -752,7 +753,9 @@ impl Health {
                 }
             }
         }
-        self.db.set_health(item.id, &next, status.recheck).await?;
+        self.db
+            .set_health_recheck(item.id, &next, status.recheck, pending)
+            .await?;
         Ok(())
     }
 
@@ -870,7 +873,9 @@ impl Health {
                         next_check: Some(now),
                         ..status
                     };
-                    self.db.set_health(item.id, &next, status.recheck).await?;
+                    self.db
+                        .set_health_recheck(item.id, &next, status.recheck, Recheck::User)
+                        .await?;
                     return Ok(());
                 }
                 Some(_) => false,

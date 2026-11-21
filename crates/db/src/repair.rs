@@ -381,11 +381,22 @@ impl Db {
         meta: BlobId,
         nzb: BlobId,
     ) -> Result<Option<(i64, Vec<u8>)>, Error> {
+        self.repair_metadata_limited(item, meta, nzb, i64::MAX)
+            .await
+    }
+
+    pub async fn repair_metadata_limited(
+        &self,
+        item: ItemId,
+        meta: BlobId,
+        nzb: BlobId,
+        limit: i64,
+    ) -> Result<Option<(i64, Vec<u8>)>, Error> {
         Ok(on!(self, pool => sqlx::query_as(
             "SELECT b.generation, m.data FROM items i \
              JOIN blobs b ON b.id = i.nzb_blob JOIN blobs m ON m.id = i.meta_blob \
-             WHERE i.id = $1 AND i.meta_blob = $2 AND i.nzb_blob = $3 AND i.kind <> 1")
-            .bind(item.0).bind(meta.0).bind(nzb.0).fetch_optional(pool).await?))
+             WHERE i.id = $1 AND i.meta_blob = $2 AND i.nzb_blob = $3 AND i.kind <> 1 AND length(m.data) <= $4")
+            .bind(item.0).bind(meta.0).bind(nzb.0).bind(limit).fetch_optional(pool).await?))
     }
 
     /// Like [`Db::repair_metadata`], with the metadata blob's generation instead of its bytes.

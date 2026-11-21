@@ -81,7 +81,7 @@ impl Evidence {
         if bytes > 16_000_000 {
             return Arc::new(AsyncMutex::new(false));
         }
-        // shortcut: 16 MB of observations; revisit capacity if shared-source benchmarks repeat reads.
+        // ponytail: 16 MB of observations; revisit capacity if shared-source benchmarks repeat reads.
         while entries.bytes + bytes > 16_000_000 {
             let Some(old) = entries.order.pop_front() else {
                 break;
@@ -99,6 +99,32 @@ impl Evidence {
 }
 
 impl Health {
+    async fn availability_snapshot(
+        &self,
+        id: ItemId,
+        meta_id: BlobId,
+        nzb: Option<BlobId>,
+    ) -> Result<Option<(infinidysk_core::FileMeta, Option<(BlobId, i64)>)>, Error> {
+        let (raw, source) = if let Some(nzb) = nzb.filter(|_| self.db.may_have_repairs()) {
+            let Some((generation, raw)) = self
+                .db
+                .repair_metadata_limited(id, meta_id, nzb, 16_000_000)
+                .await?
+            else {
+                return Ok(None);
+            };
+            (raw, Some((nzb, generation)))
+        } else {
+            let Some(raw) = self.db.repair_blob(meta_id, 16_000_000).await? else {
+                return Ok(None);
+            };
+            (raw, None)
+        };
+        let meta = blob::decode_meta_limited(&raw, 16_000_000)?;
+        let source = source.filter(|_| meta.has_placeholders());
+        Ok(Some((meta, source)))
+    }
+
     /// Checks stored plain and archive metadata. Results never claim full byte integrity.
     /// Call as top-level work, without holding a database write permit.
     pub async fn check_availability(
@@ -123,11 +149,12 @@ impl Health {
         let Some(meta_id) = item.meta_blob else {
             return Ok(Availability::Unavailable("file metadata is unavailable"));
         };
-        let Some(raw) = self.db.repair_blob(meta_id, 16_000_000).await? else {
+        let Some((meta, source)) = self
+            .availability_snapshot(id, meta_id, item.nzb_blob)
+            .await?
+        else {
             return Ok(Availability::Unavailable("file metadata is unavailable"));
         };
-        let meta = blob::decode_meta_limited(&raw, 16_000_000)?;
-        let source = self.omitted_source(&item, meta_id, &meta).await?;
         let providers = self.client.stats();
         let first = providers.iter().map(|provider| provider.priority).min();
         // Keep at least half the primary pool's connections free for playback startup.
@@ -325,13 +352,15 @@ impl Health {
         if current.meta_blob != Some(meta_id) || current.nzb_blob != item.nzb_blob {
             return Ok(Availability::Changed);
         }
-        let Some(raw) = self.db.repair_blob(meta_id, 16_000_000).await? else {
-            return Ok(Availability::Changed);
-        };
-        if blob::decode_meta_limited(&raw, 16_000_000)? != meta
-            || self.omitted_source(&current, meta_id, &meta).await? != source
+        if self
+            .availability_snapshot(id, meta_id, current.nzb_blob)
+            .await?
+            != Some((meta, source))
         {
             return Ok(Availability::Changed);
+        }
+        if cancel.is_cancelled() {
+            return Ok(Availability::Cancelled);
         }
         // Eviction takes no write permit; one committed during the reads above shows here.
         if self.db.repair_epoch() != epoch {
