@@ -168,6 +168,9 @@ impl Store {
         remove: impl Fn(PatchId) -> Result<Option<G>, Error>,
         cancelled: impl Fn() -> bool,
     ) -> Result<u64, Error> {
+        if needed > self.1 {
+            return Err(Error::Capacity);
+        }
         let mut state = self.0.used.lock().map_err(|_| Error::Recovery)?;
         let used = state.ok_or(Error::Recovery)?;
         let result = files::evict(

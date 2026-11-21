@@ -166,6 +166,11 @@ fn eviction_frees_the_least_recently_read_unpinned_repairs() {
         store.write(&descriptor(b"fourth"), b"fourth", || false),
         Err(Error::Capacity)
     ));
+    assert!(matches!(
+        store.evict(3 * length + 1, remove, || false),
+        Err(Error::Capacity)
+    ));
+    assert!(removed.borrow().is_empty());
     assert_eq!(store.evict(length, remove, || false).unwrap(), 1);
     assert_eq!(*removed.borrow(), [ids[1]]);
     assert!(store.read(&patches[1].0).is_err());
