@@ -238,6 +238,14 @@ impl LiveReader {
         before: usize,
         result: Poll<io::Result<()>>,
     ) -> Poll<io::Result<()>> {
+        // A publication that failed after commit while this read ran leaves old bytes unsafe.
+        if result.is_ready() && self.version.blocked() {
+            buf.set_filled(before);
+            self.inner = None;
+            return Poll::Ready(Err(io::Error::other(
+                "repair publication needs reconciliation",
+            )));
+        }
         if result.is_ready() && !self.version.is_current() {
             buf.set_filled(before);
             cx.waker().wake_by_ref();

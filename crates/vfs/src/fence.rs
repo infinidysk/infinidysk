@@ -696,16 +696,19 @@ mod tests {
         access.await.unwrap();
     }
 
-    #[allow(clippy::significant_drop_tightening)] // The spawned report must outlive publication.
     #[tokio::test]
     async fn queued_reports_recheck_their_revision_after_admission() {
         let registry = Fences::default();
         let fence = registry.get(ItemId::new());
         let queued = fence.version();
         let mut publication = fence.write().await;
-        let report = tokio::spawn(async move { queued.read().await });
-        tokio::task::yield_now().await;
-        assert!(!report.is_finished());
+        let mut report = Box::pin(queued.read());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut report)
+                .await
+                .is_err(),
+            "the report queues behind the writer"
+        );
         publication
             .retire()
             .unwrap()
@@ -713,7 +716,7 @@ mod tests {
             .await
             .unwrap();
         drop(publication);
-        assert!(report.await.unwrap().is_none());
+        assert!(report.await.is_none());
         let current = fence.version();
         let accepted = current.read().await.unwrap();
         assert!(
