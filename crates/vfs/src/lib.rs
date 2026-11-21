@@ -250,17 +250,17 @@ const SEGMENT_BYTES: u64 = 112;
 /// file's metadata is several MB. Opens are too rare to contend on it.
 type Metas = quick_cache::sync::Cache<
     (BlobId, u64),
-    Arc<FileMeta>,
+    (i64, Arc<FileMeta>),
     BySegments,
     RandomState,
-    quick_cache::sync::DefaultLifecycle<(BlobId, u64), Arc<FileMeta>>,
+    quick_cache::sync::DefaultLifecycle<(BlobId, u64), (i64, Arc<FileMeta>)>,
 >;
 
 #[derive(Clone)]
 struct BySegments;
 
-impl quick_cache::Weighter<(BlobId, u64), Arc<FileMeta>> for BySegments {
-    fn weight(&self, _: &(BlobId, u64), meta: &Arc<FileMeta>) -> u64 {
+impl quick_cache::Weighter<(BlobId, u64), (i64, Arc<FileMeta>)> for BySegments {
+    fn weight(&self, _: &(BlobId, u64), (_, meta): &(i64, Arc<FileMeta>)) -> u64 {
         let segments = match &**meta {
             FileMeta::Nzb(f) => f.segments.items.len(),
             FileMeta::Multipart(f) => f.parts.iter().map(|p| p.segments.items.len()).sum(),
@@ -672,7 +672,7 @@ impl Vfs {
     async fn opening(&self, item: &Item) -> Result<Opening, Error> {
         loop {
             let stamp = self.fences.stamp();
-            let meta = self.meta(item).await?;
+            let (generation, meta) = self.meta(item).await?;
             match self
                 .fences
                 .admit(stamp, item.id, scope::Scope::new(item.nzb_blob, &meta))
@@ -686,7 +686,7 @@ impl Vfs {
                     if stamp != self.fences.stamp() {
                         continue;
                     }
-                    let source = self.repair_context(item, &meta).await?;
+                    let source = self.repair_context(item, generation, &meta).await?;
                     return Ok(Opening {
                         meta,
                         source,
@@ -701,12 +701,15 @@ impl Vfs {
     async fn repair_context(
         &self,
         item: &Item,
+        meta_generation: i64,
         meta: &FileMeta,
     ) -> Result<Option<(BlobId, i64)>, Error> {
         let Some((metadata, nzb)) = item.meta_blob.zip(item.nzb_blob) else {
             return Ok(None);
         };
-        let Some((generation, raw)) = self.db.repair_metadata(item.id, metadata, nzb).await? else {
+        let Some((generation, current)) =
+            self.db.repair_generations(item.id, metadata, nzb).await?
+        else {
             return if self.db.may_have_repairs() && meta.has_placeholders() {
                 Err(Error::Corrupt("repair source changed while opening file"))
             } else {
@@ -714,14 +717,15 @@ impl Vfs {
             };
         };
         // Cached metadata can straddle a blob update; never pair it with newer NZB bytes.
-        if blob::decode_meta(&raw)? != *meta {
+        if current != meta_generation {
             return Err(Error::Corrupt("repair metadata changed while opening file"));
         }
         Ok(Some((nzb, generation)))
     }
 
-    /// The file's decoded metadata; concurrent first opens fetch it once.
-    async fn meta(&self, item: &Item) -> Result<Arc<FileMeta>, Error> {
+    /// The file's decoded metadata and its blob generation; concurrent first opens
+    /// fetch it once.
+    async fn meta(&self, item: &Item) -> Result<(i64, Arc<FileMeta>), Error> {
         let id = item
             .meta_blob
             .ok_or(Error::Corrupt("file has no metadata"))?;
@@ -729,12 +733,12 @@ impl Vfs {
         let key = (id, self.db.blob_epoch());
         self.metas
             .get_or_insert_async(&key, async {
-                let raw = self
+                let (generation, raw) = self
                     .db
-                    .blob(id)
+                    .blob_with_generation(id)
                     .await?
                     .ok_or(Error::Corrupt("metadata blob is missing"))?;
-                Ok(Arc::new(blob::decode_meta(&raw)?))
+                Ok((generation, Arc::new(blob::decode_meta(&raw)?)))
             })
             .await
     }

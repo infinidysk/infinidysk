@@ -2077,6 +2077,16 @@ impl Db {
         )
     }
 
+    /// A blob's bytes with the generation every write of them advances.
+    pub async fn blob_with_generation(&self, id: BlobId) -> Result<Option<(i64, Vec<u8>)>, Error> {
+        Ok(
+            on!(self, pool => sqlx::query_as("SELECT generation, data FROM blobs WHERE id = $1")
+            .bind(id.0)
+            .fetch_optional(pool)
+            .await?),
+        )
+    }
+
     /// Replaces a blob's bytes, e.g. after health checks record missing segments.
     pub async fn update_blob(&self, id: BlobId, data: &[u8]) -> Result<(), Error> {
         on!(self, pool => {
