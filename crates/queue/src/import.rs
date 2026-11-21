@@ -1316,17 +1316,27 @@ impl Volume {
                 ..usize::try_from(range.end).expect("within a segment in memory");
             data[r].to_vec()
         };
+        let cached = !segment.id.is_empty() && job.bodies().contains_key(&segment.id);
+        if !cached {
+            job.charge()?;
+        }
         let data = job
             .read(segment, begin, proof)
             .await
             .map_err(|error| match error {
-                infinidysk_nntp::Error::NotFound
-                | infinidysk_nntp::Error::CrcMismatch { .. }
+                infinidysk_nntp::Error::NotFound => {
+                    job.missed(&segment.id);
+                    missing(&self.name)
+                }
+                infinidysk_nntp::Error::CrcMismatch { .. }
                 | infinidysk_nntp::Error::Yenc(_)
                 | infinidysk_nntp::Error::TooLarge
                 | infinidysk_nntp::Error::InvalidArgument(_) => missing(&self.name),
                 error => Error::Retry(error),
             })?;
+        if !cached {
+            job.received(data.len())?;
+        }
         if data.len() as u64 != u64::from(segment.size) {
             return Err(failed(format!(
                 "{}: segment sizes disagree with the yEnc headers",
