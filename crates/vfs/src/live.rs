@@ -254,13 +254,12 @@ impl LiveReader {
             )));
         }
         // Register even when the underlying fetch is pending, so retirement wakes it.
-        let _ = self.changed.as_mut().poll(cx);
-        if !self.version.is_current() {
+        // A completed notification is replaced, never polled again.
+        while self.changed.as_mut().poll(cx).is_ready() || !self.version.is_current() {
             self.inner = None;
             self.loading = None;
             self.version = self.version.latest();
             self.changed = Box::pin(self.version.clone().changed());
-            let _ = self.changed.as_mut().poll(cx);
         }
         if self.inner.is_none() {
             let loading = self
@@ -268,11 +267,12 @@ impl LiveReader {
                 .get_or_insert_with(|| (self.reload)(self.version.clone()));
             let result = ready!(loading.as_mut().poll(cx));
             self.loading = None;
-            let mut reader = result?;
+            // A superseded reload's result, even an error, is retried at the new revision.
             if !self.version.is_current() {
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
+            let mut reader = result?;
             if let Some(end) = self.end {
                 reader.set_end(end);
             }
