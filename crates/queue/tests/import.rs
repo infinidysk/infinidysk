@@ -662,8 +662,18 @@ async fn a_par2_copy_without_slice_checksums_keeps_the_set() {
     check_par2_names(3).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_later_par2_copy_without_a_main_packet_keeps_the_set() {
+    check_par2_names(4).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_earlier_par2_copy_without_a_main_packet_keeps_the_set() {
+    check_par2_names(5).await;
+}
+
 /// `ambiguity`: 0 one index, 1 a second set, 2 a conflicting copy, 3 a copy without
-/// IFSC packets.
+/// IFSC packets, 4 and 5 a copy without the Main packet listed after or before.
 async fn check_par2_names(ambiguity: u8) {
     let data: Vec<u8> = (0..100_000usize)
         .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
@@ -676,7 +686,8 @@ async fn check_par2_names(ambiguity: u8) {
         ("\"x.par2\"", &p, par2.len(), 32 << 10),
     ];
     let mut other = par2.clone();
-    if ambiguity == 3 {
+    if matches!(ambiguity, 3..=5) {
+        let dropped: &[u8] = if ambiguity == 3 { b"IFSC" } else { b"Main" };
         let mut kept = Vec::new();
         let mut at = 0;
         while at < other.len() {
@@ -684,12 +695,12 @@ async fn check_par2_names(ambiguity: u8) {
                 other[at + 8..at + 16].try_into().unwrap(),
             ))
             .unwrap();
-            if &other[at + 48..at + 60] != b"PAR 2.0\0IFSC" {
+            if !other[at + 56..at + 64].starts_with(dropped) {
                 kept.extend_from_slice(&other[at..at + len]);
             }
             at += len;
         }
-        assert!(kept.len() < other.len(), "the fixture has IFSC packets");
+        assert!(kept.len() < other.len(), "the fixture has the dropped packets");
         other = kept;
     }
     // Recompute packet checksums after changing either the set or the full-file hash.
@@ -711,7 +722,9 @@ async fn check_par2_names(ambiguity: u8) {
         at += len;
     }
     let q = post("q", "y.par2", &other, 32 << 10);
-    if ambiguity != 0 {
+    if ambiguity == 5 {
+        entries.insert(1, ("\"y.par2\"", &q, other.len(), 32 << 10));
+    } else if ambiguity != 0 {
         entries.push(("\"y.par2\"", &q, other.len(), 32 << 10));
     }
     let xml = nzb(&entries);
@@ -730,7 +743,7 @@ async fn check_par2_names(ambiguity: u8) {
     };
     let proof = f.proof.expect("PAR2 proof");
     assert_eq!(proof.file_length, 100_000);
-    let held = matches!(ambiguity, 0 | 3);
+    let held = matches!(ambiguity, 0 | 3..=5);
     assert_eq!(
         proof.set_id,
         if held {
@@ -741,6 +754,7 @@ async fn check_par2_names(ambiguity: u8) {
     );
     assert_eq!(proof.set_id.is_some(), held);
     assert!(!held || !proof.slice_md5.is_empty(), "slice checksums kept");
+    assert!(!held || proof.slice_size > 0, "slice size kept");
 }
 
 /// Fixtures: `par2 create -c0 -s4096 one.par2 one.bin` and `-s8192 two.par2 two.bin`.
