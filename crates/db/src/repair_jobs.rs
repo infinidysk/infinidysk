@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     DELETE_UNUSED_BLOB, Db, Error, Ordering, Pool, RELEASE_NZB, now_ms, on, release_nzb,
-    repair::Owner,
+    repair::{Owner, capture},
 };
 
 /// Pending (queued, running and deferred) jobs, checks and repairs together. A check
@@ -46,8 +46,8 @@ pub struct Job {
 /// Captured from a claimed job, never reconstructed from its current database row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Claim {
-    id: Uuid,
-    generation: i64,
+    pub(crate) id: Uuid,
+    pub(crate) generation: i64,
 }
 
 impl Job {
@@ -299,10 +299,14 @@ impl Db {
     }
     /// Recheck availability through committed repairs and retry parked imports.
     pub async fn wake_par2(&self, nzb: BlobId, now: i64) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE items SET next_health_check = $2 WHERE nzb_blob = $1 AND kind <> 1")
-            .bind(nzb.0).bind(now).execute(pool).await?.rows_affected());
-        on!(self, pool => sqlx::query("UPDATE queue SET retry_at = $2 WHERE nzb_blob = $1")
-            .bind(nzb.0).bind(now).execute(pool).await?.rows_affected());
+        on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            sqlx::query("UPDATE items SET next_health_check = $2 WHERE nzb_blob = $1 AND kind <> 1")
+                .bind(nzb.0).bind(now).execute(&mut *tx).await?;
+            sqlx::query("UPDATE queue SET retry_at = $2 WHERE nzb_blob = $1")
+                .bind(nzb.0).bind(now).execute(&mut *tx).await?;
+            tx.commit().await?;
+        });
         Ok(())
     }
     /// Acknowledgement follows COMMIT. Repeated requests share completed results too.
@@ -318,12 +322,27 @@ impl Db {
             };
             return self.request_verification(item, now, None, false).await;
         }
-        let Some(source) = self.repair_source(owner).await? else {
-            return Ok(None);
-        };
         let _serial = self.searches.lock().await;
+        let postgres = matches!(self.pool, Pool::Postgres(_));
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
+            if postgres {
+                // Owner first, then blobs in ID order, as publication and deletion lock them.
+                let (lock, id) = match owner {
+                    Owner::Item(id) => ("SELECT 1 FROM items WHERE id = $1 FOR UPDATE", id.0),
+                    Owner::Queue(id) => ("SELECT 1 FROM queue WHERE id = $1 FOR UPDATE", id.0),
+                };
+                sqlx::query(lock).bind(id).execute(&mut *tx).await?;
+                if let Some(source) = capture!(&mut *tx, owner) {
+                    sqlx::query("SELECT id FROM blobs WHERE id = $1 OR id = $2 ORDER BY id FOR UPDATE")
+                        .bind(source.nzb.0).bind(source.metadata.map(|(id, _)| id.0))
+                        .execute(&mut *tx).await?;
+                }
+            }
+            let Some(source) = capture!(&mut *tx, owner) else {
+                tx.rollback().await?;
+                return Ok(None);
+            };
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
             let existing: Option<Uuid> = sqlx::query_scalar(
@@ -411,7 +430,7 @@ impl Db {
     }
 
     pub async fn par2_owner(&self, nzb: BlobId) -> Result<Option<Owner>, Error> {
-        let item: Option<Uuid> = on!(self, pool => sqlx::query_scalar("SELECT id FROM items WHERE nzb_blob = $1 AND kind <> 1 ORDER BY id LIMIT 1")
+        let item: Option<Uuid> = on!(self, pool => sqlx::query_scalar("SELECT id FROM items WHERE nzb_blob = $1 AND kind <> 1 AND meta_blob IS NOT NULL ORDER BY id LIMIT 1")
             .bind(nzb.0).fetch_optional(pool).await?);
         if let Some(id) = item {
             return Ok(Some(Owner::Item(ItemId(id))));

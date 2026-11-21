@@ -320,11 +320,17 @@ async fn lane_contract(db: &Db) {
 
 #[tokio::test]
 async fn repair_requests_are_durable_deduplicated_and_claimed_once() {
-    let db = Db::connect("sqlite::memory:").await.unwrap();
-    durable_requests(&db).await;
+    let path = std::env::temp_dir().join(format!("infinidysk-jobs-{}.sqlite", ItemId::new()));
+    let url = format!("sqlite:{}", path.display());
+    let mut db = Db::connect(&url).await.unwrap();
+    durable_requests(&mut db, &url).await;
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
 }
 
-async fn durable_requests(db: &Db) {
+async fn durable_requests(db: &mut Db, url: &str) {
     let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
     let mut item = Item::child(&root, "source.bin", ItemKind::NzbFile).unwrap();
     let nzb = BlobId::new();
@@ -365,6 +371,9 @@ async fn durable_requests(db: &Db) {
     );
     assert_eq!(db.par2_counts().await.unwrap(), vec![(1, 1, 0, 0)]);
     assert!(db.claim_par2(12).await.unwrap().is_none());
+    // The running claim must survive a restart before it resumes.
+    db.close().await;
+    *db = Db::connect(url).await.unwrap();
     db.resume_par2(13).await.unwrap();
     let resumed = db.claim_par2(13).await.unwrap().unwrap();
     assert_eq!(resumed.id, first);
@@ -514,7 +523,7 @@ async fn verification_restoration(db: &Db) {
         .unwrap()
         .unwrap();
     assert!(
-        db.publish_repair_metadata(&source, b"new-meta")
+        db.publish_repair_metadata(&source, b"new-meta", Some(claimed.claim()))
             .await
             .unwrap()
     );
@@ -544,6 +553,39 @@ async fn verification_restoration(db: &Db) {
             .id,
         current
     );
+}
+
+#[tokio::test]
+async fn a_stale_check_cannot_escalate_a_restarted_claim() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    escalation_fencing(&db).await;
+}
+
+async fn escalation_fencing(db: &Db) {
+    for job in db.par2_jobs().await.unwrap() {
+        db.cancel_par2(job.id, 0).await.unwrap();
+    }
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut item = Item::child(&root, "escalate.bin", ItemKind::NzbFile).unwrap();
+    let (nzb, meta) = (BlobId::new(), BlobId::new());
+    item.nzb_blob = Some(nzb);
+    item.meta_blob = Some(meta);
+    db.insert(&[item.clone()], &[(nzb, b"nzb"), (meta, b"meta")])
+        .await
+        .unwrap();
+    let id = db
+        .request_par2(Owner::Item(item.id), true, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    let old = db.claim_par2_lane(10, true, false).await.unwrap().unwrap();
+    assert_eq!(old.id, id);
+    db.cancel_par2(id, 11).await.unwrap();
+    db.restart_par2(id, 12).await.unwrap();
+    let current = db.claim_par2_lane(12, true, false).await.unwrap().unwrap();
+    assert_eq!(current.id, id);
+    assert!(!db.escalate_par2(old.claim(), 13).await.unwrap());
+    assert!(db.escalate_par2(current.claim(), 14).await.unwrap());
 }
 
 async fn stale_claims(db: &Db) {
@@ -657,13 +699,14 @@ async fn postgres_requests_obey_the_same_claim_resume_and_cancellation_contract(
         .await
         .unwrap();
     let (base, _) = url.rsplit_once('/').unwrap();
-    let db = Db::connect(&format!("{base}/{name}")).await.unwrap();
-    durable_requests(&db).await;
+    let mut db = Db::connect(&format!("{base}/{name}")).await.unwrap();
+    durable_requests(&mut db, &format!("{base}/{name}")).await;
     lane_contract(&db).await;
     history_contract(&db).await;
     handoff_at_capacity(&db).await;
     capacity_bounds(&db).await;
     stale_claims(&db).await;
+    escalation_fencing(&db).await;
     verification_restoration(&db).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(

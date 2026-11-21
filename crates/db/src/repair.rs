@@ -7,7 +7,9 @@ use infinidysk_core::{
 use sqlx::Connection as _;
 use uuid::Uuid;
 
-use crate::{DELETE_UNUSED_BLOB, Db, Error, Ordering, Pool, RELEASE_NZB, now_ms, on};
+use crate::{
+    DELETE_UNUSED_BLOB, Db, Error, Ordering, Pool, RELEASE_NZB, now_ms, on, repair_jobs::Claim,
+};
 
 /// Bound the descriptors held for one atomic publication.
 pub const MAX_PATCHES: usize = 1024;
@@ -22,10 +24,10 @@ pub enum Owner {
 /// already published bytes remain usable while their original NZB is unchanged and owned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Source {
-    owner: Owner,
-    nzb: BlobId,
-    generation: i64,
-    metadata: Option<(BlobId, i64)>,
+    pub(crate) owner: Owner,
+    pub(crate) nzb: BlobId,
+    pub(crate) generation: i64,
+    pub(crate) metadata: Option<(BlobId, i64)>,
 }
 
 impl Source {
@@ -38,35 +40,36 @@ impl Source {
     }
 }
 
-const ITEM: &str = "SELECT b.id, b.generation, m.id, m.generation FROM items i \
+pub(crate) const ITEM: &str = "SELECT b.id, b.generation, m.id, m.generation FROM items i \
     JOIN blobs b ON b.id = i.nzb_blob JOIN blobs m ON m.id = i.meta_blob \
     WHERE i.id = $1 AND i.kind <> 1";
-const QUEUE: &str = "SELECT b.id, b.generation FROM queue q \
+pub(crate) const QUEUE: &str = "SELECT b.id, b.generation FROM queue q \
     JOIN blobs b ON b.id = q.nzb_blob WHERE q.id = $1";
 
 macro_rules! capture {
     ($executor:expr, $owner:expr) => {
         match $owner {
-            Owner::Item(id) => {
-                let row: Option<(Uuid, i64, Uuid, i64)> = sqlx::query_as(ITEM)
-                    .bind(id.0)
-                    .fetch_optional($executor)
-                    .await?;
-                row.map(|(nzb, generation, meta, version)| Source {
+            $crate::repair::Owner::Item(id) => {
+                let row: Option<(uuid::Uuid, i64, uuid::Uuid, i64)> =
+                    sqlx::query_as($crate::repair::ITEM)
+                        .bind(id.0)
+                        .fetch_optional($executor)
+                        .await?;
+                row.map(|(nzb, generation, meta, version)| $crate::repair::Source {
                     owner: $owner,
-                    nzb: BlobId(nzb),
+                    nzb: infinidysk_core::BlobId(nzb),
                     generation,
-                    metadata: Some((BlobId(meta), version)),
+                    metadata: Some((infinidysk_core::BlobId(meta), version)),
                 })
             }
-            Owner::Queue(id) => {
-                let row: Option<(Uuid, i64)> = sqlx::query_as(QUEUE)
+            $crate::repair::Owner::Queue(id) => {
+                let row: Option<(uuid::Uuid, i64)> = sqlx::query_as($crate::repair::QUEUE)
                     .bind(id.0)
                     .fetch_optional($executor)
                     .await?;
-                row.map(|(nzb, generation)| Source {
+                row.map(|(nzb, generation)| $crate::repair::Source {
                     owner: $owner,
-                    nzb: BlobId(nzb),
+                    nzb: infinidysk_core::BlobId(nzb),
                     generation,
                     metadata: None,
                 })
@@ -74,6 +77,7 @@ macro_rules! capture {
         }
     };
 }
+pub(crate) use capture;
 
 // Every lookup checks current NZB bytes and a live source owner in the same statement.
 macro_rules! active {
@@ -133,6 +137,7 @@ impl Db {
         &self,
         source: &Source,
         encoded: &[u8],
+        nzb_size: u64,
         total_bytes: u64,
         file_name: &str,
     ) -> Result<bool, Error> {
@@ -140,6 +145,7 @@ impl Db {
             return Err(Error::RepairBounds("queued repair owner"));
         };
         let total = i64::try_from(total_bytes).map_err(|_| Error::RepairBounds("NZB size"))?;
+        let size = i64::try_from(nzb_size).map_err(|_| Error::RepairBounds("NZB size"))?;
         let replacement = BlobId::new();
         let changed = on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
@@ -152,8 +158,8 @@ impl Db {
             }
             sqlx::query("INSERT INTO blobs (id, data) VALUES ($1, $2)")
                 .bind(replacement.0).bind(encoded).execute(&mut *tx).await?;
-            sqlx::query("UPDATE queue SET nzb_blob = $2, total_bytes = $3, file_name = $4, content_hash = NULL WHERE id = $1")
-                .bind(job.0).bind(replacement.0).bind(total).bind(file_name).execute(&mut *tx).await?;
+            sqlx::query("UPDATE queue SET nzb_blob = $2, total_bytes = $3, file_name = $4, nzb_size = $5, content_hash = NULL WHERE id = $1")
+                .bind(job.0).bind(replacement.0).bind(total).bind(file_name).bind(size).execute(&mut *tx).await?;
             crate::release_nzb!(self, tx, source.nzb.0);
             tx.commit().await?;
             true
@@ -189,7 +195,7 @@ impl Db {
     }
 
     pub async fn recheck_missing_repairs(&self) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = 1 WHERE nzb_blob IN (SELECT nzb_blob FROM repair_patches)")
+        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE nzb_blob IN (SELECT nzb_blob FROM repair_patches)")
             .execute(pool).await?.rows_affected());
         Ok(())
     }
@@ -263,7 +269,7 @@ impl Db {
                 tx.rollback().await?;
                 return Ok(Vec::new());
             };
-            let items = sqlx::query_as("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = 1 WHERE nzb_blob = $1 AND kind <> 1 RETURNING id, path")
+            let items = sqlx::query_as("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE nzb_blob = $1 AND kind <> 1 RETURNING id, path")
                 .bind(nzb).fetch_all(&mut *tx).await?;
             let committed = tx.commit().await;
             self.blob_epoch.fetch_add(1, Ordering::Release);
@@ -277,19 +283,27 @@ impl Db {
     }
 
     /// Publish recovered proof/layout metadata under the same owner/blob source check.
+    /// Only the running `check` that produced it moves to the new metadata generation;
+    /// other checks keep the generation they read, so their results never cover it.
     pub async fn publish_repair_metadata(
         &self,
         source: &Source,
         data: &[u8],
+        check: Option<Claim>,
     ) -> Result<bool, Error> {
         let (db, source, data) = (self.clone(), source.clone(), data.to_vec());
         owned(tokio::spawn(async move {
-            db.write_repair_metadata(&source, &data).await
+            db.write_repair_metadata(&source, &data, check).await
         }))
         .await
     }
 
-    async fn write_repair_metadata(&self, source: &Source, data: &[u8]) -> Result<bool, Error> {
+    async fn write_repair_metadata(
+        &self,
+        source: &Source,
+        data: &[u8],
+        check: Option<Claim>,
+    ) -> Result<bool, Error> {
         let Some((meta, generation)) = source.metadata else {
             return Ok(false);
         };
@@ -309,9 +323,10 @@ impl Db {
              WHERE i.id = $4 AND i.meta_blob = $1 AND n.id = $5 AND n.generation = $6)")
             .bind(meta.0).bind(data).bind(generation).bind(item.0).bind(source.nzb.0).bind(source.generation)
             .execute(&mut *tx).await?.rows_affected();
-            if changed > 0 {
-                sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob = $5 AND state = 1 AND verify_only = TRUE")
-                    .bind(item.0).bind(meta.0).bind(generation).bind(source.generation).bind(source.nzb.0).execute(&mut *tx).await?;
+            if changed > 0 && let Some(check) = check {
+                sqlx::query("UPDATE repair_jobs SET meta_generation = meta_generation + 1 WHERE id = $6 AND claim_generation = $7 AND item_id = $1 AND meta_blob = $2 AND meta_generation = $3 AND generation = $4 AND nzb_blob = $5 AND state = 1 AND verify_only = TRUE")
+                    .bind(item.0).bind(meta.0).bind(generation).bind(source.generation).bind(source.nzb.0)
+                    .bind(check.id).bind(check.generation).execute(&mut *tx).await?;
             }
             let committed = tx.commit().await;
             if changed > 0 {
@@ -423,6 +438,9 @@ impl Db {
     /// An uncertain commit may have succeeded. Retry the same IDs; retain files until
     /// reference reconciliation proves they can be removed.
     pub async fn publish_patches(&self, source: &Source, patches: &[Patch]) -> Result<bool, Error> {
+        if patches.is_empty() || patches.len() > MAX_PATCHES {
+            return Err(Error::RepairBounds("batch size"));
+        }
         let (db, source, patches) = (self.clone(), source.clone(), patches.to_vec());
         owned(tokio::spawn(async move {
             db.write_patches(&source, &patches).await
@@ -431,9 +449,6 @@ impl Db {
     }
 
     async fn write_patches(&self, source: &Source, patches: &[Patch]) -> Result<bool, Error> {
-        if patches.is_empty() || patches.len() > MAX_PATCHES {
-            return Err(Error::RepairBounds("batch size"));
-        }
         let encoded: Vec<_> = patches
             .iter()
             .map(|patch| {

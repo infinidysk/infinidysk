@@ -2,6 +2,7 @@
 //! one before it is kept or restored.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use sqlx::{ConnectOptions as _, Connection as _};
@@ -114,8 +115,11 @@ pub fn latest_sqlite_schema() -> i64 {
 /// [`Error::Interrupted`] on a stop, or the failed open or statement.
 pub async fn check_file(
     path: &Path,
-    mut stop: impl FnMut() -> bool + Send + 'static,
+    stop: impl FnMut() -> bool + Send + 'static,
 ) -> Result<FileCheck, Error> {
+    // Shared with SQLite's progress handler; payload hashing runs outside SQLite.
+    let stop = Arc::new(Mutex::new(stop));
+    let stopped = || stop.lock().map_or(true, |mut stop| stop());
     let result = match SqliteConnectOptions::new()
         .filename(path)
         .read_only(true)
@@ -125,10 +129,13 @@ pub async fn check_file(
     {
         Ok(mut conn) => {
             let result = async {
+                let handler = Arc::clone(&stop);
                 conn.lock_handle()
                     .await?
-                    .set_progress_handler(PROGRESS_OPS, move || !stop());
-                inspect(&mut conn).await
+                    .set_progress_handler(PROGRESS_OPS, move || {
+                        !handler.lock().map_or(true, |mut stop| stop())
+                    });
+                inspect(&mut conn, &stopped).await
             }
             .await;
             let _ = conn.close().await;
@@ -147,7 +154,10 @@ pub async fn check_file(
     }
 }
 
-async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
+async fn inspect(
+    conn: &mut SqliteConnection,
+    stopped: &(impl Fn() -> bool + Sync),
+) -> Result<FileCheck, Error> {
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' \
          AND name IN ('_sqlx_migrations', '__EFMigrationsHistory')",
@@ -212,12 +222,18 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
                 #[sqlx(flatten)]
                 catalog: crate::repair::Row,
                 payload: Option<Vec<u8>>,
+                has_source: bool,
+            }
+            if stopped() {
+                return Err(Error::Interrupted);
             }
             let query = sqlx::query_as::<_, SavedRepair>(if after.is_some() {
-                "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload \
+                "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload, \
+                 EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_patches.nzb_blob) AS has_source \
                  FROM repair_patches WHERE id > $1 ORDER BY id LIMIT 1"
             } else {
-                "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload \
+                "SELECT id, set_id, file_id, start_byte, end_byte, message_id, descriptor, CASE WHEN length(backup_payload) <= 33554432 THEN backup_payload ELSE NULL END AS payload, \
+                 EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_patches.nzb_blob) AS has_source \
                  FROM repair_patches ORDER BY id LIMIT 1"
             });
             let query = if let Some(after) = after {
@@ -230,6 +246,10 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
                 break;
             };
             after = Some(row.catalog.id);
+            if !row.has_source {
+                problems.push("A backed-up repair article has no NZB.".to_owned());
+                break;
+            }
             let valid = tokio::task::spawn_blocking(move || {
                 use sha2::{Digest as _, Sha256};
                 crate::repair::decode(&row.catalog)
@@ -251,6 +271,9 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
     if schema_version >= 10 && problems.is_empty() {
         let mut after: Option<String> = None;
         loop {
+            if stopped() {
+                return Err(Error::Interrupted);
+            }
             let query = sqlx::query_as::<_, (String, Option<Vec<u8>>, Vec<u8>)>(
                 if after.is_some() {
                     "SELECT hash, CASE WHEN length(payload) <= 33554432 THEN payload ELSE NULL END, sha256 FROM legacy_repair_articles WHERE hash > $1 ORDER BY hash LIMIT 1"
@@ -279,6 +302,9 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
                 break;
             }
         }
+    }
+    if stopped() {
+        return Err(Error::Interrupted);
     }
     Ok(FileCheck {
         schema_version,

@@ -406,7 +406,7 @@ async fn publication_invalidates_after_commit_attempt_including_commit_errors() 
                 let before = db.blob_epoch();
                 let publication = tokio::spawn(async move {
                     if metadata {
-                        db.publish_repair_metadata(&source, b"new-meta").await
+                        db.publish_repair_metadata(&source, b"new-meta", None).await
                     } else {
                         db.publish_patches(&source, &[patch()]).await
                     }
@@ -616,8 +616,8 @@ async fn idempotent_batches_reject_conflicting_ids_articles_and_overlapping_rang
                 .unwrap(),
             slice::from_ref(&first)
         );
-        let mut conflict = first.clone();
-        conflict.sha256[0] ^= 1;
+        let mut conflict = range_patch(10, 20);
+        conflict.id = first.id;
         assert!(matches!(
             fixture.db.publish_patches(&source, &[conflict]).await,
             Err(Error::RepairConflict)
@@ -897,7 +897,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
                 .article_patch(&source, "patch@loopback")
                 .await
                 .unwrap(),
-            Some(patch)
+            Some(patch.clone())
         );
         fixture
             .db
@@ -916,14 +916,14 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert!(
             !fixture
                 .db
-                .replace_queued_repair_nzb(&source, b"inner NZB", 200, "inner.nzb")
+                .replace_queued_repair_nzb(&source, b"inner NZB", 9, 200, "inner.nzb")
                 .await
                 .unwrap()
         );
         assert!(
             fixture
                 .db
-                .replace_queued_repair_nzb(&changed, b"inner NZB", 200, "inner.nzb")
+                .replace_queued_repair_nzb(&changed, b"inner NZB", 9, 200, "inner.nzb")
                 .await
                 .unwrap()
         );
@@ -932,6 +932,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert_ne!(current.nzb_blob, job.nzb_blob);
         assert_eq!(current.file_name, "inner.nzb");
         assert_eq!(current.total_bytes, 200);
+        assert_eq!(current.nzb_size, 9);
         let (inner, bytes) = fixture
             .db
             .queued_repair_nzb(job.id, current.nzb_blob)
@@ -944,9 +945,26 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert!(
             !fixture
                 .db
-                .replace_queued_repair_nzb(&changed, b"stale replacement", 300, "stale.nzb")
+                .replace_queued_repair_nzb(&changed, b"stale replacement", 17, 300, "stale.nzb")
                 .await
                 .unwrap()
+        );
+        let mut live = patch.clone();
+        live.id = PatchId::new();
+        assert!(
+            fixture
+                .db
+                .publish_patches(&inner, slice::from_ref(&live))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            fixture
+                .db
+                .article_patch(&inner, "patch@loopback")
+                .await
+                .unwrap(),
+            Some(live)
         );
         fixture
             .execute("DELETE FROM queue", "DELETE FROM queue")
@@ -954,7 +972,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert!(
             fixture
                 .db
-                .queued_repair_nzb(job.id, job.nzb_blob)
+                .queued_repair_nzb(job.id, current.nzb_blob)
                 .await
                 .unwrap()
                 .is_none()
@@ -962,14 +980,14 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert!(
             !fixture
                 .db
-                .publish_patches(&source, &[range_patch(10, 20)])
+                .publish_patches(&inner, &[range_patch(10, 20)])
                 .await
                 .unwrap()
         );
         assert!(
             fixture
                 .db
-                .article_patch(&source, "patch@loopback")
+                .article_patch(&inner, "patch@loopback")
                 .await
                 .unwrap()
                 .is_none()
@@ -1057,6 +1075,18 @@ async fn waiting_publications_recheck_changes_and_cancellation_releases_locks() 
                 let patches = [patch()];
                 let mut running = Box::pin(fixture.db.publish_patches(&source, &patches));
                 assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut running).await.is_err());
+                // SQLite cannot show the wait; PostgreSQL must report it before the commit.
+                if matches!(fixture.cleanup, Cleanup::Postgres(_, _)) {
+                    let mut probe = PgConnection::connect(&fixture.url).await.unwrap();
+                    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        loop {
+                            let waiting: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock')").fetch_one(&mut probe).await.unwrap();
+                            if waiting { break; }
+                            assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut running).await.is_err());
+                        }
+                    }).await.unwrap();
+                    probe.close().await.unwrap();
+                }
                 if cancel {
                     drop(running);
                     tx.commit().await.unwrap();
@@ -1181,7 +1211,7 @@ async fn a_publication_dropped_after_commit_still_invalidates_cached_metadata() 
     let fixture = sqlite_fixture().await;
     let source = fixture.source().await;
     let before = fixture.db.blob_epoch();
-    let mut publication = Box::pin(fixture.db.publish_repair_metadata(&source, b"next"));
+    let mut publication = Box::pin(fixture.db.publish_repair_metadata(&source, b"next", None));
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while fixture.db.blob(fixture.meta).await.unwrap().as_deref() != Some(b"next") {
