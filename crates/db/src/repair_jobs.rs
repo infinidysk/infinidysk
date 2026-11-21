@@ -51,6 +51,11 @@ pub struct Claim {
 }
 
 impl Job {
+    /// Queued, running or deferred: the job has not reached a result yet.
+    pub const fn pending(&self) -> bool {
+        matches!(self.state, 0 | 1 | 4)
+    }
+
     pub const fn claim(&self) -> Claim {
         Claim {
             id: self.id,

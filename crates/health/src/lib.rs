@@ -851,7 +851,7 @@ impl Health {
             let owner = infinidysk_db::repair::Owner::Item(item.id);
             let result = self.db.par2_result(owner, false).await?;
             let pending = match result {
-                Some(job) if matches!(job.state, 0 | 1 | 4) => true,
+                Some(job) if job.pending() => true,
                 Some(job)
                     if matches!(job.state, 2 | 3 | 5 | 6)
                         && status.last_check.unwrap_or(0) <= job.updated_at =>

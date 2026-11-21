@@ -818,7 +818,7 @@ impl Queue {
                 .db
                 .par2_result(repair_owner, false)
                 .await?
-                .is_some_and(|result| matches!(result.state, 0 | 1 | 4))
+                .is_some_and(|result| result.pending())
         {
             return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
         }
