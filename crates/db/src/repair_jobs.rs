@@ -95,6 +95,8 @@ impl Db {
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
             if matches!(self.pool, Pool::Postgres(_)) {
+                sqlx::query("SELECT id FROM items WHERE id = (SELECT item_id FROM repair_jobs WHERE id = $1) FOR UPDATE")
+                    .bind(claim.id).execute(&mut *tx).await?;
                 sqlx::query("SELECT id FROM blobs WHERE id = (SELECT nzb_blob FROM repair_jobs WHERE id = $1) FOR UPDATE")
                     .bind(claim.id).execute(&mut *tx).await?;
             }
