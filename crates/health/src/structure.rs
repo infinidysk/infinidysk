@@ -387,9 +387,9 @@ pub fn judge(
         },
         (_, None) => Verdict::Nothing,
         (Structure::Sound, Some(_)) => Verdict::Clear,
-        (Structure::Unrecognized | Structure::Inconclusive(_), Some(d)) if d.source != source => {
-            Verdict::Clear
-        }
+        (Structure::Unrecognized, Some(d)) if d.source != source => Verdict::Clear,
+        // A failed walk keeps the hold even on a new source; a later sighting there
+        // starts over, so the old evidence never confirms anything.
         (Structure::Unrecognized | Structure::Inconclusive(_), Some(d)) => Verdict::Keep(d),
     }
 }
@@ -505,8 +505,18 @@ mod tests {
                 100,
                 50
             ),
-            Verdict::Clear
+            Verdict::Keep(old)
         );
+        assert!(matches!(
+            judge(
+                Some(old),
+                &Structure::Damaged { offset: 16, size: 4 },
+                source(&meta),
+                100,
+                50
+            ),
+            Verdict::First(_)
+        ));
         let FileMeta::Multipart(file) = &mut meta else {
             unreachable!()
         };
