@@ -70,13 +70,10 @@ async fn active_playback_keeps_new_availability_checks_off_the_provider() {
 async fn playback_preempts_an_availability_check_and_releases_publication() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let (data, _) = content();
-    let server = LoopbackServer::start_stalling(
-        post("verify", "a.bin", &data, ARTICLE),
-        0,
-        Duration::from_secs(3),
-    )
-    .await
-    .unwrap();
+    let articles = post("verify", "a.bin", &data, ARTICLE);
+    let first = articles[0].message_id.clone();
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let (arrived, release) = server.hold_article(&first);
     let (_scratch, db, item, health) = stored(&server, &data, None).await;
     let playing = Arc::new(AtomicBool::new(false));
     let gate = Arc::clone(&playing);
@@ -99,7 +96,10 @@ async fn playback_preempts_an_availability_check_and_releases_publication() {
                 .unwrap()
         }
     });
-    wait_for_body(&server).await;
+    tokio::time::timeout(Duration::from_secs(3), arrived)
+        .await
+        .unwrap()
+        .unwrap();
     playing.store(true, Ordering::Relaxed);
     let result = tokio::time::timeout(Duration::from_secs(1), checking)
         .await
@@ -109,6 +109,7 @@ async fn playback_preempts_an_availability_check_and_releases_publication() {
     let _publication = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
         .await
         .expect("yielding releases the publication barrier");
+    let _ = release.send(());
 }
 
 #[tokio::test]
@@ -181,13 +182,10 @@ async fn availability_checks_all_articles_without_a_proof_or_a_full_download() {
 #[tokio::test]
 async fn availability_probes_continue_while_a_body_spot_check_waits() {
     let (data, _) = content();
-    let server = LoopbackServer::start_stalling(
-        post("verify", "a.bin", &data, ARTICLE),
-        0,
-        Duration::from_secs(3),
-    )
-    .await
-    .unwrap();
+    let articles = post("verify", "a.bin", &data, ARTICLE);
+    let first = articles[0].message_id.clone();
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let (arrived, release) = server.hold_article(&first);
     let (_scratch, _, item, health) = stored(&server, &data, None).await;
     let cancel = CancellationToken::new();
     let progress = Arc::new(AvailabilityProgress::default());
@@ -208,7 +206,10 @@ async fn availability_probes_continue_while_a_body_spot_check_waits() {
                 .await
         }
     });
-    wait_for_body(&server).await;
+    tokio::time::timeout(Duration::from_secs(3), arrived)
+        .await
+        .unwrap()
+        .unwrap();
     let advanced = tokio::time::timeout(Duration::from_secs(1), async {
         while progress.checked.load(std::sync::atomic::Ordering::Relaxed) < 5 {
             tokio::task::yield_now().await;
@@ -224,6 +225,7 @@ async fn availability_probes_continue_while_a_body_spot_check_waits() {
         advanced.is_ok(),
         "STAT probes must progress without a stalled BODY"
     );
+    let _ = release.send(());
 }
 
 #[tokio::test]
@@ -466,25 +468,27 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
         .await
         .unwrap()
         .unwrap();
-    db.publish_patches(
-        (),
-        &source,
-        &[Patch {
-            id: PatchId::new(),
-            source: Source {
-                set: key.set,
-                file: key.file,
-                range: key.range,
-                file_length: key.file_length,
-                message_id: None,
-                part: Some(2),
-                total: Some(15),
-            },
-            sha256: [0; 32],
-        }],
-    )
-    .await
-    .unwrap();
+    assert!(
+        db.publish_patches(
+            (),
+            &source,
+            &[Patch {
+                id: PatchId::new(),
+                source: Source {
+                    set: key.set,
+                    file: key.file,
+                    range: key.range,
+                    file_length: key.file_length,
+                    message_id: None,
+                    part: Some(2),
+                    total: Some(15),
+                },
+                sha256: [0; 32],
+            }],
+        )
+        .await
+        .unwrap()
+    );
     let before = db.health(item.id).await.unwrap();
     let options = AvailabilityOptions::default();
     let progress = Arc::clone(&options.progress);
@@ -613,8 +617,13 @@ async fn missing_spot_checks_refund_their_read_allowance() {
             )
             .await
             .unwrap(),
-        Availability::Damaged { .. }
+        Availability::Damaged { missing: 15, .. }
     ));
+    assert_eq!(
+        server.body_commands(),
+        3,
+        "later spot checks reuse the refunded allowance"
+    );
 }
 
 #[tokio::test]

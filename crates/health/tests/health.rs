@@ -177,11 +177,13 @@ async fn a_degraded_item_queues_par2_without_asking_arr_to_replace_it() {
     let (_, status) = db.health(item.id).await.unwrap().unwrap();
     assert_eq!(status.state, HealthState::Degraded);
     assert!(calls.0.lock().unwrap().is_empty());
-    assert!(
+    assert_eq!(
         db.par2_result(infinidysk_db::repair::Owner::Item(item.id), false)
             .await
             .unwrap()
-            .is_some()
+            .unwrap()
+            .state,
+        0
     );
 }
 
@@ -208,11 +210,13 @@ async fn exhausted_arr_attempts_fall_back_to_par2() {
         db.health(item.id).await.unwrap().unwrap().1.state,
         HealthState::Repairing
     );
-    assert!(
+    assert_eq!(
         db.par2_result(infinidysk_db::repair::Owner::Item(item.id), false)
             .await
             .unwrap()
-            .is_some()
+            .unwrap()
+            .state,
+        0
     );
 }
 
