@@ -700,7 +700,10 @@ async fn check_par2_names(ambiguity: u8) {
             }
             at += len;
         }
-        assert!(kept.len() < other.len(), "the fixture has the dropped packets");
+        assert!(
+            kept.len() < other.len(),
+            "the fixture has the dropped packets"
+        );
         other = kept;
     }
     // Recompute packet checksums after changing either the set or the full-file hash.

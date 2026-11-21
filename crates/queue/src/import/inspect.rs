@@ -540,7 +540,7 @@ impl Inspector {
             (Err(job.over(TOO_MANY_FILES)), Step::Starting)
         } else {
             let planning = async {
-                let (outputs, _) =
+                let (outputs, dropped_missing) =
                     plan(job, nzb, rules.check_percent, started, &mut timings).await?;
                 // An import stops at an unreadable member before it looks for an NZB file.
                 let inner = if job.went_past() {
@@ -548,7 +548,7 @@ impl Inspector {
                 } else {
                     inner_nzb(job, &outputs).await?
                 };
-                Ok::<_, Error>((outputs, inner))
+                Ok::<_, Error>((outputs, dropped_missing, inner))
             };
             let planned = tokio::time::timeout_at(self.deadline, planning)
                 .await
@@ -556,12 +556,14 @@ impl Inspector {
             (planned, timings.step())
         };
         let planned = match planned {
-            Ok((_, Some(raw))) => {
+            Ok((_, _, Some(raw))) => {
                 *self.run.notes() = Notes::default();
                 self.followed += 1;
                 return Level::Nzb(raw);
             }
-            Ok((outputs, None)) => self.files(job, outputs, release).await,
+            Ok((outputs, dropped_missing, None)) => {
+                self.files(job, outputs, dropped_missing, release).await
+            }
             Err(error) => Err(error),
         };
         let mut notes = std::mem::take(&mut *self.run.notes());
@@ -613,17 +615,19 @@ impl Inspector {
         })
     }
 
-    /// Filters and names the report within the same deadline as the planner.
+    /// Filters and names the report within the same deadline as the planner. With nothing
+    /// to list, a `dropped_missing` file explains why, as it does for an import.
     async fn files(
         &self,
         job: &Job,
         outputs: Vec<Output>,
+        dropped_missing: Option<Error>,
         release: &str,
     ) -> Result<Vec<Inspected>, Error> {
         let listing = async {
             let outputs = filter(outputs, job);
             if outputs.is_empty() && self.run.notes().unread.is_empty() {
-                return Err(failed("No importable files found."));
+                return Err(dropped_missing.unwrap_or_else(|| failed("No importable files found.")));
             }
             let limit = self.run.limits.reported;
             if outputs.len() > limit {
@@ -913,7 +917,7 @@ mod tests {
                 set: None,
             },
         };
-        let result = inspector.files(&job, vec![output; 512], "job").await;
+        let result = inspector.files(&job, vec![output; 512], None, "job").await;
         assert!(matches!(result, Err(Error::Limit(TIMED_OUT))));
         assert!(inspector.run.notes().exceeded);
     }
@@ -938,6 +942,36 @@ mod tests {
         );
         assert!(report.limit_exceeded && !report.manifest_complete);
         assert_eq!(report.article_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_missing_file_explains_an_empty_report_as_import_does() {
+        use infinidysk_core::{FileMeta, MultipartFile};
+
+        let inspector = Inspector::default();
+        let client = Arc::new(Client::new([]));
+        let job = super::super::job(
+            &client,
+            &Rules::default(),
+            None,
+            Arc::clone(&inspector.progress),
+            Some(Arc::clone(&inspector.run)),
+            None,
+        );
+        let sample = Output {
+            path: vec!["Sample".to_owned(), "sample.mkv".to_owned()],
+            meta: FileMeta::Multipart(MultipartFile {
+                parts: Vec::new(),
+                crypt: None,
+            }),
+            origin: crate::import::Origin {
+                source: NameSource::ArchiveHeader,
+                set: None,
+            },
+        };
+        let dropped = Some(Error::Missing("abcdef0123".to_owned()));
+        let result = inspector.files(&job, vec![sample], dropped, "job").await;
+        assert!(matches!(result, Err(Error::Missing(_))), "{result:?}");
     }
 
     #[tokio::test]
