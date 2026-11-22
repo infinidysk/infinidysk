@@ -458,15 +458,25 @@ struct Budget {
 
 impl Budget {
     fn admit_reads(&mut self, client: &Client, scratch: usize) -> Result<usize, Error> {
-        // Snapshot already admits one maximum-sized body. Additional responses stay bounded.
-        let width = (self.limits.memory_bytes.saturating_sub(scratch) / MAX_DECODED_LEN + 1)
-            .min(client.free_permits().unwrap_or(16).max(1))
-            .min(self.limits.requests.max(1))
-            .min(
-                usize::try_from(self.limits.decoded_bytes / MAX_DECODED_LEN as u64)
-                    .unwrap_or(usize::MAX)
-                    .max(1),
-            );
+        // Snapshot already admits one maximum-sized body. Additional responses stay bounded,
+        // and one body's worth stays free so a reply that reveals more parts can still grow
+        // the layout; a lone read keeps the whole allowance.
+        // ponytail: the headroom covers about MAX_DECODED_LEN / 100 new slots; size it from
+        // the posted part total if wider batches ever fail on huge files.
+        let width = (self
+            .limits
+            .memory_bytes
+            .saturating_sub(scratch)
+            .saturating_sub(MAX_DECODED_LEN)
+            / MAX_DECODED_LEN
+            + 1)
+        .min(client.free_permits().unwrap_or(16).max(1))
+        .min(self.limits.requests.max(1))
+        .min(
+            usize::try_from(self.limits.decoded_bytes / MAX_DECODED_LEN as u64)
+                .unwrap_or(usize::MAX)
+                .max(1),
+        );
         self.metadata((width - 1) * MAX_DECODED_LEN)?;
         Ok(width)
     }
