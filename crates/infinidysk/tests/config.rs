@@ -326,6 +326,16 @@ async fn rclone_rc_env_overrides_never_rebind_what_is_saved() {
     settings.rclone_rc = saved.clone();
     store.save(settings).await.expect("save");
 
+    // Filling missing secrets at startup enters no RC password, so it keeps the saved URL.
+    let mut store = ConfigStore::load(db.clone(), [env("URL", "http://127.0.0.1:5572/other/")])
+        .await
+        .expect("env URL, same origin");
+    assert_eq!(store.settings().sab.api_key.0, "");
+    store.generate_missing_secrets().await.expect("secrets");
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_ne!(reloaded.settings().sab.api_key.0, "");
+    assert_eq!(reloaded.settings().rclone_rc, saved);
+
     // Env blanks the credentials; a new URL would leave the saved password beside it.
     let mut store = ConfigStore::load(db.clone(), [env("USER", ""), env("PASSWORD", "")])
         .await

@@ -1771,6 +1771,10 @@ impl ConfigStore {
             }
         }
         if changed {
+            // An unchanged RC password is not entered, so it binds no env URL.
+            if !next.rclone_rc.password.0.is_empty() {
+                next.rclone_rc.password = Secret(MASK.to_owned());
+            }
             self.save(next).await?;
         }
         Ok(())
