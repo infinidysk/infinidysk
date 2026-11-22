@@ -159,8 +159,13 @@ impl Slots {
                             "adjacent unavailable articles have ambiguous boundaries; trusted stored byte ranges are needed",
                         ))?
                         .start
-                } else {
+                } else if self.total == Some(self.parts.len()) {
+                    // Only a validated yEnc part count proves no article follows.
                     length
+                } else {
+                    return Err(Error::Unavailable(
+                        "an unavailable last article has no known end; a yEnc part count or trusted stored byte ranges are needed",
+                    ));
                 };
                 offset..end
             };
@@ -189,5 +194,91 @@ impl Slots {
             article.id = slot.id;
         }
         Ok(articles)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use infinidysk_nntp::Body;
+    use tokio_util::sync::CancellationToken;
+
+    use super::super::{Budget, Damage, Error, Limits};
+    use super::Slots;
+    use crate::nzb;
+
+    fn budget() -> Budget {
+        Budget {
+            limits: Limits {
+                requests: 10,
+                decoded_bytes: 10_000_000,
+                memory_bytes: 10_000_000,
+                comparisons: 100,
+                retained_bytes: 0,
+            },
+            scratch: 0,
+            cancel: CancellationToken::new(),
+            network_bytes: 0,
+            source: None,
+            candidates: None,
+            probe: None,
+            progress: None,
+            legacy_ids: BTreeSet::new(),
+            legacy_bytes: 0,
+        }
+    }
+
+    fn file(parts: i64) -> nzb::File {
+        nzb::File {
+            subject: String::new(),
+            date: None,
+            segments: (1..=parts)
+                .map(|number| nzb::Segment {
+                    id: format!("{number}@test"),
+                    bytes: 10,
+                    number,
+                })
+                .collect(),
+            gap: false,
+        }
+    }
+
+    fn body(part: u32, total: Option<u32>, file_size: u64) -> Body {
+        Body {
+            data: vec![0; 10].into(),
+            offset: u64::from(part - 1) * 10,
+            file_size,
+            part: Some(part),
+            total,
+        }
+    }
+
+    #[test]
+    fn an_unavailable_last_article_ends_at_eof_only_with_a_known_part_count() {
+        let mut budget = budget();
+        let mut slots = Slots::new(file(2), &mut budget).unwrap();
+        slots.observe(0, &body(1, None, 20), &mut budget).unwrap();
+        slots.damage(1, Damage::Missing);
+        assert!(matches!(slots.finish(20), Err(Error::Unavailable(_))));
+
+        let mut slots = Slots::new(file(2), &mut budget).unwrap();
+        slots
+            .observe(0, &body(1, Some(2), 20), &mut budget)
+            .unwrap();
+        slots.damage(1, Damage::Missing);
+        let articles = slots.finish(20).unwrap();
+        assert_eq!(articles[1].range, 10..20);
+    }
+
+    #[test]
+    fn an_unavailable_interior_article_spans_its_known_neighbours() {
+        let mut budget = budget();
+        let mut slots = Slots::new(file(3), &mut budget).unwrap();
+        slots.observe(0, &body(1, None, 30), &mut budget).unwrap();
+        slots.observe(2, &body(3, None, 30), &mut budget).unwrap();
+        slots.damage(1, Damage::Missing);
+        let articles = slots.finish(30).unwrap();
+        assert_eq!(articles[1].range, 10..20);
     }
 }
