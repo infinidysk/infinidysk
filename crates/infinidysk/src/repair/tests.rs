@@ -609,8 +609,13 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
 
 #[tokio::test]
 async fn metadata_publication_retires_readers_and_rejects_a_stale_source() {
+    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
     let f = Fixture::new().await;
-    let (repairs, vfs, _reader) = delivery(&f).await;
+    f.publish().await;
+    let (repairs, vfs, mut reader) = delivery(&f).await;
+    let mut data = vec![0; DATA.len()];
+    reader.read_exact(&mut data).await.unwrap();
+    assert_eq!(data, DATA);
     let publisher = Publisher::new(repairs, vfs).unwrap();
     let item =
         f.db.item_by_path("/content/source.bin")
@@ -619,16 +624,31 @@ async fn metadata_publication_retires_readers_and_rejects_a_stale_source() {
             .unwrap();
     let meta = item.meta_blob.unwrap();
     let raw = f.db.blob(meta).await.unwrap().unwrap();
+    // Name an article with no stored repair: an open reader that follows this metadata
+    // reads the gap filler instead of the repaired bytes.
+    let mut renamed = blob::decode_meta_limited(&raw, 16_000_000).unwrap();
+    let FileMeta::Multipart(file) = &mut renamed else {
+        panic!("fixture is multipart");
+    };
+    file.parts[0].segments.items[0].id = "renamed@loopback".into();
+    let renamed = blob::encode_meta(&renamed).unwrap();
     assert!(
         publisher
             .publish(
                 f.source.clone(),
                 Vec::new(),
-                Some(raw.clone()),
+                Some(renamed.clone()),
                 &tokio_util::sync::CancellationToken::new(),
             )
             .await
             .unwrap()
+    );
+    reader.seek(std::io::SeekFrom::Start(0)).await.unwrap();
+    reader.read_exact(&mut data).await.unwrap();
+    assert_eq!(
+        data,
+        vec![0; DATA.len()],
+        "the open reader follows the published metadata"
     );
     f.db.update_blob(meta, &raw).await.unwrap();
     assert!(
@@ -636,12 +656,13 @@ async fn metadata_publication_retires_readers_and_rejects_a_stale_source() {
             .publish(
                 f.source.clone(),
                 Vec::new(),
-                Some(raw),
+                Some(renamed),
                 &tokio_util::sync::CancellationToken::new(),
             )
             .await
             .unwrap()
     );
+    drop(reader);
     f.close().await;
 }
 
@@ -786,11 +807,21 @@ async fn moving_the_database_without_its_repair_directory_requests_a_recheck() {
     f.close().await;
 }
 
+/// Removes a test directory even when setup or an assertion fails.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 struct Fixture {
     root: PathBuf,
     db: Db,
     source: Source,
     patch: Patch,
+    _scratch: Scratch,
 }
 
 impl Fixture {
@@ -801,6 +832,7 @@ impl Fixture {
     async fn seed(omitted: bool) -> Self {
         let root = std::env::temp_dir().join(format!("infinidysk-repair-read-{}", ItemId::new()));
         std::fs::create_dir(&root).expect("parent");
+        let scratch = Scratch(root.clone());
         let db = Db::connect(&crate::app::sqlite_url(&root.join("data.sqlite")))
             .await
             .expect("database");
@@ -884,6 +916,7 @@ impl Fixture {
             db,
             source,
             patch,
+            _scratch: scratch,
         }
     }
 
@@ -902,9 +935,9 @@ impl Fixture {
         );
     }
 
+    /// Closes the database before `Scratch` removes its directory.
     async fn close(self) {
         self.db.close().await;
-        std::fs::remove_dir_all(self.root).expect("cleanup");
     }
 }
 
@@ -965,11 +998,26 @@ async fn publication_refreshes_an_open_reader_after_draining_observations() {
     let running = tokio_util::sync::CancellationToken::new();
     let mut publishing =
         Box::pin(publisher.publish(f.source.clone(), vec![receipt], None, &running));
+    // The first poll starts the publication; it cannot finish while an observation runs.
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), &mut publishing)
             .await
             .is_err()
     );
+    // The publication has queued for the write pause once a new observation must wait.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_millis(5), f.db.write_permit())
+                .await
+            {
+                Err(_) => break,
+                Ok(permit) => drop(permit),
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("publication reaches the write pause");
     assert_eq!(
         f.db.article_repairs("repair@loopback").await.unwrap(),
         Vec::<Patch>::new()

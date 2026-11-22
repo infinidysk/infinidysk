@@ -97,6 +97,8 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
     let mut app = Command::new("/usr/local/bin/infinidysk")
         .env("INFINIDYSK_LISTEN", addr.to_string())
         .env("INFINIDYSK_DATABASE_URL", &database)
+        // An inherited value would put the repair store outside this test's root.
+        .env("INFINIDYSK_CONFIG_DIR", &root)
         .env("INFINIDYSK_EXPERIMENTS", "par2-repair")
         .env("INFINIDYSK__MOUNT__DIR", &mount)
         .env("INFINIDYSK__PROVIDERS", providers.to_string())

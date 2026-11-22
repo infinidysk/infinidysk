@@ -282,10 +282,12 @@ async fn lane_contract(db: &Db) {
         .into_iter()
         .find(|row| row.0 == 5)
         .unwrap_or((5, 0, 0, 0));
+    // Reasons are display text: the damaged result lacks the old wording and a check
+    // error carries it, so only the stored outcome can separate them.
     db.finish_par2(
         manual.claim(),
         5,
-        "Missing or corrupt articles found.",
+        "damage found",
         0,
         0,
         1004,
@@ -297,7 +299,7 @@ async fn lane_contract(db: &Db) {
     db.finish_par2(
         manual_claims[0],
         5,
-        "repair unavailable: memory allowance",
+        "Missing or corrupt articles found: memory allowance",
         0,
         0,
         1004,
