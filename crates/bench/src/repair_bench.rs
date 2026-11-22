@@ -296,7 +296,16 @@ pub(super) fn run(
                 let (bytes, timing) = read(&scenario, Arc::clone(&client), Arc::clone(&layout), true, true, Some(Arc::clone(&trace))).await?;
                 assert!(bytes == playback.data, "playback bytes differ from the fixture");
                 let overlap = repair.as_ref().is_some_and(|job| !job.is_finished());
+                // Whether repair ran across the seek, so overlapping and later seeks are not mixed; par2-idle is the control.
+                let active = || repair.as_ref().is_some_and(|job| !job.is_finished());
+                let seek_started = active();
                 let (seek_first, seek_full) = seek_read(&client, &layout, scenario.prefetch(), layout.len()/2, true).await?;
+                let seek_repair = match (repair.is_some(), seek_started, active()) {
+                    (false, _, _) => "none",
+                    (true, true, true) => "throughout",
+                    (true, true, false) => "partial",
+                    (true, false, _) => "after",
+                };
                 if let Some(cancel) = cancel { cancel.await?; }
                 let (verified, stored, repair_ms) = if let Some(task) = repair {
                     let (result, elapsed, store) = task.await?;
@@ -324,7 +333,7 @@ pub(super) fn run(
                     "throughputMbps": timing.throughput_mbps, "timeTo8MbMs": timing.time_to_8mb_ms,
                     "timeTo64MbMs": timing.time_to_64mb_ms, "longestReadGapMs": timing.longest_read_gap_ms,
                     "firstByteMs": trace.first_byte_ns.map(|ns| ns as f64 / 1e6),
-                    "seekFirstByteMs": seek_first, "seekTo8MbMs": seek_full,
+                    "seekFirstByteMs": seek_first, "seekTo8MbMs": seek_full, "seekRepair": seek_repair,
                     "prefetchStallMs": trace.stall_idle_ns as f64 / 1e6,
                     "repairActiveAtPlaybackEnd": overlap, "repairMs": repair_ms,
                     "repairProviderBytes": repair_bytes, "sourcePassEquivalent": repair_bytes as f64 / fixture.bytes.len() as f64,
