@@ -127,6 +127,7 @@ async fn history_contract(db: &Db) {
                 0,
                 100 + i64::try_from(n).unwrap(),
                 None,
+                0,
             )
             .await
             .unwrap();
@@ -235,7 +236,7 @@ async fn lane_contract(db: &Db) {
             .await
             .is_err()
     );
-    db.finish_par2(scan.claim(), 2, "available", 0, 0, 1001, None)
+    db.finish_par2(scan.claim(), 2, "available", 0, 0, 1001, None, 0)
         .await
         .unwrap();
     db.restart_par2(scan.id, 1002).await.unwrap();
@@ -279,6 +280,7 @@ async fn lane_contract(db: &Db) {
         0,
         1004,
         None,
+        infinidysk_db::repair_jobs::DAMAGED,
     )
     .await
     .unwrap();
@@ -290,6 +292,7 @@ async fn lane_contract(db: &Db) {
         0,
         1004,
         None,
+        0,
     )
     .await
     .unwrap();
@@ -301,6 +304,7 @@ async fn lane_contract(db: &Db) {
         0,
         1004,
         None,
+        0,
     )
     .await
     .unwrap();
@@ -316,6 +320,18 @@ async fn lane_contract(db: &Db) {
         (5, before.1 + 3, before.2 + 2, before.3 + 1),
         "keep total job counts compatible while separating check errors, damage and repair failures"
     );
+    let outcome = |jobs: Vec<infinidysk_db::repair_jobs::Job>| {
+        jobs.into_iter()
+            .find(|job| job.id == manual.id)
+            .unwrap()
+            .outcome
+    };
+    assert_eq!(
+        outcome(db.par2_jobs().await.unwrap()),
+        infinidysk_db::repair_jobs::DAMAGED
+    );
+    db.restart_par2(manual.id, 1005).await.unwrap();
+    assert_eq!(outcome(db.par2_jobs().await.unwrap()), 0);
 }
 
 #[tokio::test]
@@ -381,7 +397,7 @@ async fn durable_requests(db: &mut Db, url: &str) {
         (resumed.completed_requests, resumed.missing_requests),
         (12, 10)
     );
-    db.finish_par2(resumed.claim(), 2, "verified", 100, 0, 14, None)
+    db.finish_par2(resumed.claim(), 2, "verified", 100, 0, 14, None, 0)
         .await
         .unwrap();
     assert!(db.claim_par2(15).await.unwrap().is_none());
@@ -405,18 +421,36 @@ async fn durable_requests(db: &mut Db, url: &str) {
         .await
         .unwrap();
     assert_eq!(db.par2_jobs().await.unwrap()[0].reason, "cancelled");
-    db.finish_par2(restarted.claim(), 3, "late completion", 200, 50, 18, None)
-        .await
-        .unwrap();
+    db.finish_par2(
+        restarted.claim(),
+        3,
+        "late completion",
+        200,
+        50,
+        18,
+        None,
+        0,
+    )
+    .await
+    .unwrap();
     let duration = db
         .par2_result(Owner::Item(item.id), false)
         .await
         .unwrap()
         .unwrap()
         .duration_ms;
-    db.finish_par2(restarted.claim(), 3, "late completion", 999, 99, 19, None)
-        .await
-        .unwrap();
+    db.finish_par2(
+        restarted.claim(),
+        3,
+        "late completion",
+        999,
+        99,
+        19,
+        None,
+        0,
+    )
+    .await
+    .unwrap();
     db.update_par2_requests(restarted.claim(), 9, 1)
         .await
         .unwrap();
@@ -489,7 +523,7 @@ async fn durable_requests(db: &mut Db, url: &str) {
             .unwrap();
         if n < 22 {
             let job = db.claim_par2(31).await.unwrap().unwrap();
-            db.finish_par2(job.claim(), 2, "", 0, 0, 32, None)
+            db.finish_par2(job.claim(), 2, "", 0, 0, 32, None, 0)
                 .await
                 .unwrap();
         }
@@ -529,7 +563,7 @@ async fn stale_retries(db: &Db) {
         async move { db.par2_result(owner, false).await.unwrap().unwrap() }
     };
     let claimed = db.claim_par2_lane(10, false, false).await.unwrap().unwrap();
-    db.finish_par2(claimed.claim(), 3, "repaired", 0, 0, 11, None)
+    db.finish_par2(claimed.claim(), 3, "repaired", 0, 0, 11, None, 0)
         .await
         .unwrap();
     let observed = job(db).await;
@@ -540,13 +574,13 @@ async fn stale_retries(db: &Db) {
 
     db.restart_par2(id, 15).await.unwrap();
     let claimed = db.claim_par2_lane(15, false, false).await.unwrap().unwrap();
-    db.finish_par2(claimed.claim(), 3, "repaired", 0, 0, 16, None)
+    db.finish_par2(claimed.claim(), 3, "repaired", 0, 0, 16, None, 0)
         .await
         .unwrap();
     let observed = job(db).await;
     db.restart_par2(id, 17).await.unwrap();
     let claimed = db.claim_par2_lane(17, false, false).await.unwrap().unwrap();
-    db.finish_par2(claimed.claim(), 4, "busy", 0, 0, 18, Some(1_000))
+    db.finish_par2(claimed.claim(), 4, "busy", 0, 0, 18, Some(1_000), 0)
         .await
         .unwrap();
     assert!(!db.retry_par2(observed.claim(), 19).await.unwrap());
@@ -560,7 +594,7 @@ async fn stale_retries(db: &Db) {
     db.cancel_par2(id, 20).await.unwrap();
     db.restart_par2(id, 21).await.unwrap();
     let claimed = db.claim_par2_lane(21, false, false).await.unwrap().unwrap();
-    db.finish_par2(claimed.claim(), 2, "verified", 0, 0, 22, None)
+    db.finish_par2(claimed.claim(), 2, "verified", 0, 0, 22, None, 0)
         .await
         .unwrap();
     assert!(db.retry_par2(job(db).await.claim(), 23).await.unwrap());
@@ -733,7 +767,7 @@ async fn stale_claims(db: &Db) {
         .unwrap();
     db.set_par2_verified(old.claim(), 999).await.unwrap();
     assert!(!db.escalate_par2(old.claim(), 13).await.unwrap());
-    db.finish_par2(old.claim(), 3, "stale", 999, 99, 13, None)
+    db.finish_par2(old.claim(), 3, "stale", 999, 99, 13, None, 0)
         .await
         .unwrap();
     let after = db
@@ -758,7 +792,7 @@ async fn stale_claims(db: &Db) {
     db.update_par2_progress(current.claim(), "current", 42, 0, 14)
         .await
         .unwrap();
-    db.finish_par2(current.claim(), 2, "verified", 42, 0, 15, None)
+    db.finish_par2(current.claim(), 2, "verified", 42, 0, 15, None, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -780,10 +814,10 @@ async fn stale_claims(db: &Db) {
     assert!(restarted.claim_generation > current.claim_generation);
     let next = db.claim_par2(16).await.unwrap().unwrap();
     assert!(next.claim_generation > restarted.claim_generation);
-    db.finish_par2(current.claim(), 5, "late", 999, 0, 17, None)
+    db.finish_par2(current.claim(), 5, "late", 999, 0, 17, None, 0)
         .await
         .unwrap();
-    db.finish_par2(next.claim(), 2, "verified", 0, 0, 17, None)
+    db.finish_par2(next.claim(), 2, "verified", 0, 0, 17, None, 0)
         .await
         .unwrap();
     assert_eq!(

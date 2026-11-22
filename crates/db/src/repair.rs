@@ -448,6 +448,13 @@ impl Db {
         self.repair_present.load(Ordering::Acquire)
     }
 
+    /// Every stored article repair, eligible or not: a superset for cheap read misses.
+    pub async fn repair_message_ids(&self) -> Result<Vec<String>, Error> {
+        Ok(on!(self, pool => sqlx::query_scalar(
+            "SELECT DISTINCT message_id FROM repair_patches WHERE message_id IS NOT NULL")
+            .fetch_all(pool).await?))
+    }
+
     /// Named-article candidates across current owners. Callers must reject different
     /// payload/range identities before selecting a local file; message IDs alone do not
     /// justify choosing between conflicting repairs.

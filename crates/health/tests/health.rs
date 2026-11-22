@@ -252,7 +252,7 @@ async fn new_damage_after_a_par2_success_queues_it_again_but_an_unavailable_resu
         let owner = infinidysk_db::repair::Owner::Item(item.id);
         db.request_par2(owner, false, 1).await.unwrap().unwrap();
         let claim = db.claim_par2(1).await.unwrap().unwrap().claim();
-        db.finish_par2(claim, finished, "", 0, 0, 2, None)
+        db.finish_par2(claim, finished, "", 0, 0, 2, None, 0)
             .await
             .unwrap();
         articles.pop().unwrap();

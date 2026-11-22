@@ -12,6 +12,11 @@ use crate::{
 /// that finds damage hands its slot to the repair it queues.
 pub const QUEUE_CAPACITY: i64 = 50;
 
+/// [`Job::outcome`] of an unavailable check that found missing or corrupt articles.
+pub const DAMAGED: i16 = 1;
+/// [`Job::outcome`] of an unavailable job that used every attempt.
+pub const EXHAUSTED: i16 = 2;
+
 /// 0 queued, 1 running, 2 verified, 3 repaired, 4 deferred, 5 unavailable, 6 cancelled.
 #[derive(Debug, sqlx::FromRow)]
 pub struct Job {
@@ -39,6 +44,8 @@ pub struct Job {
     pub total_articles: i64,
     pub completed_requests: i64,
     pub missing_requests: i64,
+    /// 0, [`DAMAGED`] or [`EXHAUSTED`]; never derived from `reason`.
+    pub outcome: i16,
     #[sqlx(default)]
     pub file_path: Option<String>,
 }
@@ -65,7 +72,7 @@ impl Job {
 }
 
 macro_rules! columns {
-    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, claim_generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at, scan_at, repair_on_failure, checked_articles, total_articles, completed_requests, missing_requests" };
+    () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, claim_generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at, scan_at, repair_on_failure, checked_articles, total_articles, completed_requests, missing_requests, outcome" };
 }
 
 impl Db {
@@ -106,7 +113,7 @@ impl Db {
                     .bind(claim.id).execute(&mut *tx).await?;
             }
             let source: Option<(Uuid, i64, Option<i64>)> = sqlx::query_as(
-                "UPDATE repair_jobs SET state = 5, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $3 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) AND EXISTS (SELECT 1 FROM items i JOIN blobs m ON m.id = i.meta_blob WHERE i.id = repair_jobs.item_id AND i.nzb_blob = repair_jobs.nzb_blob AND m.id = repair_jobs.meta_blob AND m.generation = repair_jobs.meta_generation) RETURNING nzb_blob, generation, scan_at")
+                "UPDATE repair_jobs SET state = 5, outcome = 1, reason = 'Missing or corrupt articles found; PAR2 repair queued separately.', updated_at = $2, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $2 THEN 0 ELSE $2 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $3 AND state = 1 AND verify_only = TRUE AND EXISTS (SELECT 1 FROM blobs b WHERE b.id = repair_jobs.nzb_blob AND b.generation = repair_jobs.generation) AND EXISTS (SELECT 1 FROM items i JOIN blobs m ON m.id = i.meta_blob WHERE i.id = repair_jobs.item_id AND i.nzb_blob = repair_jobs.nzb_blob AND m.id = repair_jobs.meta_blob AND m.generation = repair_jobs.meta_generation) RETURNING nzb_blob, generation, scan_at")
                 .bind(claim.id).bind(now).bind(claim.generation).fetch_optional(&mut *tx).await?;
             let Some((nzb, generation, scan_at)) = source else {
                 // Release the write lock before another claim can use a pooled connection.
@@ -116,7 +123,7 @@ impl Db {
             let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = FALSE")
                 .bind(nzb).bind(generation).fetch_optional(&mut *tx).await?;
             if let Some(existing) = existing {
-                sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, started_at = NULL, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, verified_bytes = 0, completed_requests = 0, missing_requests = 0, scan_at = $3 WHERE id = $1 AND state IN (2, 3, 5, 6)")
+                sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, outcome = 0, reason = '', next_at = $2, updated_at = $2, started_at = NULL, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, verified_bytes = 0, completed_requests = 0, missing_requests = 0, scan_at = $3 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                     .bind(existing).bind(now).bind(scan_at).execute(&mut *tx).await?;
             } else {
                 sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, generation, verify_only, next_at, updated_at, scan_at) VALUES ($1, $2, $3, FALSE, $4, $4, $5)")
@@ -179,7 +186,7 @@ impl Db {
 
     pub async fn par2_counts(&self) -> Result<Vec<(i16, i64, i64, i64)>, Error> {
         Ok(
-            on!(self, pool => sqlx::query_as("SELECT state, COUNT(*), SUM(CASE WHEN verify_only = TRUE THEN 1 ELSE 0 END), SUM(CASE WHEN verify_only = TRUE AND state = 5 AND reason LIKE 'Missing or corrupt articles found%' THEN 1 ELSE 0 END) FROM repair_jobs GROUP BY state ORDER BY state")
+            on!(self, pool => sqlx::query_as("SELECT state, COUNT(*), SUM(CASE WHEN verify_only = TRUE THEN 1 ELSE 0 END), SUM(CASE WHEN state = 5 AND outcome = 1 THEN 1 ELSE 0 END) FROM repair_jobs GROUP BY state ORDER BY state")
             .fetch_all(pool).await?),
         )
     }
@@ -302,7 +309,7 @@ impl Db {
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
             if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
-            sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
+            sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, outcome = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                 .bind(id).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;
             tx.commit().await?;
             Ok(())
@@ -317,7 +324,7 @@ impl Db {
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
             if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
-            let retried = sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = NULL, repair_on_failure = FALSE, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND claim_generation = $3 AND state IN (2, 3)")
+            let retried = sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, outcome = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = NULL, repair_on_failure = FALSE, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND claim_generation = $3 AND state IN (2, 3)")
                 .bind(claim.id).bind(now).bind(claim.generation).execute(&mut *tx).await?.rows_affected() == 1;
             tx.commit().await?;
             Ok(retried)
@@ -412,9 +419,12 @@ impl Db {
         stored: i64,
         now: i64,
         retry: Option<i64>,
+        outcome: i16,
     ) -> Result<(), Error> {
         if !(2..=6).contains(&state)
             || (state == 4) != retry.is_some()
+            || !(0..=EXHAUSTED).contains(&outcome)
+            || (outcome != 0 && state != 5)
             || transferred < 0
             || stored < 0
         {
@@ -422,9 +432,9 @@ impl Db {
         }
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
-            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL)) RETURNING state, nzb_blob")
+            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, outcome = CASE WHEN state = 6 THEN outcome ELSE $9 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL)) RETURNING state, nzb_blob")
                 .bind(claim.id).bind(state).bind(reason).bind(transferred).bind(stored).bind(now).bind(retry.unwrap_or(now))
-                .bind(claim.generation).fetch_optional(&mut *tx).await?;
+                .bind(claim.generation).bind(outcome).fetch_optional(&mut *tx).await?;
             if let Some((state, Some(source))) = result && state != 4 { release_nzb!(self, tx, source); }
             tx.commit().await?;
         });
