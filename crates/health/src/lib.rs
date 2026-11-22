@@ -574,7 +574,7 @@ impl Health {
         writing: &mut Writing,
     ) -> Result<(), Error> {
         let observed = self.db.blob_epoch();
-        let Some((blob_id, mut meta)) = self.meta(item).await? else {
+        let Some((blob_id, generation, mut meta)) = self.meta_generation(item).await? else {
             tracing::warn!(item = %item.id, path = %item.path, reason = "its stored metadata is gone", "cannot check a file; retrying tomorrow");
             self.db.postpone_health(item.id, now_ms() + DAY_MS).await?;
             return Ok(());
@@ -617,10 +617,16 @@ impl Health {
             }
         }
         // The check's own hole write is part of its observation; any other write is not.
+        // It applies only to the bytes this check read, so a newer write is left in place
+        // and the next step checks again.
         let observed = if changed {
-            self.db
-                .update_blob(blob_id, &blob::encode_meta(&meta)?)
-                .await?;
+            if !self
+                .db
+                .update_blob_if(blob_id, generation, &blob::encode_meta(&meta)?)
+                .await?
+            {
+                return Ok(());
+            }
             observed + 1
         } else {
             observed
@@ -1347,6 +1353,17 @@ impl Health {
             );
         }
         Ok(Some((nzb, generation)))
+    }
+
+    /// Like [`Self::meta`], with the blob generation its bytes were read at.
+    async fn meta_generation(&self, item: &Item) -> Result<Option<(BlobId, i64, FileMeta)>, Error> {
+        let Some(id) = item.meta_blob else {
+            return Ok(None);
+        };
+        let Some((generation, bytes)) = self.db.blob_with_generation(id).await? else {
+            return Ok(None);
+        };
+        Ok(Some((id, generation, blob::decode_meta(&bytes)?)))
     }
 
     async fn meta(&self, item: &Item) -> Result<Option<(BlobId, FileMeta)>, Error> {

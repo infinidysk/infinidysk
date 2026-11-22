@@ -75,6 +75,37 @@ async fn exercise(db: &Db) {
         db.blob(meta).await.expect("query").as_deref(),
         Some(&b"meta2"[..])
     );
+    let (generation, _) = db
+        .blob_with_generation(meta)
+        .await
+        .expect("query")
+        .expect("stored");
+    let epoch = db.blob_epoch();
+    assert!(
+        !db.update_blob_if(meta, generation - 1, b"stale")
+            .await
+            .expect("update"),
+        "a write read before a newer one is refused"
+    );
+    assert_eq!(
+        db.blob(meta).await.expect("query").as_deref(),
+        Some(&b"meta2"[..])
+    );
+    assert_eq!(db.blob_epoch(), epoch, "a refused write changes nothing");
+    assert!(
+        db.update_blob_if(meta, generation, b"meta3")
+            .await
+            .expect("update")
+    );
+    assert_eq!(
+        db.blob(meta).await.expect("query").as_deref(),
+        Some(&b"meta3"[..])
+    );
+    assert_eq!(
+        db.blob_epoch(),
+        epoch + 1,
+        "one write advances the epoch once"
+    );
 
     let dup = Item {
         id: ItemId::new(),

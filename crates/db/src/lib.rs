@@ -2102,6 +2102,29 @@ impl Db {
         Ok(())
     }
 
+    /// Replaces a blob's bytes only while it is still at `generation`, so a write
+    /// computed from older bytes never replaces a newer one. `false` when it changed.
+    pub async fn update_blob_if(
+        &self,
+        id: BlobId,
+        generation: i64,
+        data: &[u8],
+    ) -> Result<bool, Error> {
+        let updated = on!(self, pool => sqlx::query(
+            "UPDATE blobs SET data = $2, generation = generation + 1 WHERE id = $1 AND generation = $3")
+            .bind(id.0)
+            .bind(data)
+            .bind(generation)
+            .execute(pool)
+            .await?
+            .rows_affected());
+        if updated == 0 {
+            return Ok(false);
+        }
+        self.blob_epoch.fetch_add(1, Ordering::Release);
+        Ok(true)
+    }
+
     /// Changes after blob updates or repair publication in this process. Cached metadata
     /// and health observations must be refreshed when their epoch changes.
     pub fn blob_epoch(&self) -> u64 {
