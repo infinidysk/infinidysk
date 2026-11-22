@@ -818,6 +818,84 @@ async fn metadata_changed_during_verification_invalidates_the_result() {
 }
 
 #[tokio::test]
+async fn an_nzb_generation_change_invalidates_a_scan_without_placeholders() {
+    use infinidysk_core::{
+        ByteRange, PatchId,
+        repair::{Patch, Source},
+    };
+    let (data, proof) = content();
+    let articles = post("verify", "a.bin", &data, ARTICLE);
+    let first = articles[0].message_id.clone();
+    let named = articles[1].message_id.clone();
+    let nzb = BlobId::new();
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (_scratch, db, item, health) =
+        stored_with_repairs(&server, &data, Some(proof), Some((nzb, Box::new(|_| None)))).await;
+    // Restore the posted article: this file has no placeholders, only a named repair.
+    let blob_id = item.meta_blob.unwrap();
+    let mut meta = blob::decode_meta(&db.blob(blob_id).await.unwrap().unwrap()).unwrap();
+    let FileMeta::Nzb(ref mut file) = meta else {
+        unreachable!()
+    };
+    file.segments.items[1].id.clone_from(&named);
+    file.segments.missing.clear();
+    db.update_blob(blob_id, &blob::encode_meta(&meta).unwrap())
+        .await
+        .unwrap();
+    let source = db
+        .repair_source(infinidysk_db::repair::Owner::Item(item.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        db.publish_patches(
+            (),
+            &source,
+            &[Patch {
+                id: PatchId::new(),
+                source: Source {
+                    set: [7; 16],
+                    file: [8; 16],
+                    range: ByteRange {
+                        start: ARTICLE as u64,
+                        end: 2 * ARTICLE as u64,
+                    },
+                    file_length: data.len() as u64,
+                    message_id: Some(named),
+                    part: Some(2),
+                    total: Some(u32::try_from(articles.len()).unwrap()),
+                },
+                sha256: [0; 32],
+            }],
+        )
+        .await
+        .unwrap()
+    );
+    let (arrived, release) = server.hold_article(&first);
+    let id = item.id;
+    let running = tokio::spawn(async move {
+        health
+            .check_availability(
+                id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default(),
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    // The named repair no longer belongs to the current generation.
+    db.update_blob(nzb, b"changed original").await.unwrap();
+    release.send(()).unwrap();
+    assert!(matches!(
+        running.await.unwrap().unwrap(),
+        Availability::Changed
+    ));
+}
+
+#[tokio::test]
 async fn a_held_body_lets_writes_pause_and_the_verdict_waits_for_the_pause() {
     let (data, proof) = content();
     let articles = post("verify", "a.bin", &data, ARTICLE);

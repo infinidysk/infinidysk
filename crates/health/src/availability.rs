@@ -121,7 +121,6 @@ impl Health {
             (raw, None)
         };
         let meta = blob::decode_meta_limited(&raw, 16_000_000)?;
-        let source = source.filter(|_| meta.has_placeholders());
         Ok(Some((meta, source)))
     }
 
@@ -149,12 +148,15 @@ impl Health {
         let Some(meta_id) = item.meta_blob else {
             return Ok(Availability::Unavailable("file metadata is unavailable"));
         };
-        let Some((meta, source)) = self
+        let Some((meta, generation)) = self
             .availability_snapshot(id, meta_id, item.nzb_blob)
             .await?
         else {
             return Ok(Availability::Unavailable("file metadata is unavailable"));
         };
+        // Only placeholders need the omitted-article identity. Named repairs still
+        // depend on the generation, so the final validation compares it for every file.
+        let source = generation.filter(|_| meta.has_placeholders());
         let providers = self.client.stats();
         let first = providers.iter().map(|provider| provider.priority).min();
         // Keep at least half the primary pool's connections free for playback startup.
@@ -385,7 +387,7 @@ impl Health {
         if self
             .availability_snapshot(id, meta_id, current.nzb_blob)
             .await?
-            != Some((meta, source))
+            != Some((meta, generation))
         {
             return Ok(Availability::Changed);
         }
