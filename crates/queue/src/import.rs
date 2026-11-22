@@ -2268,10 +2268,18 @@ fn require(outputs: &[Output], kinds: &[media::Kind], dropped: Option<Error>) ->
     .filter(|(k, _)| kinds.contains(k))
     .map(|(_, word)| word)
     .collect();
-    Err(Error::Unrepairable(format!(
-        "No {} files found.",
-        wanted.join(" or ")
-    )))
+    let message = format!("No {} files found.", wanted.join(" or "));
+    // A name PAR2 could not resolve may hide the wanted media; damage that kept PAR2 from
+    // naming it stays eligible for repair.
+    let unresolved = outputs
+        .iter()
+        .filter_map(|o| o.path.last())
+        .any(|n| names::is_obfuscated(n.rsplit_once('.').map_or(n.as_str(), |(stem, _)| stem)));
+    Err(if unresolved {
+        Error::Failed(message)
+    } else {
+        Error::Unrepairable(message)
+    })
 }
 
 /// Renames obfuscated videos and gives duplicate paths a ` (n)` suffix. Deobfuscates the
@@ -2746,6 +2754,23 @@ mod tests {
         assert!(matches!(
             require(&[], &[], dropped()),
             Err(Error::Missing(_))
+        ));
+        let obfuscated = [Output {
+            path: ["Release", "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"]
+                .map(str::to_owned)
+                .to_vec(),
+            ..disc[0].clone()
+        }];
+        assert!(
+            matches!(
+                require(&obfuscated, &[media::Kind::Video], None),
+                Err(Error::Failed(_))
+            ),
+            "an unresolved obfuscated name stays eligible for repair"
+        );
+        assert!(matches!(
+            require(&sidecar, &[media::Kind::Video], None),
+            Err(Error::Unrepairable(_))
         ));
     }
 
