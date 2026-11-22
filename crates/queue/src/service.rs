@@ -828,6 +828,12 @@ impl Queue {
             None
         };
         let Some((source, raw)) = self.db.queued_repair_nzb(job.id, job.nzb_blob).await? else {
+            // The row may still be queued under a replacement NZB; only a missing one fails.
+            if self.db.repair_source(repair_owner).await?.is_some() {
+                return Ok(Outcome::Retry(
+                    "The stored NZB changed before the import.".to_owned(),
+                ));
+            }
             return Ok(Outcome::Failed(
                 "The NZB is missing from storage.".to_owned(),
             ));
