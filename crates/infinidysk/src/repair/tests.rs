@@ -55,10 +55,15 @@ async fn ready_jobs_do_not_wait_for_the_idle_poll_between_attempts() {
         f.db.insert(&[item.clone()], &[(meta, &data)])
             .await
             .unwrap();
-        f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())
-            .await
-            .unwrap();
+        assert!(
+            f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())
+                .await
+                .unwrap()
+                .is_some(),
+            "each file queues its own check"
+        );
     }
+    assert_eq!(f.db.par2_pending().await.unwrap(), 2);
     let stop = tokio_util::sync::CancellationToken::new();
     let task = tokio::spawn(repairs.run(client, publisher, health, stop.clone()));
     let drained = tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -616,14 +621,24 @@ async fn metadata_publication_retires_readers_and_rejects_a_stale_source() {
     let raw = f.db.blob(meta).await.unwrap().unwrap();
     assert!(
         publisher
-            .publish(f.source.clone(), Vec::new(), Some(raw.clone()))
+            .publish(
+                f.source.clone(),
+                Vec::new(),
+                Some(raw.clone()),
+                &tokio_util::sync::CancellationToken::new(),
+            )
             .await
             .unwrap()
     );
     f.db.update_blob(meta, &raw).await.unwrap();
     assert!(
         !publisher
-            .publish(f.source.clone(), Vec::new(), Some(raw))
+            .publish(
+                f.source.clone(),
+                Vec::new(),
+                Some(raw),
+                &tokio_util::sync::CancellationToken::new(),
+            )
             .await
             .unwrap()
     );
@@ -947,7 +962,9 @@ async fn publication_refreshes_an_open_reader_after_draining_observations() {
         .unwrap();
     let publisher = Publisher::new(repairs, vfs).unwrap();
     let observing = f.db.write_permit().await;
-    let mut publishing = Box::pin(publisher.publish(f.source.clone(), vec![receipt], None));
+    let running = tokio_util::sync::CancellationToken::new();
+    let mut publishing =
+        Box::pin(publisher.publish(f.source.clone(), vec![receipt], None, &running));
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), &mut publishing)
             .await
@@ -1004,7 +1021,12 @@ async fn publication_rejects_changed_sources_without_losing_durable_files() {
     let publisher = Publisher::new(Arc::clone(&repairs), vfs).unwrap();
     assert!(
         !publisher
-            .publish(f.source.clone(), vec![receipt], None)
+            .publish(
+                f.source.clone(),
+                vec![receipt],
+                None,
+                &tokio_util::sync::CancellationToken::new(),
+            )
             .await
             .unwrap()
     );
@@ -1050,7 +1072,12 @@ async fn publication_requires_valid_bytes_and_the_same_database_owner() {
     assert!(
         Publisher::new(repairs, vfs)
             .unwrap()
-            .publish(f.source.clone(), vec![receipt], None)
+            .publish(
+                f.source.clone(),
+                vec![receipt],
+                None,
+                &tokio_util::sync::CancellationToken::new(),
+            )
             .await
             .is_err()
     );
@@ -1074,7 +1101,12 @@ async fn unavailable_native_invalidation_rejects_before_sql_and_releases_admissi
         .with_mount(Arc::default());
     assert!(
         publisher
-            .publish(f.source.clone(), vec![receipt], None)
+            .publish(
+                f.source.clone(),
+                vec![receipt],
+                None,
+                &tokio_util::sync::CancellationToken::new(),
+            )
             .await
             .is_err()
     );
@@ -1618,35 +1650,202 @@ async fn unrelated_articles_skip_reader_admission_once_the_catalog_is_known() {
     f.close().await;
 }
 
+/// Stores the fixture's repair and a second one written after it, then reads the
+/// second first, so read order and write order pick different victims.
+/// Returns the second patch and the store's usage with both.
+async fn two_read_repairs(f: &Fixture, repairs: &Repairs) -> (Patch, u64) {
+    let mut stale = f.patch.clone();
+    stale.id = PatchId::new();
+    stale.source.message_id = Some("stale@loopback".into());
+    stale.source.range = ByteRange {
+        start: 9000,
+        end: 9000 + DATA.len() as u64,
+    };
+    let store = repairs.store(1_000_000).unwrap();
+    drop(store.write(&f.patch, DATA, || false).unwrap());
+    drop(store.write(&stale, DATA, || false).unwrap());
+    f.publish().await;
+    assert!(
+        f.db.publish_patches((), &f.source, std::slice::from_ref(&stale))
+            .await
+            .unwrap()
+    );
+    store.read(&stale).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    store.read(&f.patch).unwrap();
+    (stale, store.used_bytes().unwrap())
+}
+
 #[tokio::test]
 async fn staging_evicts_the_least_recently_read_repair_to_make_room() {
     let f = Fixture::new().await;
     let client = Client::new([]);
     let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
-    drop(
-        repairs
-            .store(1_000_000)
-            .unwrap()
-            .write(&f.patch, DATA, || false)
-            .unwrap(),
-    );
-    f.publish().await;
+    let (stale, used) = two_read_repairs(&f, &repairs).await;
     let mut next = f.patch.clone();
     next.id = PatchId::new();
-    // Room for exactly one article plus its header reserve.
+    // Room for the new article plus its header reserve once either file goes, not before.
     let receipts = repairs
         .stage(
             vec![(next.clone(), DATA.to_vec())],
-            DATA.len() as u64 + 16_384,
+            DATA.len() as u64 + 16_384 + used - 1,
             &tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
     assert_eq!(receipts.len(), 1);
-    assert_eq!(f.db.article_repairs("repair@loopback").await.unwrap(), []);
+    assert_eq!(f.db.article_repairs("stale@loopback").await.unwrap(), []);
+    assert_eq!(
+        f.db.article_repairs("repair@loopback").await.unwrap(),
+        std::slice::from_ref(&f.patch)
+    );
     let store = repairs.store(u64::MAX).unwrap();
-    assert!(store.read(&f.patch).is_err(), "the evicted file is removed");
+    assert!(store.read(&stale).is_err(), "the evicted file is removed");
+    assert_eq!(store.read(&f.patch).unwrap().data.as_ref(), DATA);
     assert_eq!(store.read(&next).unwrap().data.as_ref(), DATA);
     drop((receipts, store, repairs));
+    f.close().await;
+}
+
+#[tokio::test]
+async fn staging_keeps_every_repair_while_an_older_database_is_retained() {
+    let f = Fixture::new().await;
+    let client = Client::new([]);
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    let (stale, used) = two_read_repairs(&f, &repairs).await;
+    std::fs::write(f.root.join(crate::database::PRE_POSTGRES), b"").unwrap();
+    let mut next = f.patch.clone();
+    next.id = PatchId::new();
+    let error = repairs
+        .stage(
+            vec![(next, DATA.to_vec())],
+            // Room only through eviction.
+            used + 1,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("retained"), "{error:#}");
+    let store = repairs.store(u64::MAX).unwrap();
+    assert_eq!(store.read(&stale).unwrap().data.as_ref(), DATA);
+    assert_eq!(store.read(&f.patch).unwrap().data.as_ref(), DATA);
+    assert_eq!(
+        f.db.article_repairs("stale@loopback").await.unwrap(),
+        [stale]
+    );
+    drop((store, repairs));
+    f.close().await;
+}
+
+#[tokio::test]
+async fn a_damaged_local_repair_falls_back_to_a_provider_copy() {
+    use infinidysk_nntp::{Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
+    use infinidysk_testkit::{LoopbackServer, post};
+    use std::time::Duration;
+    let f = Fixture::new().await;
+    f.publish().await;
+    let mut articles = post("fallback", "fallback.bin", DATA, DATA.len());
+    articles[0].message_id = "repair@loopback".into();
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let endpoint = Endpoint::new(
+        "127.0.0.1",
+        server.addr().port(),
+        TlsMode::Plain,
+        None,
+        Duration::from_secs(3),
+    )
+    .unwrap();
+    let pool = Pool::new(
+        endpoint,
+        PoolConfig {
+            max_connections: 2,
+            pipeline_depth: 1,
+            idle_timeout: Duration::from_secs(3),
+            min_connections: 0,
+        },
+        Downloads::new(4),
+    )
+    .unwrap();
+    let client = Client::new([Provider {
+        pool,
+        key: String::new(),
+        name: String::new(),
+        priority: 0,
+        backbone: None,
+    }]);
+    install(&client, f.db.clone(), f.root.join("repairs"));
+    let path = f.root.join("repairs").join(format!("{}.patch", f.patch.id));
+    let mut corrupt = std::fs::read(&path).unwrap();
+    *corrupt.last_mut().unwrap() ^= 1;
+    std::fs::write(&path, corrupt).unwrap();
+    assert!(matches!(
+        client.repaired("repair@loopback", None).await,
+        Err(Error::Repair(_))
+    ));
+    // The provider's copy wins; the local error surfaces only when no provider has one.
+    assert_eq!(
+        client
+            .body("repair@loopback", Workload::Stream, None)
+            .await
+            .unwrap()
+            .data
+            .as_ref(),
+        DATA
+    );
+    assert_eq!(
+        client
+            .hedge("repair@loopback", None, None)
+            .await
+            .unwrap()
+            .data
+            .as_ref(),
+        DATA
+    );
+    drop(client);
+    drop(server);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn an_unreadable_repair_is_left_out_of_the_backup_and_checked_after_restore() {
+    use infinidysk_db::HealthState;
+    let f = Fixture::new().await;
+    f.publish().await;
+    let client = Arc::new(Client::new([]));
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    std::fs::remove_file(f.root.join("repairs").join(format!("{}.patch", f.patch.id))).unwrap();
+    let backup = f.root.join("missing.sqlite");
+    repairs
+        .backup_into(&backup, &tokio_util::sync::CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(
+        infinidysk_db::check_file(&backup, || false)
+            .await
+            .unwrap()
+            .failure()
+            .is_none()
+    );
+    // The live database keeps its reference; only the backup leaves it out.
+    assert_eq!(
+        f.db.article_repairs("repair@loopback").await.unwrap(),
+        std::slice::from_ref(&f.patch)
+    );
+    let restored = Db::connect(&crate::app::sqlite_url(&backup)).await.unwrap();
+    assert_eq!(
+        restored.article_repairs("repair@loopback").await.unwrap(),
+        Vec::<Patch>::new()
+    );
+    let item = restored
+        .item_by_path("/content/source.bin")
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, health) = restored.health(item.id).await.unwrap().unwrap();
+    assert_eq!(health.state, HealthState::Unchecked);
+    assert_eq!(health.next_check, Some(0));
+    drop(repairs);
+    drop(client);
+    restored.close().await;
     f.close().await;
 }

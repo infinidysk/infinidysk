@@ -194,7 +194,9 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
         .unwrap()
         .write(&patch, &data[..ARTICLE], || false)
         .unwrap();
-    let published = publisher.publish(source, vec![receipt], None).await;
+    let published = publisher
+        .publish(source, vec![receipt], None, &CancellationToken::new())
+        .await;
     let checked = tokio::task::spawn_blocking(move || {
         let mut bytes = vec![0; data.len()];
         for file in [&first, &alias] {

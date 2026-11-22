@@ -62,6 +62,17 @@ fn nzb(files: &[(&str, &[u8], Vec<Article>)]) -> String {
     xml
 }
 
+/// Removes a test's directory even when an assertion fails. Declare it before the
+/// child process, so the process stops first.
+struct Scratch(std::path::PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // Best effort: a failed test may leave the mount busy.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs the packaged binary, /dev/fuse, and permission to mount"]
 async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() {
@@ -79,6 +90,7 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
     let base = format!("http://{addr}");
     let root = std::env::temp_dir().join(format!("infinidysk-packaged-repair-{}", ItemId::new()));
     std::fs::create_dir(&root).unwrap();
+    let _scratch = Scratch(root.clone());
     let mount = root.join("mount");
     let database = format!("sqlite:{}", root.join("data.sqlite").display());
     let providers = json!([{"name":"fixture", "hostname":"127.0.0.1", "port": provider.addr().port(), "tls":false}]);
@@ -133,8 +145,10 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
         .unwrap();
     let job: JobId = submitted["nzo_ids"][0].as_str().unwrap().parse().unwrap();
     let db = Db::connect(&database).await.unwrap();
+    // Both archive headers stay missing on the provider, so a completed import with the
+    // right bytes below proves it waited for the repair. A brief parked state need not
+    // be seen by polling.
     let history = time::timeout(Duration::from_secs(40), async {
-        let mut parked = false;
         loop {
             if let Some(history) = db.history_entry(job).await.unwrap() {
                 assert_eq!(
@@ -143,14 +157,8 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
                     "{:?}",
                     history.fail_message
                 );
-                assert!(parked, "import must wait for repair before completion");
                 break history;
             }
-            parked |= db
-                .par2_result(Owner::Queue(job), false)
-                .await
-                .unwrap()
-                .is_some_and(|job| matches!(job.state, 0 | 1 | 4));
             time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -329,6 +337,7 @@ async fn packaged_worker_resumes_after_shutdown() {
     let base = format!("http://{addr}");
     let root = std::env::temp_dir().join(format!("infinidysk-repair-faults-{}", ItemId::new()));
     std::fs::create_dir(&root).unwrap();
+    let _scratch = Scratch(root.clone());
     let database = format!("sqlite:{}", root.join("data.sqlite").display());
     let db = Db::connect(&database).await.unwrap();
     let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();

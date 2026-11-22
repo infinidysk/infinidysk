@@ -16,7 +16,10 @@ impl Repairs {
         path: &Path,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        let _lifecycle = self.lifecycle.lock().await;
+        let _lifecycle = tokio::select! {
+            lifecycle = self.lifecycle.lock() => lifecycle,
+            () = cancel.cancelled() => anyhow::bail!("backup cancelled"),
+        };
         let stopped = cancel.clone();
         self.db
             .backup_into(path, move || stopped.is_cancelled())
@@ -34,11 +37,23 @@ impl Repairs {
                     after = Some(patch.id);
                     let repairs = Arc::clone(self);
                     let (patch, data) = tokio::task::spawn_blocking(move || -> Result<_> {
-                        let body = repairs.store(u64::MAX)?.read(&patch)?;
-                        Ok((patch, body.data))
+                        let data = repairs.store(u64::MAX)?.read(&patch).map(|body| body.data);
+                        Ok((patch, data))
                     })
                     .await??;
-                    snapshot.set_repair_payload(&patch, Some(&data)).await?;
+                    match data {
+                        Ok(data) => snapshot.set_repair_payload(&patch, Some(&data)).await?,
+                        // A restore has no live store, so the backup drops the reference
+                        // as eviction would, and its files are checked again after restore.
+                        Err(error) => {
+                            tracing::warn!(
+                                patch = %patch.id,
+                                reason = %error,
+                                "a stored repair cannot be read and is left out of the backup"
+                            );
+                            snapshot.evict_patch(patch.id).await?;
+                        }
+                    }
                 }
             }
             Ok::<_, anyhow::Error>(())
@@ -49,6 +64,23 @@ impl Repairs {
         let path = path.to_owned();
         tokio::task::spawn_blocking(move || std::fs::File::open(path)?.sync_all()).await??;
         Ok(())
+    }
+
+    /// A retained older database may still reference repair files the live one dropped.
+    pub(super) async fn retains_old_database(&self) -> Result<bool> {
+        if self
+            .path
+            .with_file_name(crate::database::PRE_POSTGRES)
+            .try_exists()?
+        {
+            return Ok(true);
+        }
+        if let Some(stats) = self.db.sqlite_stats().await? {
+            let undo = std::path::PathBuf::from(format!("{}.before-restore", stats.path.display()));
+            // The old live database pins its patches while undo remains available.
+            return Ok(undo.try_exists()?);
+        }
+        Ok(false)
     }
 
     /// Called before delivery starts. Keep embedded bytes until the store is durable.
@@ -94,20 +126,8 @@ impl Repairs {
         let _lifecycle = self.lifecycle.lock().await;
         let _paused = self.db.pause_writes().await;
         // The retained SQLite database shares the repair directory after a cutover.
-        if !self.path.try_exists()?
-            || self
-                .path
-                .with_file_name(crate::database::PRE_POSTGRES)
-                .try_exists()?
-        {
+        if !self.path.try_exists()? || self.retains_old_database().await? {
             return Ok(0);
-        }
-        if let Some(stats) = self.db.sqlite_stats().await? {
-            let undo = std::path::PathBuf::from(format!("{}.before-restore", stats.path.display()));
-            // The old live database pins its patches while undo remains available.
-            if undo.try_exists()? {
-                return Ok(0);
-            }
         }
         let (nzbs, articles) = vfs.repair_pins();
         // Reconcile uncertain commits before taking the authoritative keep snapshot.

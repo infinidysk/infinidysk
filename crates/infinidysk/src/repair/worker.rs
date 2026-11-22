@@ -296,13 +296,14 @@ impl Repairs {
         let stopped = cancel.child_token();
         let progress = Progress::default();
         let _stop = stopped.clone().drop_guard();
-        let work = tokio::time::timeout(
-            TIMEOUT,
-            self.perform(client, publisher, health, job, &stopped, &progress),
-        );
-        tokio::pin!(work);
+        let work = self.perform(client, publisher, health, job, &stopped, &progress);
+        let deadline = tokio::time::sleep(TIMEOUT);
+        tokio::pin!(work, deadline);
+        // Every stop is cooperative: a publication admitted before it still reports.
+        let mut expired = false;
         let result = tokio::select! {
             result = &mut work => result,
+            () = &mut deadline => { expired = true; stopped.cancel(); work.await },
             () = async {
                 loop {
                     tokio::select! { () = cancel.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(2)) => {} }
@@ -312,17 +313,17 @@ impl Repairs {
             } => { stopped.cancel(); work.await },
         };
         let outcome = match result {
-            Ok(Ok(outcome)) => outcome,
+            Ok(outcome) => outcome,
             _ if stopped.is_cancelled() && cancel.is_cancelled() => Outcome::Interrupted,
+            _ if expired => Outcome::Failed("repair time limit reached".to_owned()),
             _ if stopped.is_cancelled() => Outcome::Cancelled,
-            Ok(Err(error)) => match error.downcast_ref::<Unavailable>() {
+            Err(error) => match error.downcast_ref::<Unavailable>() {
                 Some(Unavailable(detail)) => match progress.current_phase() {
                     "" => Outcome::Unavailable(format!("repair unavailable: {detail}")),
                     phase => Outcome::Unavailable(format!("repair unavailable: {phase}: {detail}")),
                 },
                 None => Outcome::Failed(format!("{error:#}")),
             },
-            Err(_) => Outcome::Failed("repair time limit reached".to_owned()),
         };
         let failed = matches!(outcome, Outcome::Unavailable(_) | Outcome::Failed(_));
         let verified = if matches!(outcome, Outcome::Verified { .. } | Outcome::Repaired { .. }) {
@@ -619,13 +620,16 @@ impl Repairs {
             progress.phase("Publishing repaired articles");
             anyhow::ensure!(
                 publisher
-                    .publish(source.clone(), receipts, metadata)
+                    .publish(source.clone(), receipts, metadata, cancel)
                     .await?,
                 unavailable("source changed before publication")
             );
             progress.stored.fetch_add(stored_bytes, Ordering::Relaxed);
         }
-        self.db.wake_par2(source.nzb(), now_ms()).await?;
+        // The repair stands either way; waiting work then runs at its scheduled time.
+        if let Err(error) = self.db.wake_par2(source.nzb(), now_ms()).await {
+            tracing::warn!(reason = %error, "could not wake work waiting for this repair");
+        }
         Ok(if repaired {
             Outcome::Repaired { hash_only }
         } else {
@@ -641,6 +645,16 @@ impl Repairs {
         cancel: &CancellationToken,
     ) -> Result<Vec<patch::Durable>> {
         let staging = Arc::clone(&self.lifecycle).lock_owned().await;
+        // A retained older database may still read any stored repair, so keep them all.
+        let retained = self.retains_old_database().await?;
+        let full = move || -> anyhow::Error {
+            unavailable(if retained {
+                "the repair store is full, and a retained older database still uses its repairs"
+            } else {
+                "repaired articles exceed the repair store"
+            })
+            .into()
+        };
         let repairs = Arc::clone(self);
         let stopped = cancel.clone();
         let runtime = tokio::runtime::Handle::current();
@@ -653,12 +667,16 @@ impl Repairs {
                 .sum();
             match store.evict(
                 needed,
-                |id| repairs.evict(&runtime, id),
+                |id| {
+                    if retained {
+                        Ok(None)
+                    } else {
+                        repairs.evict(&runtime, id)
+                    }
+                },
                 || stopped.is_cancelled(),
             ) {
-                Err(patch::Error::Capacity) => {
-                    return Err(unavailable("repaired articles exceed the repair store").into());
-                }
+                Err(patch::Error::Capacity) => return Err(full()),
                 result => result?,
             };
             patches
@@ -666,7 +684,10 @@ impl Repairs {
                 .map(|(patch, bytes)| {
                     store
                         .write(&patch, &bytes, || stopped.is_cancelled())
-                        .map_err(Into::into)
+                        .map_err(|error| match error {
+                            patch::Error::Capacity => full(),
+                            error => error.into(),
+                        })
                 })
                 .collect()
         })

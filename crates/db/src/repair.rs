@@ -19,6 +19,12 @@ const FORGET_DEFECTS: &str = "UPDATE media_probes SET defect_offset = NULL, defe
      defect_seen_at = NULL, defect_source = NULL \
      WHERE item_id IN (SELECT id FROM items WHERE nzb_blob = $1)";
 
+/// Replace repaired metadata only while the item still owns it at the captured generations.
+const REPAIRED_METADATA: &str = "UPDATE blobs SET data = $2, generation = generation + 1 \
+     WHERE id = $1 AND generation = $3 \
+     AND EXISTS (SELECT 1 FROM items i JOIN blobs n ON n.id = i.nzb_blob \
+     WHERE i.id = $4 AND i.meta_blob = $1 AND n.id = $5 AND n.generation = $6)";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Item(ItemId),
@@ -327,10 +333,7 @@ impl Db {
                 sqlx::query("SELECT id FROM blobs WHERE id = $1 OR id = $2 ORDER BY id FOR UPDATE")
                     .bind(source.nzb.0).bind(meta.0).execute(&mut *tx).await?;
             }
-            let changed = sqlx::query(
-            "UPDATE blobs SET data = $2, generation = generation + 1 WHERE id = $1 AND generation = $3 \
-             AND EXISTS (SELECT 1 FROM items i JOIN blobs n ON n.id = i.nzb_blob \
-             WHERE i.id = $4 AND i.meta_blob = $1 AND n.id = $5 AND n.generation = $6)")
+            let changed = sqlx::query(REPAIRED_METADATA)
             .bind(meta.0).bind(data).bind(generation).bind(item.0).bind(source.nzb.0).bind(source.generation)
             .execute(&mut *tx).await?.rows_affected();
             if changed > 0 && let Some(check) = check {
@@ -489,19 +492,39 @@ impl Db {
         source: &Source,
         patches: &[Patch],
     ) -> Result<bool, Error> {
+        self.publish_repair(guard, source, patches, None).await
+    }
+
+    /// [`publish_patches`](Self::publish_patches) plus the repaired file metadata in the
+    /// same transaction, so neither becomes visible without the other.
+    pub async fn publish_repair(
+        &self,
+        guard: impl Send + 'static,
+        source: &Source,
+        patches: &[Patch],
+        metadata: Option<&[u8]>,
+    ) -> Result<bool, Error> {
         if patches.is_empty() || patches.len() > MAX_PATCHES {
             return Err(Error::RepairBounds("batch size"));
         }
         let (db, source, patches) = (self.clone(), source.clone(), patches.to_vec());
+        let metadata = metadata.map(<[u8]>::to_vec);
         owned(tokio::spawn(async move {
-            let result = db.write_patches(&source, &patches).await;
+            let result = db
+                .write_patches(&source, &patches, metadata.as_deref())
+                .await;
             drop(guard);
             result
         }))
         .await
     }
 
-    async fn write_patches(&self, source: &Source, patches: &[Patch]) -> Result<bool, Error> {
+    async fn write_patches(
+        &self,
+        source: &Source,
+        patches: &[Patch],
+        metadata: Option<&[u8]>,
+    ) -> Result<bool, Error> {
         let encoded: Vec<_> = patches
             .iter()
             .map(|patch| {
@@ -569,6 +592,19 @@ impl Db {
                     .bind(s.set.as_slice()).bind(s.file.as_slice()).bind(start).bind(end)
                     .bind(&s.message_id).bind(descriptor).execute(&mut *tx).await?;
                 inserted = true;
+            }
+            if let Some(data) = metadata {
+                let changed = match (source.metadata, source.owner) {
+                    (Some((meta, generation)), Owner::Item(item)) => sqlx::query(REPAIRED_METADATA)
+                        .bind(meta.0).bind(data).bind(generation).bind(item.0)
+                        .bind(source.nzb.0).bind(source.generation)
+                        .execute(&mut *tx).await?.rows_affected(),
+                    _ => 0,
+                };
+                if changed == 0 {
+                    tx.rollback().await?;
+                    return Ok(false);
+                }
             }
             // An idempotent retry adds no bytes, so later defect evidence still stands.
             if inserted {
