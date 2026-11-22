@@ -505,8 +505,9 @@ impl Repairs {
             .repair_source(owner)
             .await?
             .context(unavailable("source disappeared"))?;
+        // A queue row can be relinked to another NZB; the generation alone cannot tell.
         anyhow::ensure!(
-            source.generation() == job.generation,
+            source.nzb() == BlobId(nzb) && source.generation() == job.generation,
             unavailable("original NZB changed")
         );
         let raw = self
@@ -623,22 +624,21 @@ impl Repairs {
                 metadata_changed |=
                     repair::refresh_metadata(metadata, &result.sources, &mut covered);
             }
-            if !result.patches.is_empty() {
+            // Published articles are immutable. A slice that spans an already repaired
+            // article rebuilds it too; keep the published copy and stage only new articles.
+            let patches = self.unpublished(&source, result.patches).await?;
+            if !patches.is_empty() {
                 anyhow::ensure!(
-                    receipts.len() + result.patches.len() <= MAX_PATCHES,
+                    receipts.len() + patches.len() <= MAX_PATCHES,
                     unavailable(format!("more than {MAX_PATCHES} repaired articles"))
                 );
                 progress.phase("Saving repaired articles");
-                stored_bytes += result
-                    .patches
+                stored_bytes += patches
                     .iter()
                     .map(|(_, bytes)| bytes.len() as u64)
                     .sum::<u64>();
                 // Durable but unpublished: receipts keep these files from eviction.
-                receipts.extend(
-                    self.stage(result.patches, progress.store_bytes, cancel)
-                        .await?,
-                );
+                receipts.extend(self.stage(patches, progress.store_bytes, cancel).await?);
             }
         }
         anyhow::ensure!(
@@ -679,6 +679,38 @@ impl Repairs {
         } else {
             Outcome::Verified { hash_only }
         })
+    }
+
+    /// Drop rebuilt articles that already have an identical published repair.
+    pub(super) async fn unpublished(
+        &self,
+        source: &infinidysk_db::repair::Source,
+        patches: Vec<(Patch, Vec<u8>)>,
+    ) -> Result<Vec<(Patch, Vec<u8>)>> {
+        let mut fresh = Vec::with_capacity(patches.len());
+        for (patch, bytes) in patches {
+            let posted = &patch.source;
+            let published = match &posted.message_id {
+                Some(id) => self
+                    .db
+                    .article_patch(source, id)
+                    .await?
+                    .into_iter()
+                    .collect(),
+                None => {
+                    self.db
+                        .range_patches(source, posted.set, posted.file, posted.range)
+                        .await?
+                }
+            };
+            if !published
+                .iter()
+                .any(|stored| stored.source == patch.source && stored.sha256 == patch.sha256)
+            {
+                fresh.push((patch, bytes));
+            }
+        }
+        Ok(fresh)
     }
 
     /// Write one set's articles, evicting least recently read repairs for room.

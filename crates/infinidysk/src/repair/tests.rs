@@ -1852,3 +1852,47 @@ async fn an_unreadable_repair_is_left_out_of_the_backup_and_checked_after_restor
     restored.close().await;
     f.close().await;
 }
+
+#[tokio::test]
+async fn rebuilt_articles_with_an_identical_published_repair_are_not_staged_again() {
+    let f = Fixture::new().await;
+    f.publish().await;
+    let client = Client::new([]);
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    // A slice spanning the repaired article rebuilds it under a new ID.
+    let mut rebuilt = f.patch.clone();
+    rebuilt.id = PatchId::new();
+    assert!(matches!(
+        f.db.publish_patches((), &f.source, std::slice::from_ref(&rebuilt))
+            .await,
+        Err(infinidysk_db::Error::RepairConflict)
+    ));
+    let mut fresh = f.patch.clone();
+    fresh.id = PatchId::new();
+    fresh.source.message_id = Some("fresh@loopback".into());
+    fresh.source.range = ByteRange {
+        start: 8000,
+        end: 8000 + DATA.len() as u64,
+    };
+    let mut different = rebuilt.clone();
+    different.id = PatchId::new();
+    different.sha256 = [9; 32];
+    let kept = repairs
+        .unpublished(
+            &f.source,
+            vec![
+                (rebuilt, DATA.to_vec()),
+                (fresh.clone(), DATA.to_vec()),
+                (different.clone(), DATA.to_vec()),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.into_iter().map(|(patch, _)| patch).collect::<Vec<_>>(),
+        vec![fresh, different],
+        "only new or different articles are staged; a different one still conflicts"
+    );
+    drop(repairs);
+    f.close().await;
+}
