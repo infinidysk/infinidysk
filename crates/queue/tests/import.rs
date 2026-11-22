@@ -1672,6 +1672,8 @@ async fn inner_nzbs_are_followed_three_deep_and_no_further() {
     }
     let deepest = wrap("n3", &xml, &mut articles);
     let (_server, queue) = setup(articles).await;
+    // Restored articles cannot change the file layout, so PAR2 must not park these jobs.
+    queue.enable_par2();
     let db = queue.db().clone();
 
     let history = run(&queue, &db, &deepest).await;

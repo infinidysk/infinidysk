@@ -813,13 +813,16 @@ async fn inner_nzb(job: &Job, outputs: &[Output]) -> Result<Option<Vec<u8>>, Err
         [] => return Ok(None),
         [one] => one,
         _ => {
-            return Err(failed(
-                "The download contains several NZB files; only one is supported.",
+            return Err(Error::Unrepairable(
+                "The download contains several NZB files; only one is supported.".to_owned(),
             ));
         }
     };
     if meta.size() > nzb::MAX_NZB {
-        return Err(failed(format!("{name}: {}", nzb::Error::TooLarge)));
+        return Err(Error::Unrepairable(format!(
+            "{name}: {}",
+            nzb::Error::TooLarge
+        )));
     }
     let data = Volume::of(name.clone(), meta)
         .read(job, 0, meta.size())
