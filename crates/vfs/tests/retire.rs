@@ -48,7 +48,8 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
         }
     }));
     let client = Arc::new(client);
-    let vfs = Vfs::new(db.clone(), client, Budget::new(1 << 20), 1 << 20, "/mnt");
+    let vfs =
+        Vfs::new(db.clone(), client, Budget::new(1 << 20), 1 << 20, "/mnt").with_repair_publisher();
     let segments = Segments {
         items: vec![Segment {
             id: "article@test".into(),
@@ -179,8 +180,8 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
     }
 }
 
-/// One NZB-linked file of 4096 repaired bytes.
-async fn linked_file() -> (Vfs, Item, BlobId, Vec<u8>) {
+/// One NZB-linked file of 4096 repaired bytes, in a VFS with or without a repair publisher.
+async fn linked_file(publisher: bool) -> (Vfs, Item, BlobId, Vec<u8>) {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
     let data: Vec<u8> = (0..4096_u16)
@@ -215,6 +216,11 @@ async fn linked_file() -> (Vfs, Item, BlobId, Vec<u8>) {
         1 << 20,
         "/mnt",
     );
+    let vfs = if publisher {
+        vfs.with_repair_publisher()
+    } else {
+        vfs
+    };
     let meta = FileMeta::Nzb(NzbFile {
         segments: Segments {
             items: vec![Segment {
@@ -246,8 +252,42 @@ async fn linked_file() -> (Vfs, Item, BlobId, Vec<u8>) {
 }
 
 #[tokio::test]
+async fn without_a_publisher_or_stored_repairs_reads_skip_publication_admission() {
+    let (vfs, item, _, data) = linked_file(false).await;
+    assert!(vfs.coordinated_fence(item.id).is_none());
+    assert!(vfs.begin_publication(BlobId::new(), &[]).is_err());
+    // A held writer would stop every coordinated open and read.
+    let _writer = vfs.read_fence(item.id).write().await;
+    let wait = std::time::Duration::from_secs(1);
+    let origin = Origin {
+        delivery: Delivery::Fuse,
+        client: "test".into(),
+        player: None,
+    };
+    let mut reader = tokio::time::timeout(wait, vfs.open(&Node::Item(item.clone()), origin))
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let mut bytes = vec![0; data.len()];
+    tokio::time::timeout(wait, reader.read_exact(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(bytes, data);
+    let mut analysis = tokio::time::timeout(wait, vfs.open_analysis(&item))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(wait, analysis.read_exact(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
 async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
-    let (vfs, item, nzb, data) = linked_file().await;
+    let (vfs, item, nzb, data) = linked_file(true).await;
     let mut analysis = vfs.open_analysis(&item).await.unwrap();
     let mut first = [0; 17];
     analysis.read_exact(&mut first).await.unwrap();
@@ -276,7 +316,7 @@ async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
 
 #[tokio::test]
 async fn an_analysis_read_waits_for_a_publication_that_arms_after_the_awaited_one() {
-    let (vfs, item, nzb, data) = linked_file().await;
+    let (vfs, item, nzb, data) = linked_file(true).await;
     let mut analysis = vfs.open_analysis(&item).await.unwrap();
     let mut first = [0; 17];
     analysis.read_exact(&mut first).await.unwrap();
@@ -310,7 +350,7 @@ async fn an_analysis_read_waits_for_a_publication_that_arms_after_the_awaited_on
 
 #[tokio::test]
 async fn a_reader_opened_from_a_node_without_its_nzb_link_survives_retirement() {
-    let (vfs, item, _, data) = linked_file().await;
+    let (vfs, item, _, data) = linked_file(true).await;
     let retained = Item {
         nzb_blob: None,
         ..item.clone()

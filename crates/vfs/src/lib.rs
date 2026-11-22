@@ -218,7 +218,8 @@ struct Opening {
     meta: Arc<FileMeta>,
     source: Option<(BlobId, i64)>,
     version: ReadVersion,
-    _lease: ReadLease,
+    _lease: Option<ReadLease>,
+    coordinated: bool,
 }
 
 pub struct Vfs {
@@ -228,6 +229,8 @@ pub struct Vfs {
     cache: Option<Arc<Cache>>,
     report: Option<FaultReport>,
     fences: fence::Fences,
+    /// Whether a repair worker may publish while files are open; set before serving.
+    publisher: bool,
     /// Bytes each reader keeps in flight ahead of its position.
     read_ahead: AtomicU64,
     /// Damage caps for gap-tolerant media; off, every file stops at its 3rd fill in a row.
@@ -287,6 +290,7 @@ impl Vfs {
             cache: None,
             report: None,
             fences: fence::Fences::default(),
+            publisher: false,
             read_ahead: AtomicU64::new(read_ahead),
             gap_tolerance: AtomicBool::new(true),
             gaps: Arc::default(),
@@ -307,9 +311,27 @@ impl Vfs {
         }
     }
 
+    /// Lets [`Self::begin_publication`] replace bytes under open readers.
+    #[must_use]
+    pub const fn with_repair_publisher(mut self) -> Self {
+        self.publisher = true;
+        self
+    }
+
+    /// Whether reads coordinate with repairs: a publisher exists or stored repairs may
+    /// be served. Without either, files open the plain reader.
+    pub fn coordinates_repairs(&self) -> bool {
+        self.publisher || self.db.may_have_repairs()
+    }
+
     /// Shared read admission for every FUSE path and handle of an item.
     pub fn read_fence(&self, item: ItemId) -> ReadFence {
         self.fences.get(item)
+    }
+
+    /// [`Self::read_fence`] when reads coordinate with repairs.
+    pub fn coordinated_fence(&self, item: ItemId) -> Option<ReadFence> {
+        self.coordinates_repairs().then(|| self.fences.get(item))
     }
 
     pub fn uses_database(&self, db: &Db) -> bool {
@@ -322,6 +344,11 @@ impl Vfs {
         nzb: BlobId,
         patches: &[infinidysk_core::repair::Patch],
     ) -> std::io::Result<Publication> {
+        if !self.publisher {
+            return Err(std::io::Error::other(
+                "repair publication needs a VFS built with a repair publisher",
+            ));
+        }
         self.fences.publish(nzb, patches)
     }
 
@@ -622,6 +649,7 @@ impl Vfs {
                     source,
                     version,
                     _lease,
+                    coordinated,
                 } = self.opening(item).await?;
                 let session =
                     self.sessions
@@ -640,6 +668,7 @@ impl Vfs {
                         self.gap_tolerance.load(Ordering::Relaxed),
                     )),
                     watch: Some(session.watch()),
+                    coordinated,
                 }
                 .reader(&meta, source, version)?;
                 Ok(Some(Handle::new(reader, Some(session))))
@@ -657,6 +686,7 @@ impl Vfs {
             source,
             version,
             _lease,
+            coordinated,
         } = self.opening(item).await?;
         let mut reader = live::Opened {
             db: self.db.clone(),
@@ -669,6 +699,7 @@ impl Vfs {
             report: None,
             gaps: None,
             watch: None,
+            coordinated,
         }
         .reader(&meta, source, version)?;
         if let Reader::Live(live) = &mut reader {
@@ -678,6 +709,17 @@ impl Vfs {
     }
 
     async fn opening(&self, item: &Item) -> Result<Opening, Error> {
+        if !self.coordinates_repairs() {
+            let (_, meta) = self.meta(item).await?;
+            return Ok(Opening {
+                item: item.clone(),
+                meta,
+                source: None,
+                version: self.fences.get(item.id).version(),
+                _lease: None,
+                coordinated: false,
+            });
+        }
         // A retained node may predate a restored NZB link; without it the repair
         // context below could not find committed repairs.
         let current;
@@ -719,7 +761,8 @@ impl Vfs {
                         meta,
                         source,
                         version: fence.version(),
-                        _lease: lease,
+                        _lease: Some(lease),
+                        coordinated: true,
                     });
                 }
             }

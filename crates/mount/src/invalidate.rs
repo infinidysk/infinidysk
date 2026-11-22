@@ -211,6 +211,7 @@ mod tests {
             0,
             "/mnt",
         )
+        .with_repair_publisher()
     }
 
     #[tokio::test]

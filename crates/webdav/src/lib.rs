@@ -667,7 +667,7 @@ async fn get(
     // yield a retryable 503 instead of a body cut short. Missing articles never fail
     // here: they are zero-filled and reported to health.
     let fence = match node {
-        Node::Item(item) | Node::IdFile(item) => Some(vfs.read_fence(item.id)),
+        Node::Item(item) | Node::IdFile(item) => vfs.coordinated_fence(item.id),
         _ => None,
     };
     let mut reader = reader.take(end - start);

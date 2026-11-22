@@ -1029,10 +1029,11 @@ impl Fs {
     fn attr(&self, ino: Inode, node: &Node) -> FileAttr {
         if let Node::Item(item) | Node::IdFile(item) = node
             && node.kind() == Kind::File
+            && let Some(fence) = self.vfs.coordinated_fence(item.id)
         {
             let mut inodes = lock(&self.inodes);
             if inodes.by_ino.contains_key(&ino) {
-                inodes.owners.insert(ino, self.vfs.read_fence(item.id));
+                inodes.owners.insert(ino, fence);
             }
         }
         let (kind, perm, nlink) = match node.kind() {
@@ -1279,7 +1280,7 @@ impl Filesystem for Fs {
             }
             let attr = self.attr(inode, &node);
             let fence = match &node {
-                Node::Item(item) | Node::IdFile(item) => Some(self.vfs.read_fence(item.id)),
+                Node::Item(item) | Node::IdFile(item) => self.vfs.coordinated_fence(item.id),
                 _ => None,
             };
             let origin = Origin {

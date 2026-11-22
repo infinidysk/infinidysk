@@ -33,6 +33,8 @@ pub(crate) struct Opened {
     pub report: Option<FaultReport>,
     pub gaps: Option<(GapEntries, bool)>,
     pub watch: Option<Arc<Watch>>,
+    /// Without repair coordination the plain reader serves, with no access hook.
+    pub coordinated: bool,
 }
 
 impl Opened {
@@ -51,13 +53,6 @@ impl Opened {
                 }
             }) as Report
         });
-        let access: Access = {
-            let scope = Arc::new((version.clone(), Arc::clone(meta)));
-            Arc::new(move |id| {
-                let scope = Arc::clone(&scope);
-                Box::pin(async move { scope.0.access(id).await })
-            })
-        };
         let reader = Reader::new(
             meta,
             source,
@@ -67,8 +62,17 @@ impl Opened {
             self.read_ahead,
             self.trace.as_ref(),
             report.as_ref(),
-        )?
-        .with_access(access);
+        )?;
+        let reader = if self.coordinated {
+            let scope = Arc::new((version.clone(), Arc::clone(meta)));
+            let access: Access = Arc::new(move |id| {
+                let scope = Arc::clone(&scope);
+                Box::pin(async move { scope.0.access(id).await })
+            });
+            reader.with_access(access)
+        } else {
+            reader
+        };
         let reader = if let Some((entries, tolerance)) = &self.gaps {
             let gaps = gaps(entries, &self.item, meta, version, *tolerance);
             reader.with_filler(meta, &self.item.name).with_gaps(gaps)
@@ -88,6 +92,9 @@ impl Opened {
         version: ReadVersion,
     ) -> Result<Reader, Error> {
         let reader = self.build(meta, source, &version)?;
+        if !self.coordinated {
+            return Ok(reader);
+        }
         let size = meta.size();
         let opened = Arc::new(self);
         let reload: Reload = Arc::new(move |version| {

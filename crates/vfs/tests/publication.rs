@@ -79,7 +79,8 @@ async fn setup() -> (Vfs, Vec<Item>, BlobId, Patch) {
         sha256: [3; 32],
     };
     (
-        Vfs::new(db, Arc::new(Client::new([])), Budget::new(1024), 0, "/mnt"),
+        Vfs::new(db, Arc::new(Client::new([])), Budget::new(1024), 0, "/mnt")
+            .with_repair_publisher(),
         items,
         nzb,
         patch,

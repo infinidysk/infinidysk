@@ -267,6 +267,7 @@ async fn serves_content_links_ids_and_queued_nzbs() {
         1 << 20,
         "/mnt/dysk/",
     )
+    .with_repair_publisher()
     .with_cache(Arc::new(Cache::new(true, 1 << 20)))
     .with_report({
         let faults = Arc::clone(&faults);

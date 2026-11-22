@@ -123,13 +123,16 @@ async fn setup_published(
         .await
         .unwrap();
 
-    let vfs = Arc::new(Vfs::new(
-        db.clone(),
-        Arc::clone(&client),
-        Budget::new(1 << 20),
-        1 << 20,
-        "/mnt",
-    ));
+    let vfs = Arc::new(
+        Vfs::new(
+            db.clone(),
+            Arc::clone(&client),
+            Budget::new(1 << 20),
+            1 << 20,
+            "/mnt",
+        )
+        .with_repair_publisher(),
+    );
     let (legacy, previous) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
     let dav = WebDav {
         vfs: Arc::clone(&vfs),

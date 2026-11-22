@@ -144,13 +144,16 @@ async fn reads_the_tree_through_the_kernel() {
     let mount_str = mount.to_str().unwrap().to_owned();
     let cancel = CancellationToken::new();
     let (state, mut kernel) = tokio::sync::watch::channel(Err(String::new()));
-    let vfs = Arc::new(Vfs::new(
-        db.clone(),
-        client,
-        Budget::new(1 << 20),
-        1 << 20,
-        &mount_str,
-    ));
+    let vfs = Arc::new(
+        Vfs::new(
+            db.clone(),
+            client,
+            Budget::new(1 << 20),
+            1 << 20,
+            &mount_str,
+        )
+        .with_repair_publisher(),
+    );
     vfs.sessions().set_tracing(Some(Tracing {
         until: Instant::now() + Duration::from_secs(600),
         capacity: 10_000,
