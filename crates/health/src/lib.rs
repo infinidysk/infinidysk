@@ -590,7 +590,10 @@ impl Health {
             proven: false,
         };
         let repair_epoch = self.db.repair_epoch();
-        let source = self.omitted_source(item, blob_id, &meta).await?;
+        // Replaced metadata is stale work: the pending recheck stays for the next step.
+        let Some(source) = self.omitted_source(item, blob_id, &meta).await? else {
+            return Ok(());
+        };
         let original = source.map(|source| (source, meta.clone()));
         let client = check::Direct {
             client: &self.client,
@@ -608,12 +611,9 @@ impl Health {
             if current
                 .as_ref()
                 .is_none_or(|(id, meta)| *id != blob_id || *meta != original)
-                || self.omitted_source(item, blob_id, &original).await? != Some(source)
+                || self.omitted_source(item, blob_id, &original).await? != Some(Some(source))
             {
-                return Err(infinidysk_db::Error::Corrupt(
-                    "repair source changed during health check",
-                )
-                .into());
+                return Ok(());
             }
         }
         // The check's own hole write is part of its observation; any other write is not.
@@ -1332,31 +1332,27 @@ impl Health {
         Ok(())
     }
 
+    /// The NZB and generation that omitted placeholders in `meta` read from; `None` when
+    /// the item's metadata or NZB was replaced while reading.
     async fn omitted_source(
         &self,
         item: &Item,
         metadata: BlobId,
         meta: &FileMeta,
-    ) -> Result<Option<(BlobId, i64)>, Error> {
+    ) -> Result<Option<Option<(BlobId, i64)>>, Error> {
         if !self.db.may_have_repairs() || !meta.has_placeholders() {
-            return Ok(None);
+            return Ok(Some(None));
         }
         let Some(nzb) = item.nzb_blob else {
+            return Ok(Some(None));
+        };
+        let Some((generation, raw)) = self.db.repair_metadata(item.id, metadata, nzb).await? else {
             return Ok(None);
         };
-        let (generation, raw) = self
-            .db
-            .repair_metadata(item.id, metadata, nzb)
-            .await?
-            .ok_or(infinidysk_db::Error::Corrupt(
-                "repair source changed while reading metadata",
-            ))?;
         if blob::decode_meta(&raw)? != *meta {
-            return Err(
-                infinidysk_db::Error::Corrupt("repair metadata changed while reading").into(),
-            );
+            return Ok(None);
         }
-        Ok(Some((nzb, generation)))
+        Ok(Some(Some((nzb, generation))))
     }
 
     /// Like [`Self::meta`], with the blob generation its bytes were read at.
