@@ -715,8 +715,14 @@ async fn an_earlier_par2_copy_without_a_main_packet_keeps_the_set() {
     check_par2_names(5).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_par2_copy_with_a_unicode_name_keeps_the_set() {
+    check_par2_names(6).await;
+}
+
 /// `ambiguity`: 0 one index, 1 a second set, 2 a conflicting copy, 3 a copy without
-/// IFSC packets, 4 and 5 a copy without the Main packet listed after or before.
+/// IFSC packets, 4 and 5 a copy without the Main packet listed after or before, 6 a copy
+/// with an extra `UniFileN` packet.
 async fn check_par2_names(ambiguity: u8) {
     let data: Vec<u8> = (0..100_000usize)
         .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
@@ -748,6 +754,23 @@ async fn check_par2_names(ambiguity: u8) {
             "the fixture has the dropped packets"
         );
         other = kept;
+    }
+    if ambiguity == 6 {
+        let at = other
+            .windows(16)
+            .position(|w| w == b"PAR 2.0\0FileDesc")
+            .unwrap()
+            - 48;
+        let mut body = other[at + 64..at + 80].to_vec();
+        body.extend("b.bin\0".encode_utf16().flat_map(u16::to_le_bytes));
+        body.resize(body.len().next_multiple_of(4), 0);
+        let mut packet = b"PAR2\0PKT".to_vec();
+        packet.extend_from_slice(&(64 + body.len() as u64).to_le_bytes());
+        packet.extend_from_slice(&[0; 16]);
+        packet.extend_from_slice(&other[at + 32..at + 48]);
+        packet.extend_from_slice(b"PAR 2.0\0UniFileN");
+        packet.extend_from_slice(&body);
+        other.extend_from_slice(&packet);
     }
     // Recompute packet checksums after changing either the set or the full-file hash.
     let mut at = 0;
@@ -789,7 +812,7 @@ async fn check_par2_names(ambiguity: u8) {
     };
     let proof = f.proof.expect("PAR2 proof");
     assert_eq!(proof.file_length, 100_000);
-    let held = matches!(ambiguity, 0 | 3..=5);
+    let held = matches!(ambiguity, 0 | 3..=6);
     assert_eq!(
         proof.set_id,
         if held {
@@ -1644,6 +1667,8 @@ async fn several_or_unusable_inner_nzbs_fail_the_job() {
     let mut articles = [clip, a, b].concat();
     let unusable = wrap("u", b"<nzb/>", &mut articles);
     let (_server, queue) = setup(articles).await;
+    // Restored articles cannot change the file layout, so PAR2 must not park these jobs.
+    queue.enable_par2();
     let db = queue.db().clone();
 
     let history = run(&queue, &db, &several).await;
@@ -1672,8 +1697,6 @@ async fn inner_nzbs_are_followed_three_deep_and_no_further() {
     }
     let deepest = wrap("n3", &xml, &mut articles);
     let (_server, queue) = setup(articles).await;
-    // Restored articles cannot change the file layout, so PAR2 must not park these jobs.
-    queue.enable_par2();
     let db = queue.db().clone();
 
     let history = run(&queue, &db, &deepest).await;

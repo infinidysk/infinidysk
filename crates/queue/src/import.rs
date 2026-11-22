@@ -990,12 +990,12 @@ async fn read_par2(
             if let Some(&at) = seen.get(&key) {
                 let previous = &mut files[at];
                 // A copy without the IFSC or Main packet lacks slices or their size;
-                // it does not disagree.
+                // it does not disagree. The file ID binds the FileDesc name, so names
+                // differ only by an optional UniFileN packet.
                 let p = &previous.2;
                 let compatible =
                     (previous.1 == index.slice_size || previous.1 == 0 || index.slice_size == 0)
-                        && (p.hash, p.hash_16k, p.length, &p.name)
-                            == (f.hash, f.hash_16k, f.length, &f.name)
+                        && (p.hash, p.hash_16k, p.length) == (f.hash, f.hash_16k, f.length)
                         && (f.slices.is_empty() || p.slices.is_empty() || f.slices == p.slices);
                 if compatible {
                     previous.1 = previous.1.max(index.slice_size);
