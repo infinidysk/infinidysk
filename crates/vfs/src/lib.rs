@@ -670,6 +670,15 @@ impl Vfs {
     }
 
     async fn opening(&self, item: &Item) -> Result<Opening, Error> {
+        // A retained node may predate a restored NZB link; without it the repair
+        // context below could not find committed repairs.
+        let current;
+        let item = if item.nzb_blob.is_none() {
+            current = self.db.item(item.id).await?;
+            current.as_ref().unwrap_or(item)
+        } else {
+            item
+        };
         // A health write can advance the metadata generation mid-open; reload a few times.
         let mut stale = 0;
         loop {
