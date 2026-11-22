@@ -239,3 +239,34 @@ async fn unfinished_publication_denies_old_buffers_until_reconciled() {
     drop(publication);
     assert!(vfs.open(&node, origin()).await.unwrap().is_some());
 }
+
+#[tokio::test]
+async fn a_retry_without_the_shared_patch_reacquires_a_blocked_alias() {
+    let (vfs, items, nzb, patch) = setup().await;
+    let alias = Node::Item(items[1].clone());
+    let handle = vfs.open(&alias, origin()).await.unwrap().unwrap();
+    let publication = vfs.begin_publication(nzb, &[patch]).unwrap();
+    let mut writers = publication.writers().await;
+    for writer in &mut writers {
+        writer.block();
+    }
+    drop(writers);
+    drop(publication);
+    drop(handle);
+    assert!(vfs.open(&alias, origin()).await.is_err());
+    // The retry's patch list no longer names the article that selected the alias.
+    let publication = vfs.begin_publication(nzb, &[]).unwrap();
+    let mut writers = publication.writers().await;
+    assert!(writers.iter().any(|writer| writer.item() == items[1].id));
+    for writer in &mut writers {
+        writer
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
+    }
+    drop(writers);
+    drop(publication);
+    assert!(vfs.open(&alias, origin()).await.unwrap().is_some());
+}

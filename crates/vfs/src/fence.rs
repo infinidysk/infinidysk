@@ -222,6 +222,16 @@ impl Fences {
                 inner: Arc::clone(inner),
             })
             .collect();
+        // Retry contract: every publication reacquires items an unfinished one left
+        // blocked, so its retirement and invalidation reopen them even when its own
+        // patches no longer select them.
+        for inner in entries.blocked.values() {
+            if !fences.iter().any(|fence| Arc::ptr_eq(&fence.inner, inner)) {
+                fences.push(ReadFence {
+                    inner: Arc::clone(inner),
+                });
+            }
+        }
         fences.sort_unstable_by_key(ReadFence::item);
         entries.stamp += 1;
         entries.active = Some(Active {
@@ -353,6 +363,12 @@ impl ReadVersion {
     /// Recheck after admission and keep publication out while recording this report.
     pub async fn read(&self) -> Option<ReadLease> {
         let lease = self.fence.read().await.ok()?;
+        self.is_current().then_some(lease)
+    }
+
+    /// [`Self::read`] without waiting; `None` also while a writer holds the item.
+    pub fn try_read(&self) -> Option<ReadLease> {
+        let lease = self.fence.try_read().ok()?;
         self.is_current().then_some(lease)
     }
 
