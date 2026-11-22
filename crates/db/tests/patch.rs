@@ -1424,3 +1424,46 @@ async fn an_idempotent_publication_retry_keeps_later_defect_evidence() {
         fixture.close().await;
     }
 }
+
+#[tokio::test]
+async fn a_replay_after_an_uncertain_commit_finds_exactly_its_own_publication() {
+    for fixture in fixtures().await {
+        let source = fixture.source().await;
+        let first = patch();
+        let publish = |patches: Vec<Patch>, metadata: &'static [u8]| {
+            let (db, source) = (fixture.db.clone(), source.clone());
+            async move {
+                db.publish_repair((), &source, &patches, Some(metadata))
+                    .await
+            }
+        };
+        assert!(publish(vec![first.clone()], b"repaired").await.unwrap());
+        // The same batch again, as after a COMMIT whose result was lost.
+        assert!(
+            publish(vec![first.clone()], b"repaired").await.unwrap(),
+            "a replay of a committed publication succeeds"
+        );
+        let mut other = patch();
+        other.source.message_id = Some("other@loopback".to_owned());
+        assert!(
+            !publish(vec![other], b"repaired").await.unwrap(),
+            "another batch for the old source is stale"
+        );
+        assert!(
+            !publish(vec![first.clone()], b"other metadata")
+                .await
+                .unwrap(),
+            "other metadata for the old source is stale"
+        );
+        fixture
+            .db
+            .update_blob(fixture.meta, b"repaired")
+            .await
+            .unwrap();
+        assert!(
+            !publish(vec![first], b"repaired").await.unwrap(),
+            "a later metadata write is not this publication"
+        );
+        fixture.close().await;
+    }
+}

@@ -496,7 +496,8 @@ impl Db {
     }
 
     /// [`publish_patches`](Self::publish_patches) plus the repaired file metadata in the
-    /// same transaction, so neither becomes visible without the other.
+    /// same transaction, so neither becomes visible without the other. A retry after an
+    /// uncertain COMMIT returns true when it finds exactly this publication committed.
     pub async fn publish_repair(
         &self,
         guard: impl Send + 'static,
@@ -558,9 +559,34 @@ impl Db {
                     .bind(source.nzb.0).bind(source.metadata.map(|(id, _)| id.0))
                     .execute(&mut *tx).await?;
             }
-            if capture!(&mut *tx, source.owner) != Some(source.clone()) {
+            let current = capture!(&mut *tx, source.owner);
+            if current != Some(source.clone()) {
+                // An uncertain COMMIT of this batch advanced the metadata generation. A replay
+                // that finds exactly that publication succeeded; any other change refuses.
+                let mut replayed = false;
+                if let (Some(current), Some(data), Some((meta, then))) =
+                    (current, metadata, source.metadata)
+                    && current.metadata == then.checked_add(1).map(|next| (meta, next))
+                    && current == (Source { metadata: current.metadata, ..source.clone() })
+                {
+                    let stored: Option<Vec<u8>> =
+                        sqlx::query_scalar("SELECT data FROM blobs WHERE id = $1")
+                            .bind(meta.0).fetch_optional(&mut *tx).await?;
+                    replayed = stored.as_deref() == Some(data);
+                    for (patch, descriptor) in patches.iter().zip(&encoded) {
+                        if !replayed {
+                            break;
+                        }
+                        let row: Option<(Uuid, i64, Vec<u8>)> = sqlx::query_as(
+                            "SELECT nzb_blob, generation, descriptor FROM repair_patches WHERE id = $1",
+                        ).bind(patch.id.0).fetch_optional(&mut *tx).await?;
+                        replayed = row.is_some_and(|(nzb, generation, stored)| {
+                            nzb == source.nzb.0 && generation == source.generation && &stored == descriptor
+                        });
+                    }
+                }
                 tx.rollback().await?;
-                return Ok(false);
+                return Ok(replayed);
             }
             let mut inserted = false;
             for (patch, descriptor) in patches.iter().zip(&encoded) {
