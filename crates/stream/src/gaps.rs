@@ -29,6 +29,8 @@ struct State {
     known: BTreeSet<usize>,
     /// Holes playback found that the metadata did not record when opened.
     found: BTreeSet<usize>,
+    /// Recorded holes playback filled, counted even when a repair may still fill them.
+    filled: BTreeSet<usize>,
     /// Holes a committed repair filled for this read version; metadata still lists them.
     repaired: BTreeSet<usize>,
     /// Damage is capped as health caps a `degraded` file.
@@ -46,6 +48,10 @@ impl Gaps {
         let mut state = self.lock();
         state.expire();
         known.retain(|i| !state.repaired.contains(i));
+        let State { found, filled, .. } = &mut *state;
+        filled.extend(found.intersection(&known));
+        filled.retain(|i| known.contains(i));
+        found.retain(|i| !known.contains(i));
         state.known = known;
         state.budget = budget;
     }
@@ -74,6 +80,7 @@ impl Gaps {
         let mut state = self.lock();
         state.known.remove(&index);
         state.found.remove(&index);
+        state.filled.remove(&index);
         state.repaired.insert(index);
     }
 
@@ -114,11 +121,11 @@ impl Gaps {
             )));
         }
         if state.budget {
-            let found = &state.found;
+            let (found, filled) = (&state.found, &state.filled);
             let damaged: Vec<usize> = state
                 .known
                 .iter()
-                .filter(|&&i| found.contains(&i) || !may_repair(i))
+                .filter(|&&i| found.contains(&i) || filled.contains(&i) || !may_repair(i))
                 .chain(found)
                 .copied()
                 .collect::<BTreeSet<_>>()
@@ -162,6 +169,7 @@ impl State {
     fn expire(&mut self) {
         if self.last_event.is_some_and(|at| at.elapsed() >= EXPIRY) {
             self.found.clear();
+            self.filled.clear();
             self.in_a_row.clear();
             self.last_event = None;
         }
@@ -229,6 +237,36 @@ mod tests {
         assert!(
             gaps.filled(70, sizes, repairable).is_err(),
             "repairs that are not there count once filled"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_found_hole_metadata_records_and_then_clears_is_asked_about_again() {
+        let gaps = Gaps::default();
+        gaps.refresh(BTreeSet::new(), false);
+        assert!(gaps.filled(5, SIZES, |_| false).is_ok());
+        gaps.refresh([5].into(), false);
+        assert!(gaps.is_hole(5));
+        gaps.refresh(BTreeSet::new(), false);
+        assert!(
+            !gaps.is_hole(5),
+            "providers are asked once health clears it"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_filled_repairable_hole_stays_counted_once_metadata_records_it() {
+        let sizes = || vec![10; 100];
+        let gaps = Gaps::default();
+        gaps.refresh(BTreeSet::new(), true);
+        assert!(gaps.filled(50, sizes, |_| true).is_ok());
+        gaps.good();
+        gaps.refresh([50, 70].into(), true);
+        assert!(gaps.filled(5, sizes, |_| true).is_ok());
+        gaps.good();
+        assert!(
+            gaps.filled(70, sizes, |_| true).is_err(),
+            "the hole filled before the refresh still counts"
         );
     }
 
