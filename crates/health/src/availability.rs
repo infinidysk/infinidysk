@@ -235,7 +235,8 @@ impl Health {
                                 evidence.filter(|_| !segment.id.is_empty()).map(|evidence| {
                                     evidence.slot(Key {
                                         epoch,
-                                        source,
+                                        // Repair patches are stored per generation, so receipts are too.
+                                        source: generation,
                                         id: segment.id.clone(),
                                         begin: placed.then_some(begin).flatten(),
                                         size: placed.then_some(segment.size),
