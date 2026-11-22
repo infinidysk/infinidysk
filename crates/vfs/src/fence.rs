@@ -476,10 +476,18 @@ impl Inner {
             return;
         }
         scopes.push(scope);
-        // An expired layout stays only as the last record of its NZB.
-        let mut kept: Vec<_> = scopes.iter().filter(|s| s.live()).map(|s| s.nzb).collect();
+        // An expired layout stays only as the last record of its NZB. One liveness
+        // snapshot serves both passes: metadata can drop between two reads.
+        let live: Vec<bool> = scopes.iter().map(Scope::live).collect();
+        let mut kept: Vec<_> = scopes
+            .iter()
+            .zip(&live)
+            .filter(|(_, live)| **live)
+            .map(|(s, _)| s.nzb)
+            .collect();
+        let mut live = live.into_iter();
         scopes.retain(|s| {
-            s.live()
+            live.next().unwrap_or(false)
                 || (!kept.contains(&s.nzb) && {
                     kept.push(s.nzb);
                     true
