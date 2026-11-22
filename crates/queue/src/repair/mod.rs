@@ -69,6 +69,8 @@ async fn read_parity(
     }
     order.sort_by_key(|(file, name)| (volume_stem(name).is_some(), file.segments.len()));
     let mut indexes = HashSet::new();
+    // Recovery rows counted so far: the next packet to inspect and the distinct exponents.
+    let (mut counted, mut exponents) = (0, HashSet::new());
     for (file, name) in order {
         if recovery.is_none() && volume_stem(&name).is_some_and(|stem| indexes.contains(stem)) {
             continue;
@@ -109,7 +111,8 @@ async fn read_parity(
                     return Err(Error::Limit("PAR2 metadata"));
                 }
                 if let Some((set, size, count)) = recovery {
-                    if reader.recovery_slices(set, size)?.len() >= count + 2 {
+                    counted = reader.recovery_exponents(set, size, counted, &mut exponents)?;
+                    if exponents.len() >= count + 2 {
                         return Ok(reader);
                     }
                 } else if reader.reached_recovery()

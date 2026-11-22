@@ -336,6 +336,19 @@ impl Reader {
     pub fn recovery_slices(&self, set: Id, slice_size: usize) -> Result<Vec<Recovery<'_>>, Error> {
         plan::recovery(self, set, slice_size)
     }
+
+    /// Adds the distinct recovery exponents of `set` in packets found since packet
+    /// `from` to `exponents`, so a growing read is counted without rescanning; returns
+    /// the `from` of the next call.
+    pub fn recovery_exponents(
+        &self,
+        set: Id,
+        slice_size: usize,
+        from: usize,
+        exponents: &mut std::collections::HashSet<u32>,
+    ) -> Result<usize, Error> {
+        plan::recovery_exponents(self, set, slice_size, from, exponents)
+    }
 }
 
 fn build(index: &mut Index, packets: &[Packet]) {
