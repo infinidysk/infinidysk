@@ -730,10 +730,15 @@ async fn prefix_matches_with_different_proofs_attach_none() {
     check_par2_names(8).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn prefix_matches_with_different_names_keep_the_first_name_without_a_proof() {
+    check_par2_names(9).await;
+}
+
 /// `ambiguity`: 0 one index, 1 a second set, 2 a conflicting copy, 3 a copy without
 /// IFSC packets, 4 and 5 a copy without the Main packet listed after or before, 6 a copy
 /// with an extra `UniFileN` packet, 7 a second set only in a recovery volume, 8 a second
-/// set describing a different full-file hash.
+/// set describing a different full-file hash, 9 a second set naming the file differently.
 async fn check_par2_names(ambiguity: u8) {
     let data: Vec<u8> = (0..100_000usize)
         .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
@@ -792,17 +797,24 @@ async fn check_par2_names(ambiguity: u8) {
         .unwrap();
         let packet = &mut other[at..at + len];
         assert!(len <= 16_384);
-        if matches!(ambiguity, 1 | 7 | 8) {
+        if matches!(ambiguity, 1 | 7 | 8 | 9) {
             packet[32..48].fill(9);
         }
         if matches!(ambiguity, 2 | 8) && &packet[48..64] == b"PAR 2.0\0FileDesc" {
             packet[80] ^= 1;
+        }
+        if ambiguity == 9
+            && &packet[48..64] == b"PAR 2.0\0FileDesc"
+            && &packet[120..125] == b"a.bin"
+        {
+            packet[122..125].copy_from_slice(b"mkv");
         }
         let hash = infinidysk_par2::hash_16k(&packet[32..]);
         packet[16..32].copy_from_slice(&hash);
         at += len;
     }
     let q = post("q", "y.par2", &other, 32 << 10);
+    assert!(ambiguity != 9 || other.windows(5).any(|w| w == b"a.mkv"));
     if ambiguity == 5 {
         entries.insert(1, ("\"y.par2\"", &q, other.len(), 32 << 10));
     } else if ambiguity == 7 {
@@ -824,7 +836,7 @@ async fn check_par2_names(ambiguity: u8) {
     let Some(FileMeta::Nzb(f)) = meta(&db, "/content/tv/job/a.bin").await else {
         panic!("deobfuscated file imported")
     };
-    if ambiguity == 8 {
+    if matches!(ambiguity, 8 | 9) {
         assert!(f.proof.is_none(), "disagreeing candidates attach no proof");
         return;
     }

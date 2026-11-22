@@ -527,11 +527,8 @@ async fn plan(
                 });
                 let first = matches.next()?;
                 let others: Vec<_> = matches.collect();
-                // Candidates that disagree on the name keep the posted one.
-                if others.iter().any(|other| other.2.name != first.2.name) {
-                    return None;
-                }
-                // A proof binds only when every candidate carries the same one, and
+                // Disagreeing candidates still name the file. A proof binds only when every
+                // candidate carries the same one, and
                 // prefix matching cannot choose between recovery sets.
                 let agreed = others
                     .iter()

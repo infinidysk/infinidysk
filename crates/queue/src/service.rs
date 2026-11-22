@@ -816,7 +816,8 @@ impl Queue {
 
     async fn attempt(&self, job: &QueueEntry, progress: &Arc<Progress>) -> Result<Outcome, Error> {
         let repair_owner = infinidysk_db::repair::Owner::Queue(job.id);
-        let prior_success = if self.par2.load(Ordering::Acquire) {
+        let par2 = self.par2.load(Ordering::Acquire);
+        let prior_success = if par2 {
             match self.db.par2_result(repair_owner, false).await? {
                 Some(job) if job.pending() => {
                     return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
@@ -827,9 +828,18 @@ impl Queue {
         } else {
             None
         };
-        let Some((source, raw)) = self.db.queued_repair_nzb(job.id, job.nzb_blob).await? else {
+        // Without PAR2 no repair can replace the NZB or serve omitted articles.
+        let loaded = if par2 {
+            self.db
+                .queued_repair_nzb(job.id, job.nzb_blob)
+                .await?
+                .map(|(source, raw)| (Some(source), raw))
+        } else {
+            self.db.blob(job.nzb_blob).await?.map(|raw| (None, raw))
+        };
+        let Some((source, raw)) = loaded else {
             // The row may still be queued under a replacement NZB; only a missing one fails.
-            if self.db.repair_source(repair_owner).await?.is_some() {
+            if par2 && self.db.repair_source(repair_owner).await?.is_some() {
                 return Ok(Outcome::Retry(
                     "The stored NZB changed before the import.".to_owned(),
                 ));
@@ -865,13 +875,18 @@ impl Queue {
                     password,
                     Arc::clone(progress),
                     self.verifier.get().map(|v| &**v as &dyn Verifier),
-                    inner.is_none().then_some((source.nzb(), source.generation())),
+                    source
+                        .as_ref()
+                        .filter(|_| inner.is_none())
+                        .map(|source| (source.nzb(), source.generation())),
                 ) => imported,
                 () = self.stalled(progress) => return Ok(Outcome::Stuck),
             };
             let raw = match imported {
                 Ok(Imported::Files { outputs, checks }) => {
-                    if self.db.repair_source(repair_owner).await?.as_ref() != Some(&source) {
+                    if let Some(source) = &source
+                        && self.db.repair_source(repair_owner).await?.as_ref() != Some(source)
+                    {
                         return Ok(Outcome::Retry(
                             "The stored NZB changed during the import.".to_owned(),
                         ));
@@ -890,7 +905,7 @@ impl Queue {
                     | import::Error::Password(reason)
                     | import::Error::Unsupported(reason),
                 ) => return Ok(Outcome::Failed(reason)),
-                Err(error) if self.par2.load(Ordering::Acquire) => {
+                Err(error) if let Some(source) = &source => {
                     let mut failed = job.clone();
                     if let Some(inner) = inner {
                         let nzb_size = inner.xml.len() as u64;
@@ -899,7 +914,7 @@ impl Queue {
                         let Some(promoted) = self
                             .db
                             .replace_queued_repair_nzb(
-                                &source,
+                                source,
                                 &encoded,
                                 nzb_size,
                                 inner.total_bytes,
@@ -916,7 +931,7 @@ impl Queue {
                         failed.nzb_size = nzb_size;
                         failed.total_bytes = inner.total_bytes;
                         failed.file_name = file_name;
-                    } else if self.db.repair_source(repair_owner).await?.as_ref() != Some(&source) {
+                    } else if self.db.repair_source(repair_owner).await?.as_ref() != Some(source) {
                         return Ok(Outcome::Retry(
                             "The stored NZB changed during the import.".to_owned(),
                         ));
