@@ -193,10 +193,11 @@ impl Health {
                         part.segments.items.iter().scan(part.offset, |at, segment| {
                             let start = *at;
                             *at = start.saturating_add(u64::from(segment.size));
+                            // Untrusted sizes cannot place a segment, so it may overlap.
                             Some(
                                 !part.data.is_empty()
-                                    && start < part.data.end
-                                    && *at > part.data.start,
+                                    && (!part.segments.sizes_trusted
+                                        || (start < part.data.end && *at > part.data.start)),
                             )
                         })
                     });
