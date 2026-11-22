@@ -864,7 +864,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
             attempts: 0,
             stuck_count: 0,
             last_error: None,
-            content_hash: None,
+            content_hash: Some("wrapper".into()),
         };
         fixture.db.enqueue(&job, b"nzb").await.unwrap();
         let source = fixture
@@ -948,6 +948,11 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert_eq!(current.file_name, "inner.nzb");
         assert_eq!(current.total_bytes, 200);
         assert_eq!(current.nzb_size, 9);
+        assert_eq!(
+            fixture.db.job_with_content("wrapper").await.unwrap(),
+            Some(job.id),
+            "a resubmitted wrapper must still find the promoted job"
+        );
         let (inner, bytes) = fixture
             .db
             .queued_repair_nzb(job.id, current.nzb_blob)

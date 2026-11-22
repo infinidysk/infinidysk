@@ -138,7 +138,8 @@ pub(super) fn decode(row: &Row) -> Result<Patch, Error> {
 
 impl Db {
     /// Keep a damaged inner NZB as the queued repair source before parking its import.
-    /// Returns the new NZB blob, or `None` when the source changed.
+    /// Returns the new NZB blob, or `None` when the source changed. The job keeps the
+    /// submitted NZB's content hash, so resubmitting that NZB still finds this job.
     pub async fn replace_queued_repair_nzb(
         &self,
         source: &Source,
@@ -164,7 +165,7 @@ impl Db {
             }
             sqlx::query("INSERT INTO blobs (id, data) VALUES ($1, $2)")
                 .bind(replacement.0).bind(encoded).execute(&mut *tx).await?;
-            sqlx::query("UPDATE queue SET nzb_blob = $2, total_bytes = $3, file_name = $4, nzb_size = $5, content_hash = NULL WHERE id = $1")
+            sqlx::query("UPDATE queue SET nzb_blob = $2, total_bytes = $3, file_name = $4, nzb_size = $5 WHERE id = $1")
                 .bind(job.0).bind(replacement.0).bind(total).bind(file_name).bind(size).execute(&mut *tx).await?;
             crate::release_nzb!(self, tx, source.nzb.0);
             tx.commit().await?;
