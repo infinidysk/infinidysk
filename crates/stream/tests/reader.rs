@@ -1179,3 +1179,43 @@ fn setup_timed(
     }));
     (Arc::new(client), Arc::new(layout))
 }
+
+#[tokio::test]
+async fn a_damaged_local_repair_falls_back_to_providers_and_reports_only_when_they_miss() {
+    let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
+    for provider_has_it in [true, false] {
+        let served = corpus
+            .articles
+            .iter()
+            .enumerate()
+            .filter_map(|(i, a)| (provider_has_it || i != MISSING).then_some(a.clone()));
+        let server = LoopbackServer::start(served).await.unwrap();
+        let (client, layout) = setup(&corpus, &server);
+        let damaged = corpus.articles[MISSING].message_id.clone();
+        client.set_repairs(Box::new(move |id| {
+            if !matches!(id, infinidysk_nntp::RepairKey::Article(id) if id == damaged) {
+                return None;
+            }
+            Some(Box::pin(async {
+                Err(infinidysk_nntp::Error::Repair(
+                    "stored article is missing or corrupt",
+                ))
+            }))
+        }));
+        let mut reader = SegmentReader::new(client, layout, 3);
+        let mut bytes = Vec::new();
+        let result = reader.read_to_end(&mut bytes).await;
+        if provider_has_it {
+            result.unwrap();
+            assert_eq!(bytes, corpus.data, "the provider's copy serves the article");
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("stored article is missing or corrupt"),
+                "the local error is reported when no provider has the article: {error}"
+            );
+        }
+    }
+}

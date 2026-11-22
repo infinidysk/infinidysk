@@ -1215,8 +1215,13 @@ async fn fetch(
     let repaired = match &hole.omitted {
         Some(key) => client.repaired_omitted(key).await,
         None => client.repaired(id, begin).await,
-    }
-    .map_err(|error| io::Error::other(Arc::new(error)))?;
+    };
+    // A damaged local repair must not hide a provider's copy. Its error is reported only
+    // when no provider has the article, and it skips the gap filler: a repair existed.
+    let (repaired, local) = match repaired {
+        Ok(repaired) => (repaired, None),
+        Err(error) => (None, Some(io::Error::other(Arc::new(error)))),
+    };
     if let Some(body) = repaired {
         if body.data.len() != size {
             return Err(io::Error::new(
@@ -1229,7 +1234,7 @@ async fn fetch(
         }
         return Ok((body.data, false));
     }
-    if !strict && hole.gaps.as_ref().is_some_and(|g| g.is_hole(hole.index)) {
+    if local.is_none() && !strict && hole.gaps.as_ref().is_some_and(|g| g.is_hole(hole.index)) {
         return Ok((hole.filler.fill(hole.at, size).into(), true));
     }
     let workload = if strict {
@@ -1259,6 +1264,11 @@ async fn fetch(
                 .map_err(Arc::new),
         }
     };
+    if let Some(local) = local
+        && body.is_err()
+    {
+        return Err(local);
+    }
     match body {
         Ok(data) if data.len() == size => Ok((data, false)),
         Ok(_) if strict => Err(io::Error::new(
