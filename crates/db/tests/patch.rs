@@ -1374,3 +1374,48 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
         fixture.close().await;
     }
 }
+
+#[tokio::test]
+async fn an_idempotent_publication_retry_keeps_later_defect_evidence() {
+    for fixture in fixtures().await {
+        let defect = infinidysk_db::Defect {
+            offset: 8,
+            size: 4,
+            seen_at: 50,
+            source: 1,
+        };
+        let id = fixture.file.id;
+        let patch = patch();
+        fixture
+            .db
+            .set_structural(id, Some(&defect), true)
+            .await
+            .unwrap();
+        assert!(
+            fixture
+                .db
+                .publish_patches((), &fixture.source().await, slice::from_ref(&patch))
+                .await
+                .unwrap()
+        );
+        assert_eq!(fixture.db.media_probe(id).await.unwrap().defect, None);
+        // Seen after the first publication; replaying the same patch adds no bytes.
+        fixture
+            .db
+            .set_structural(id, Some(&defect), true)
+            .await
+            .unwrap();
+        assert!(
+            fixture
+                .db
+                .publish_patches((), &fixture.source().await, slice::from_ref(&patch))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            fixture.db.media_probe(id).await.unwrap().defect,
+            Some(defect)
+        );
+        fixture.close().await;
+    }
+}

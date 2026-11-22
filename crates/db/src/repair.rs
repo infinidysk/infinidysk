@@ -531,6 +531,7 @@ impl Db {
                 tx.rollback().await?;
                 return Ok(false);
             }
+            let mut inserted = false;
             for (patch, descriptor) in patches.iter().zip(&encoded) {
                 let s = &patch.source;
                 let start = i64::try_from(s.range.start).expect("validated SQL offset");
@@ -559,8 +560,12 @@ impl Db {
                 ).bind(patch.id.0).bind(source.nzb.0).bind(source.generation)
                     .bind(s.set.as_slice()).bind(s.file.as_slice()).bind(start).bind(end)
                     .bind(&s.message_id).bind(descriptor).execute(&mut *tx).await?;
+                inserted = true;
             }
-            sqlx::query(FORGET_DEFECTS).bind(source.nzb.0).execute(&mut *tx).await?;
+            // An idempotent retry adds no bytes, so later defect evidence still stands.
+            if inserted {
+                sqlx::query(FORGET_DEFECTS).bind(source.nzb.0).execute(&mut *tx).await?;
+            }
             // Enabled before visibility so a concurrent read cannot skip a committed row.
             self.repair_present.store(true, Ordering::Release);
             // Released health observations must retry even after an uncertain COMMIT.
