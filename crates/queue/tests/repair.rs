@@ -337,6 +337,41 @@ async fn reconstruction_replaces_crc_valid_corruption_beside_a_missing_article()
 }
 
 #[tokio::test]
+async fn repair_refuses_more_than_eight_missing_slices() {
+    // One 4096-byte article per slice; nine of them are gone.
+    let a = post("many-a", "a.bin", &data(100_000), 4096);
+    let b = post("many-b", "b.bin", &data(8192), 3000);
+    let nzb = Arc::new(document(&[("one", &a), ("two", &b)]));
+    let server = LoopbackServer::start(
+        a.into_iter()
+            .enumerate()
+            .filter_map(|(i, article)| (i % 2 == 1 || i >= 18).then_some(article))
+            .chain(b),
+    )
+    .await
+    .unwrap();
+    let result = infinidysk_queue::repair::execute(
+        &client(&server),
+        nzb,
+        Arc::new(metadata()),
+        infinidysk_par2::read(INDEX).set_id.unwrap(),
+        Limits {
+            requests: 1000,
+            ..limits()
+        },
+        false,
+        infinidysk_queue::repair::Context::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .err();
+    assert!(
+        matches!(result, Some(Error::Limit("8 missing slice"))),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
 async fn discovery_uses_the_index_before_downloading_recovery_volumes() {
     let index = post("index", "set.par2", INDEX, 7000);
     let volume = post(

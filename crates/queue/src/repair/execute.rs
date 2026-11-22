@@ -18,6 +18,11 @@ use crate::nzb;
 
 static WORKER: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(1)));
 
+/// Health policy §7.2: repair at most this many missing slices.
+const MAX_MISSING_SLICES: usize = 8;
+/// Health policy §7.2: repair releases whose protected files total at most 16 GB.
+const MAX_RELEASE_BYTES: u64 = 16_000_000_000;
+
 pub struct Execution {
     pub patches: Vec<(Patch, Vec<u8>)>,
     pub verified_bytes: u64,
@@ -80,6 +85,16 @@ async fn run(
     } else {
         reader.repair_set(id)?
     };
+    if !verify_only
+        && set
+            .sources()
+            .iter()
+            .map(|source| source.file.length)
+            .sum::<u64>()
+            > MAX_RELEASE_BYTES
+    {
+        return Err(Error::Limit("16 GB release size"));
+    }
     let (layouts, mut budget) = resolve_budget(client, nzb, &set, limits, context, cancel).await?;
     budget.cancel = cancel.clone();
     if layouts.iter().all(|layout| layout.verified) && budget.legacy_ids.is_empty() {
@@ -178,6 +193,9 @@ async fn run(
                 continue;
             }
             missing.push(index);
+            if !verify_only && missing.len() > MAX_MISSING_SLICES {
+                return Err(Error::Limit("8 missing slice"));
+            }
             let (source, _) = set
                 .source(index)
                 .ok_or(Error::Unavailable("source slice"))?;
