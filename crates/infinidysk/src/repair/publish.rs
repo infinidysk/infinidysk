@@ -1,7 +1,6 @@
 //! The commit boundary owns background admission, reader fences and finalization.
 
 use std::sync::Arc;
-#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -115,19 +114,44 @@ impl Publisher {
         })
         .await
         .context("repair file verification stopped")??;
-        // The last point that may refuse. From here on the caller observes the result.
         anyhow::ensure!(!stopped.is_cancelled(), "repair stopped before publication");
 
-        // Drain old health/import observations before taking any item writers.
-        let paused = self.repairs.db.pause_writes().await;
-        let publication = self.vfs.begin_publication(source.nzb(), &patches)?;
-        let mut writers = publication.writers().await;
+        let refused = || anyhow::anyhow!("repair stopped before publication");
+        let (paused, publication) = loop {
+            // Drain old health/import observations before taking any item writers.
+            let paused = tokio::select! {
+                paused = self.repairs.db.pause_writes() => paused,
+                () = stopped.cancelled() => return Err(refused()),
+            };
+            match self.vfs.begin_publication(source.nzb(), &patches) {
+                Ok(publication) => break (paused, publication),
+                // An earlier publication still waiting for FUSE invalidation holds the slot.
+                // Wait without the write pause; this repair has not failed.
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    drop(paused);
+                    tokio::select! {
+                        () = stopped.cancelled() => return Err(refused()),
+                        () = tokio::time::sleep(Duration::from_millis(250)) => {}
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        let mut writers = tokio::select! {
+            writers = publication.writers() => writers,
+            () = stopped.cancelled() => return Err(refused()),
+        };
         #[cfg(target_os = "linux")]
         if let Some(mount) = &self.mount {
             let mut native = mount.prepare(&mut writers)?;
             if let Err(error) = native.block().await {
                 native.abort();
                 return Err(error).context("repair publication could not close delivery");
+            }
+            // The last point that may refuse. From here on the caller observes the result.
+            if stopped.is_cancelled() {
+                native.abort();
+                return Err(refused());
             }
             let committed = self
                 .commit(receipts, &source, &patches, metadata.as_deref())
@@ -160,6 +184,8 @@ impl Publisher {
             // `None`: the result was already reported above.
             return committed.unwrap_or(Ok(true));
         }
+        // The last point that may refuse. From here on the caller observes the result.
+        anyhow::ensure!(!stopped.is_cancelled(), "repair stopped before publication");
         let armed = WriteLease::arm(&mut writers);
         let committed = self
             .commit(receipts, &source, &patches, metadata.as_deref())
