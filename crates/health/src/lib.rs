@@ -616,11 +616,15 @@ impl Health {
                 .into());
             }
         }
-        if changed {
+        // The check's own hole write is part of its observation; any other write is not.
+        let observed = if changed {
             self.db
                 .update_blob(blob_id, &blob::encode_meta(&meta)?)
                 .await?;
-        }
+            observed + 1
+        } else {
+            observed
+        };
         let probe = self.db.media_probe(item.id).await?;
         let mut pending = Recheck::None;
         let now = now_ms();
@@ -693,7 +697,6 @@ impl Health {
                 }
             }
             Outcome::Healthy | Outcome::Degraded(_) => {
-                let observed = self.db.blob_epoch();
                 let found = self
                     .released(writing, structure::walk(&client, &meta, &item.name, head))
                     .await;
