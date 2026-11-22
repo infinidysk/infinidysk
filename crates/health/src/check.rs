@@ -347,20 +347,21 @@ fn mp4_index(head: &[u8], len: u64) -> Option<(u64, u64)> {
     let mut pos = 0u64;
     loop {
         let at = usize::try_from(pos).ok()?;
-        let header = head.get(at..at + 8)?;
+        let header = head.get(at..at.checked_add(8)?)?;
         let kind = &header[4..8];
         let size = match u32::from_be_bytes(header[..4].try_into().ok()?) {
             0 => len.checked_sub(pos)?,
-            1 => u64::from_be_bytes(head.get(at + 8..at + 16)?.try_into().ok()?),
+            1 => u64::from_be_bytes(head.get(at + 8..at.checked_add(16)?)?.try_into().ok()?),
             s => u64::from(s),
         };
         if size < 8 {
             return None;
         }
+        let end = pos.checked_add(size)?;
         match kind {
-            b"moov" => return Some((pos, pos + size)),
-            b"mdat" => return Some(((pos + size).min(len), len)),
-            _ => pos += size,
+            b"moov" => return Some((pos, end)),
+            b"mdat" => return Some((end.min(len), len)),
+            _ => pos = end,
         }
     }
 }
@@ -431,6 +432,15 @@ mod tests {
             classify(&f, "a.mp4", true, &[3], None).is_err(),
             "layout unknown"
         );
+    }
+
+    #[test]
+    fn an_mp4_box_ending_past_the_offset_range_is_no_index() {
+        let mut head = vec![0, 0, 0, 16, b'f', b't', b'y', b'p'];
+        head.resize(16, 0);
+        head.extend_from_slice(&[0, 0, 0, 1, b'm', b'o', b'o', b'v']);
+        head.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert_eq!(mp4_index(&head, 1000), None);
     }
 
     #[test]
