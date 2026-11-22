@@ -20,7 +20,8 @@ static WORKER: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::n
 
 /// Health policy §7.2: repair at most this many missing slices.
 const MAX_MISSING_SLICES: usize = 8;
-/// Health policy §7.2: repair releases whose protected files total at most 16 GB.
+/// Health policy §7.2: repair releases of at most 16 GB, counted as the NZB's article
+/// bytes as SABnzbd sizes a job.
 const MAX_RELEASE_BYTES: u64 = 16_000_000_000;
 
 pub struct Execution {
@@ -46,6 +47,18 @@ pub async fn execute(
 ) -> Result<Execution, Error> {
     let cancel = cancel.child_token();
     let _stop = cancel.clone().drop_guard();
+    if !verify_only
+        && nzb
+            .files
+            .iter()
+            .flat_map(|file| &file.segments)
+            .try_fold(0_u64, |total, segment| {
+                total.checked_add(segment.bytes.into())
+            })
+            .is_none_or(|total| total > MAX_RELEASE_BYTES)
+    {
+        return Err(Error::Limit("16 GB release size"));
+    }
     let permit = tokio::select! {
         biased;
         () = cancel.cancelled() => return Err(Error::Cancelled),
@@ -85,16 +98,6 @@ async fn run(
     } else {
         reader.repair_set(id)?
     };
-    if !verify_only
-        && set
-            .sources()
-            .iter()
-            .map(|source| source.file.length)
-            .sum::<u64>()
-            > MAX_RELEASE_BYTES
-    {
-        return Err(Error::Limit("16 GB release size"));
-    }
     let (layouts, mut budget) = resolve_budget(client, nzb, &set, limits, context, cancel).await?;
     budget.cancel = cancel.clone();
     if layouts.iter().all(|layout| layout.verified) && budget.legacy_ids.is_empty() {

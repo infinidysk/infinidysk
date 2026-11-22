@@ -372,6 +372,42 @@ async fn repair_refuses_more_than_eight_missing_slices() {
 }
 
 #[tokio::test]
+async fn repair_refuses_a_release_over_16_gb_across_recovery_sets() {
+    let a = post("large-a", "a.bin", &data(100_000), 1024);
+    let b = post("large-b", "b.bin", &data(8192), 3000);
+    let mut nzb = document(&[("one", &a), ("two", &b)]);
+    // Two 9 GB files of other sets, unrelated to the set being repaired.
+    let others = ["other-a", "other-b"].map(|name| {
+        let mut other = nzb.files[1].clone();
+        other.segments = (1..=3)
+            .map(|number| nzb::Segment {
+                id: format!("{name}-{number}@test"),
+                bytes: 3_000_000_000,
+                number,
+            })
+            .collect();
+        other
+    });
+    nzb.files.extend(others);
+    let result = infinidysk_queue::repair::execute(
+        &client(&LoopbackServer::start(a.into_iter().chain(b)).await.unwrap()),
+        Arc::new(nzb),
+        Arc::new(metadata()),
+        infinidysk_par2::read(INDEX).set_id.unwrap(),
+        limits(),
+        false,
+        infinidysk_queue::repair::Context::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .err();
+    assert!(
+        matches!(result, Some(Error::Limit("16 GB release size"))),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
 async fn discovery_uses_the_index_before_downloading_recovery_volumes() {
     let index = post("index", "set.par2", INDEX, 7000);
     let volume = post(
