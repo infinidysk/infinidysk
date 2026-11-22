@@ -526,11 +526,23 @@ async fn plan(
                     f.hash_16k == hash && f.length <= bytes && f.length * 100 >= bytes * 95
                 });
                 let first = matches.next()?;
-                // Prefix matching may name a file, but cannot choose between recovery sets.
-                let set = first.0.filter(|_| matches.all(|other| other == first));
-                Some((set, first.1, &first.2))
+                let others: Vec<_> = matches.collect();
+                // Candidates that disagree on the name keep the posted one.
+                if others.iter().any(|other| other.2.name != first.2.name) {
+                    return None;
+                }
+                // A proof binds only when every candidate carries the same one, and
+                // prefix matching cannot choose between recovery sets.
+                let agreed = others
+                    .iter()
+                    .all(|other| (other.1, &other.2) == (first.1, &first.2));
+                let set = first
+                    .0
+                    .filter(|_| others.iter().all(|other| *other == first));
+                Some((set, first.1, &first.2, agreed))
             });
-            let name = matched.map_or_else(|| file.name().to_owned(), |(_, _, f)| f.name.clone());
+            let name =
+                matched.map_or_else(|| file.name().to_owned(), |(_, _, f, _)| f.name.clone());
             let kind = match (names::classify(&name), first.as_ref()) {
                 (Kind::Par2, _) => Kind::Par2,
                 (kind, None) => kind,
@@ -554,7 +566,9 @@ async fn plan(
                 kind,
                 ids: file.segments.iter().map(|s| s.id.clone()).collect(),
                 first,
-                proof: matched.and_then(|(set_id, slice_size, f)| proof(set_id, slice_size, f)),
+                proof: matched.and_then(|(set_id, slice_size, f, agreed)| {
+                    agreed.then(|| proof(set_id, slice_size, f)).flatten()
+                }),
             }
         })
         .collect();
@@ -951,10 +965,12 @@ async fn read_par2(
     let mut files: Vec<(Option<infinidysk_par2::Id>, u64, infinidysk_par2::File)> = Vec::new();
     let mut seen: HashMap<_, usize> = HashMap::new();
     let (mut articles, mut bytes) = (0, 0);
+    let mut skipped = Vec::new();
     for i in candidates {
         let vol = nzb.files[i].name().to_ascii_lowercase().contains(".vol");
         if vol && !files.is_empty() {
-            break;
+            skipped.push(i);
+            continue;
         }
         let mut reader = infinidysk_par2::Reader::default();
         let limit = PAR2_MAX_BYTES.min(PAR2_TOTAL_BYTES - bytes);
@@ -1009,6 +1025,20 @@ async fn read_par2(
                 seen.insert(key, files.len());
                 files.push((index.set_id, index.slice_size, f));
             }
+        }
+    }
+    // A skipped recovery volume of a set no index described may describe a matching
+    // file too; its already buffered header shows the set without a download.
+    let known: Vec<_> = files.iter().filter_map(|f| f.0).collect();
+    let unread = skipped.iter().any(|&i| {
+        firsts[i]
+            .as_ref()
+            .and_then(|b| b.data.get(32..48))
+            .is_some_and(|set| !known.iter().any(|known| known[..] == *set))
+    });
+    if unread {
+        for file in &mut files {
+            file.0 = None;
         }
     }
     Ok(files)
