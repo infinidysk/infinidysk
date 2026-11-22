@@ -472,9 +472,20 @@ pub async fn serve(
                     next = fault_rx.try_recv().ok();
                 }
                 for (id, (version, missing, corrupt)) in files {
-                    // Publication pauses background work before taking item writers.
-                    let _writing = db.write_permit().await;
-                    let Some(_lease) = version.read().await else {
+                    // Publication pauses background work before taking item writers, so
+                    // the lease is awaited without the permit and taken under it without
+                    // waiting; a waiting pause never sits behind an item writer.
+                    let admitted = loop {
+                        let Some(waited) = version.read().await else {
+                            break None;
+                        };
+                        drop(waited);
+                        let writing = db.write_permit().await;
+                        if let Some(lease) = version.try_read() {
+                            break Some((writing, lease));
+                        }
+                    };
+                    let Some(_admitted) = admitted else {
                         continue;
                     };
                     if let Err(error) = health.report(id, &missing, &corrupt).await {
