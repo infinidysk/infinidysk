@@ -584,6 +584,22 @@ async fn bounded_execution_verifies_whole_sources_before_returning_replacement_a
     let mut covered = Vec::new();
     infinidysk_queue::repair::refresh_metadata(&mut target, &result.sources, &mut covered);
     assert_eq!(covered, [true]);
+    // A source from another PAR2 set must not replace the stored set identity.
+    let mut other_set = target.clone();
+    if let infinidysk_core::FileMeta::Nzb(file) = &mut other_set {
+        let proof = file.proof.as_mut().unwrap();
+        proof.set_id = Some([0xee; 16]);
+        file.segments.sizes_trusted = false;
+    }
+    let before = other_set.clone();
+    covered.clear();
+    assert!(!infinidysk_queue::repair::refresh_metadata(
+        &mut other_set,
+        &result.sources,
+        &mut covered
+    ));
+    assert_eq!(covered, [false]);
+    assert_eq!(other_set, before);
     if let infinidysk_core::FileMeta::Nzb(file) = &mut target {
         file.segments.items[0].id = "unrelated@loopback".to_owned();
     }

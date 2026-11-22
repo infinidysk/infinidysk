@@ -225,7 +225,10 @@ fn refresh(
             (items.iter().any(|s| !s.id.is_empty())
                 && items.iter().zip(&segments.items).all(|(a, b)| a.id == b.id)
                 && proof.as_ref().is_none_or(|p| {
-                    p.file_id == source.proof.file_id && p.file_length == source.proof.file_length
+                    p.file_id == source.proof.file_id
+                        && p.file_length == source.proof.file_length
+                        // Committed omitted patches are keyed to the stored set.
+                        && p.set_id.is_none_or(|set| source.proof.set_id == Some(set))
                 }))
             .then_some((source, items))
         })
