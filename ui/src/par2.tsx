@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { api, body, type Schemas } from "./api/client";
@@ -130,14 +131,35 @@ export function Par2Actions({ id, hasNzb }: { id: string; hasNzb: boolean }) {
   );
 }
 
+const describe = (job: Schemas["Par2Job"]) =>
+  `${job.verify_only ? "Availability" : "PAR2 repair"} for ${job.file_path ?? job.id}: ${job.state}` +
+  (job.reason ? ` — ${job.reason}` : "");
+
+/** The latest change of a listed job's state or reason, for a polite live region. */
+function useJobAnnouncement(jobs?: Schemas["Par2Job"][]) {
+  const [seen, setSeen] = useState(jobs);
+  const [announcement, setAnnouncement] = useState("");
+  if (jobs !== seen) {
+    setSeen(jobs);
+    const before = new Map(seen?.map((job) => [job.id, describe(job)]));
+    const changed = jobs?.find((job) => before.has(job.id) && before.get(job.id) !== describe(job));
+    if (changed) setAnnouncement(describe(changed));
+  }
+  return announcement;
+}
+
 export function Par2Jobs() {
   const client = useQueryClient();
   const query = useQuery({
     queryKey: ["par2-jobs"],
     queryFn: () => body(api.GET("/api/v1/health/par2")),
-    // Poll only while there is work to watch.
-    refetchInterval: (q) => (q.state.data?.enabled && q.state.data.pending_jobs > 0 ? 5000 : false),
+    // Poll only while there is work to watch. The count and the list are separate reads.
+    refetchInterval: (q) =>
+      q.state.data?.enabled && (q.state.data.pending_jobs > 0 || q.state.data.jobs.some(pending))
+        ? 5000
+        : false,
   });
+  const announcement = useJobAnnouncement(query.data?.jobs);
   const cancelJob = useMutation({
     mutationFn: (id: string) =>
       body(
@@ -175,6 +197,10 @@ export function Par2Jobs() {
       <p role="status" className="text-muted-foreground text-sm">
         {pending_jobs.toLocaleString()} pending jobs · {bytes(storage_used_bytes)} of saved repairs
       </p>
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
+
       {jobs.length > 0 && (
         <div className="divide-y rounded-lg border" aria-label="Pending work and recent results">
           <p className="px-3 py-2 text-sm font-medium">Pending work and latest 20 results</p>

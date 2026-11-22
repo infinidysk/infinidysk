@@ -15,9 +15,9 @@ const browserTimer: Timer = {
   clearTimeout: (id) => window.clearTimeout(id),
 };
 
-type Target = "queue" | "history" | "health" | "summary" | "other";
+type Target = "queue" | "history" | "health" | "summary" | "par2" | "other";
 
-const lists = new Set(["queue", "history", "health"]);
+const lists = new Set(["queue", "history", "health", "par2", "par2-jobs"]);
 
 const targets: Record<Target, InvalidateQueryFilters> = {
   queue: { queryKey: ["queue"] },
@@ -25,6 +25,8 @@ const targets: Record<Target, InvalidateQueryFilters> = {
   // The summary is its own target: it is the slow query, and both history and health changes move it.
   health: { queryKey: ["health"], predicate: (query) => query.queryKey[1] !== "summary" },
   summary: { queryKey: ["health", "summary"], exact: true },
+  // PAR2 checks and repairs change file health, so they follow health events.
+  par2: { predicate: (query) => ["par2", "par2-jobs"].includes(String(query.queryKey[0])) },
   // Everything else, refreshed only on resync.
   other: { predicate: (query) => !lists.has(String(query.queryKey[0])) },
 };
@@ -33,10 +35,10 @@ const marks: Record<string, Target[]> = {
   queue: ["queue"],
   // Deleting a file reports a history change only.
   history: ["history", "summary"],
-  health: ["health", "summary"],
-  resync: ["queue", "history", "health", "summary", "other"],
+  health: ["health", "summary", "par2"],
+  resync: ["queue", "history", "health", "summary", "par2", "other"],
   // Only list changes are sent as events, so only lists can have been missed.
-  reconnect: ["queue", "history", "health", "summary"],
+  reconnect: ["queue", "history", "health", "summary", "par2"],
 };
 
 /** Refreshes one target at most once per gap, and once more for changes that arrive while it runs. */
