@@ -842,9 +842,9 @@ impl RcloneRc {
         Ok(())
     }
 
-    /// Scheme, host and port of a parseable [`Self::url`].
-    fn origin(&self) -> Option<reqwest::Url> {
-        let mut url = reqwest::Url::parse(self.url.trim()).ok()?;
+    /// Scheme, host and port of a parseable RC URL.
+    fn origin(url: &str) -> Option<reqwest::Url> {
+        let mut url = reqwest::Url::parse(url.trim()).ok()?;
         url.set_path("");
         url.set_query(None);
         url.set_fragment(None);
@@ -1781,18 +1781,33 @@ impl ConfigStore {
         self.env.iter().map(|o| o.path.join("."))
     }
 
+    fn env_sets(&self, path: [&str; 2]) -> bool {
+        env_sets(&self.env, path)
+    }
+
     /// Validates and persists `new`. [`MASK`] secrets keep their current value.
     pub async fn save(&mut self, mut new: Settings) -> Result<(), Error> {
         let (rc, current_rc) = (&new.rclone_rc, &self.settings.rclone_rc);
-        if rc.password.0 == MASK
+        let rc_password_entered = rc.password.0 != MASK;
+        if !rc_password_entered
             && !current_rc.password.0.is_empty()
             && !rc.url.trim().is_empty()
-            && rc.origin() != current_rc.origin()
+            && RcloneRc::origin(&rc.url) != RcloneRc::origin(&current_rc.url)
         {
-            return Err(invalid(
-                "rclone_rc.password",
-                "The RC URL points somewhere new: enter its password, or clear it".to_owned(),
-            ));
+            return Err(if self.env_sets(RC_PASSWORD) {
+                invalid(
+                    "rclone_rc.url",
+                    "The RC password comes from INFINIDYSK__RCLONE_RC__PASSWORD, so it \
+                     only goes to the current RC server. Set INFINIDYSK__RCLONE_RC__URL \
+                     to point it somewhere new"
+                        .to_owned(),
+                )
+            } else {
+                invalid(
+                    "rclone_rc.password",
+                    "The RC URL points somewhere new: enter its password, or clear it".to_owned(),
+                )
+            });
         }
         new.restore_secrets(&self.settings);
         new.validate_in(&self.default_cache_dir)?;
@@ -1807,6 +1822,12 @@ impl ConfigStore {
                 Some(v) => set(&mut tree, &o.path, v.clone()),
                 None => remove(&mut tree, &o.path),
             }
+        }
+        // A password entered for an env-set URL is stored with that URL, so a later
+        // startup sends it only there.
+        if rc_password_entered && self.env_sets(RC_URL) && !self.env_sets(RC_PASSWORD) {
+            let path = RC_URL.map(str::to_owned);
+            set(&mut tree, &path, Value::String(new.rclone_rc.url.clone()));
         }
 
         let defaults = serde_json::to_value(Settings::default())?;
@@ -1858,7 +1879,42 @@ fn effective(
     let mut settings: Settings = serde_json::from_value(tree)?;
     settings.reset_invalid();
     settings.validate_in(default_cache_dir)?;
+    check_rc_url_override(stored, env, &settings.rclone_rc)?;
     Ok(settings)
+}
+
+const RC_URL: [&str; 2] = ["rclone_rc", "url"];
+const RC_PASSWORD: [&str; 2] = ["rclone_rc", "password"];
+
+fn env_sets(env: &[Override], path: [&str; 2]) -> bool {
+    env.iter().any(|o| o.path == path)
+}
+
+/// The saved RC password belongs to the saved RC URL; an env URL for another server
+/// stops startup instead of sending it there.
+fn check_rc_url_override(
+    stored: &Map<String, Value>,
+    env: &[Override],
+    rc: &RcloneRc,
+) -> Result<(), Error> {
+    if !env_sets(env, RC_URL) || env_sets(env, RC_PASSWORD) || rc.password.0.is_empty() {
+        return Ok(());
+    }
+    let saved = stored
+        .get("rclone_rc")
+        .and_then(|section| section.get("url"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if RcloneRc::origin(saved) == RcloneRc::origin(&rc.url) {
+        return Ok(());
+    }
+    Err(invalid(
+        "rclone_rc.url",
+        "INFINIDYSK__RCLONE_RC__URL points to another server than the saved RC URL, so \
+         the saved RC password is not sent there. Set INFINIDYSK__RCLONE_RC__PASSWORD \
+         too, or remove INFINIDYSK__RCLONE_RC__URL and clear the saved password"
+            .to_owned(),
+    ))
 }
 
 /// Readarr support was dropped; an instance left from before stops startup with what

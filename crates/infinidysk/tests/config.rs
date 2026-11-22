@@ -220,6 +220,93 @@ async fn rclone_rc_is_off_until_explicitly_enabled() {
 }
 
 #[tokio::test]
+async fn rclone_rc_env_url_never_carries_a_password_to_another_server() {
+    let path =
+        std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let env_url = |url: &str| ("INFINIDYSK__RCLONE_RC__URL".to_owned(), url.to_owned());
+    let env_password = || {
+        (
+            "INFINIDYSK__RCLONE_RC__PASSWORD".to_owned(),
+            "rc-env-secret".to_owned(),
+        )
+    };
+    let on = RcloneRc {
+        enabled: true,
+        url: "http://127.0.0.1:5572/rc/".into(),
+        fs: "library:".into(),
+        user: "rc".into(),
+        password: Secret("rc-secret".into()),
+    };
+    let mut store = ConfigStore::load(db.clone(), []).await.expect("load");
+    let mut settings = store.settings().clone();
+    settings.rclone_rc = on.clone();
+    store.save(settings).await.expect("save");
+
+    let error = ConfigStore::load(db.clone(), [env_url("https://rc.example/rc/")])
+        .await
+        .err()
+        .expect("saved password, env URL elsewhere");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    assert!(!error.to_string().contains("rc-secret"));
+    let same = ConfigStore::load(db.clone(), [env_url("http://127.0.0.1:5572/other/")])
+        .await
+        .expect("same origin");
+    assert_eq!(same.settings().rclone_rc.password, on.password);
+    let both = ConfigStore::load(
+        db.clone(),
+        [env_url("https://rc.example/rc/"), env_password()],
+    )
+    .await
+    .expect("env password goes with the env URL");
+    assert_eq!(
+        both.settings().rclone_rc.password,
+        Secret("rc-env-secret".into())
+    );
+
+    // A password entered under an env URL is stored with that URL.
+    let mut cleared = store.settings().clone();
+    cleared.rclone_rc.enabled = false;
+    cleared.rclone_rc.user = String::new();
+    cleared.rclone_rc.password = Secret::default();
+    store.save(cleared).await.expect("clear");
+    let mut store = ConfigStore::load(db.clone(), [env_url("https://rc.example/rc/")])
+        .await
+        .expect("no saved password");
+    let mut entered = store.settings().masked();
+    entered.rclone_rc.user = "rc".into();
+    entered.rclone_rc.password = Secret("new-secret".into());
+    store.save(entered).await.expect("enter password");
+    let reloaded = ConfigStore::load(db.clone(), [env_url("https://rc.example/rc/")])
+        .await
+        .expect("password belongs to the env URL");
+    assert_eq!(
+        reloaded.settings().rclone_rc.password,
+        Secret("new-secret".into())
+    );
+
+    // An env password only follows a URL that env sets.
+    db.write_config(&[], &["rclone_rc"]).await.expect("reset");
+    let mut store = ConfigStore::load(db.clone(), [env_password()])
+        .await
+        .expect("env password");
+    let mut first = store.settings().masked();
+    first.rclone_rc.url = "https://rc.example/rc/".into();
+    let error = store
+        .save(first)
+        .await
+        .expect_err("UI URL for env password");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
 async fn import_sample_percent_defaults_independently_and_rejects_invalid_values() {
     let path =
         std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
