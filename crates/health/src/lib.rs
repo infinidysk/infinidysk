@@ -599,6 +599,7 @@ impl Health {
             source,
             meter: None,
         };
+        let started = now_ms();
         let (outcome, changed, head) = self
             .released(writing, check::run(&client, &mut meta, &item.name, &opts))
             .await;
@@ -744,15 +745,19 @@ impl Health {
                 next.state = state;
                 next.repair_attempts = 0;
                 next.next_check = Some(cadence(item.release_date.unwrap_or(item.created_at), now));
-                // One automatic PAR2 attempt per NZB generation: a finished job for the
-                // same generation covers later damage too, so none is queued for it.
+                // Pending work absorbs new damage. A job that found the release whole or
+                // repaired it before this check began cannot have covered what it found.
                 if state == HealthState::Degraded && self.par2 && settings.auto_repair {
-                    match self
-                        .db
-                        .request_par2(infinidysk_db::repair::Owner::Item(item.id), false, now)
-                        .await
-                    {
-                        Ok(_) => {}
+                    let owner = infinidysk_db::repair::Owner::Item(item.id);
+                    let requested = match self.db.par2_result(owner, false).await? {
+                        Some(job) if matches!(job.state, 2 | 3) && job.updated_at < started => {
+                            self.db.restart_par2(job.id, now).await
+                        }
+                        Some(_) => Ok(()),
+                        None => self.db.request_par2(owner, false, now).await.map(drop),
+                    };
+                    match requested {
+                        Ok(()) => {}
                         Err(infinidysk_db::Error::RepairQueueFull) => {
                             next.next_check = Some(now + MINUTE_MS);
                             pending = Recheck::Deferred;
@@ -894,6 +899,13 @@ impl Health {
                         .set_health_recheck(item.id, &next, status.recheck, Recheck::User)
                         .await?;
                     return Ok(());
+                }
+                // A loss confirmed after a success is new damage; failures and cancels stand.
+                Some(job) if matches!(job.state, 2 | 3) => {
+                    match self.db.restart_par2(job.id, now).await {
+                        Ok(()) | Err(infinidysk_db::Error::RepairQueueFull) => true,
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 Some(_) => false,
                 None => match self.db.request_par2(owner, false, now).await {

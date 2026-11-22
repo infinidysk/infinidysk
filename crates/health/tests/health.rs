@@ -244,6 +244,34 @@ async fn a_degraded_item_queues_par2_without_asking_arr_to_replace_it() {
 }
 
 #[tokio::test]
+async fn new_damage_after_a_par2_success_queues_it_again_but_an_unavailable_result_stands() {
+    for (finished, rerun) in [(3, true), (5, false)] {
+        let (mut articles, len) = mkv("degraded-again");
+        let full = LoopbackServer::start(articles.clone()).await.unwrap();
+        let (db, item, _) = import(&full, &articles, len).await;
+        let owner = infinidysk_db::repair::Owner::Item(item.id);
+        db.request_par2(owner, false, 1).await.unwrap().unwrap();
+        let claim = db.claim_par2(1).await.unwrap().unwrap().claim();
+        db.finish_par2(claim, finished, "", 0, 0, 2, None)
+            .await
+            .unwrap();
+        articles.pop().unwrap();
+        let missing = articles.len();
+        let partial = LoopbackServer::start(articles).await.unwrap();
+        let (_calls, arr) = fake_sonarr().await;
+        let (_settings_tx, settings) = watch::channel(Settings::default());
+        let health = Health::new(db.clone(), client(&partial), arr, settings)
+            .unwrap()
+            .with_par2();
+
+        health.report(item.id, &[missing], &[]).await.unwrap();
+        assert!(health.step().await.unwrap());
+        let job = db.par2_result(owner, false).await.unwrap().unwrap();
+        assert_eq!(job.pending(), rerun, "after state {finished}");
+    }
+}
+
+#[tokio::test]
 async fn exhausted_arr_attempts_fall_back_to_par2() {
     let (articles, len) = mkv("spent-repair-budget");
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
