@@ -50,7 +50,7 @@ impl Batch {
             ListingChange::Nzbs => self.add("nzbs"),
             ListingChange::Completed => self.add("completed-symlinks"),
             ListingChange::Tree => self.tree(),
-            ListingChange::HiddenLink(path) => {
+            ListingChange::Link(path) => {
                 if let Some(tail) = path.strip_prefix("/content/") {
                     let parent = tail.rsplit_once('/').map_or("", |(dir, _)| dir);
                     self.add(format!("completed-symlinks/{parent}").trim_end_matches('/'));
@@ -312,7 +312,7 @@ mod tests {
             ]
             .into(),
         ));
-        batch.record(ListingChange::HiddenLink(
+        batch.record(ListingChange::Link(
             "/content/tv/Some Job/episode.mkv".to_owned(),
         ));
         let shard = id.ids_path().rsplit_once('/').unwrap().0.to_owned();

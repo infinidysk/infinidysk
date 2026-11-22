@@ -578,7 +578,7 @@ async fn deleted_completed_links_hide_without_changing_what_is_stored() {
     let vfs = start();
     let mut listings = db.subscribe_listings();
     let mut hidden = || match listings.try_recv() {
-        Ok(ListingChange::HiddenLink(path)) => Some(path),
+        Ok(ListingChange::Link(path)) => Some(path),
         Ok(other) => panic!("unexpected {other:?}"),
         Err(_) => None,
     };

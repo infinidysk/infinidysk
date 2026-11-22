@@ -200,6 +200,9 @@ pub struct Db {
     nzb_retention_ms: Arc<AtomicI64>,
     /// See [`Db::write_permit`].
     writes: Arc<RwLock<()>>,
+    /// Held shared from a history commit until its listing changes are sent; see
+    /// [`Db::announced_refreshes`].
+    announcing: Arc<RwLock<()>>,
     /// See [`Db::blob_epoch`].
     blob_epoch: Arc<AtomicU64>,
     /// See [`Db::repair_epoch`].
@@ -232,8 +235,9 @@ pub enum ListingChange {
     Tree,
     /// Items by path, with the id of each file.
     Items(Arc<[(String, Option<ItemId>)]>),
-    /// A completed link or folder hidden after an app deleted it, by its `/content` path.
-    HiddenLink(String),
+    /// A completed link or folder an app deleted hid or shows again, by its `/content`
+    /// path.
+    Link(String),
 }
 
 /// Runs `$body` with `$pool` bound to the native pool of whichever backend is active.
@@ -1108,6 +1112,7 @@ impl Db {
             searches: Arc::default(),
             nzb_retention_ms: Arc::new(AtomicI64::new(30 * DAY_MS)),
             writes: Arc::default(),
+            announcing: Arc::default(),
             blob_epoch: Arc::default(),
             repair_epoch: Arc::default(),
             repair_present: Arc::new(AtomicBool::new(repair_present)),
@@ -1244,15 +1249,19 @@ impl Db {
     }
 
     /// Announces that `items` appeared, went or changed visibility.
-    pub fn items_changed(&self, items: &[Item]) {
-        if !items.is_empty() {
+    pub fn items_changed<'a, I>(&self, items: I)
+    where
+        I: IntoIterator<Item = &'a Item>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let items = items.into_iter();
+        if items.len() != 0 {
             self.listing_changed(|| {
                 if items.len() > LISTING_ITEMS {
                     return ListingChange::Tree;
                 }
                 ListingChange::Items(
                     items
-                        .iter()
                         .map(|item| {
                             let file = (item.kind != ItemKind::Directory).then_some(item.id);
                             (item.path.clone(), file)
@@ -1473,6 +1482,7 @@ impl Db {
             }
             tx.commit().await?;
         });
+        self.items_changed(items.iter().map(|(item, _)| item));
         Ok(())
     }
 
@@ -1753,6 +1763,7 @@ impl Db {
         checks: &[(ItemId, FirstCheck)],
         handoffs: &[Handoff],
     ) -> Result<bool, Error> {
+        let _announcing = self.announcing.read().await;
         let finished = on!(self, pool => {
             let mut tx = pool.begin().await?;
             let queued: Option<Uuid> = sqlx::query_scalar("DELETE FROM queue WHERE id = $1 RETURNING nzb_blob")
@@ -1835,6 +1846,7 @@ impl Db {
         items: &[Item],
         blobs: &[(BlobId, &[u8])],
     ) -> Result<(), Error> {
+        let _announcing = self.announcing.read().await;
         on!(self, pool => {
             let mut tx = pool.begin().await?;
             insert_history!(tx, history, items, blobs);
@@ -2627,6 +2639,13 @@ impl Db {
     pub async fn pending_refreshes(&self) -> Result<Vec<(String, i64)>, Error> {
         let sql = "SELECT category, generation FROM arr_refresh ORDER BY category";
         Ok(on!(self, pool => sqlx::query_as(sql).fetch_all(pool).await?))
+    }
+
+    /// [`Self::pending_refreshes`], read when every job they cover has sent its listing
+    /// changes to [`Self::subscribe_listings`].
+    pub async fn announced_refreshes(&self) -> Result<Vec<(String, i64)>, Error> {
+        let _settled = self.announcing.write().await;
+        self.pending_refreshes().await
     }
 
     /// Marks `category` told, unless a job finished in it since `generation` was read.

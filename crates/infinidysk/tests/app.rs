@@ -1129,7 +1129,7 @@ struct RcOrder {
     forgets: AtomicUsize,
     /// Answer 401 from now on.
     fail: AtomicBool,
-    /// Holds the next forget that names `content` until `release`.
+    /// Holds the next forget below `content/` until `release`.
     gate: AtomicBool,
     arrived: tokio::sync::Notify,
     release: tokio::sync::Notify,
@@ -1152,7 +1152,10 @@ async fn rc_forget(
         .filter(|(k, _)| k.starts_with("dir"))
         .map(|(_, v)| v.clone())
         .collect();
-    if dirs.contains(&json!("content")) && order.gate.swap(false, Ordering::SeqCst) {
+    let below_content = dirs
+        .iter()
+        .any(|d| d.as_str().is_some_and(|d| d.starts_with("content/")));
+    if below_content && order.gate.swap(false, Ordering::SeqCst) {
         order.arrived.notify_one();
         order.release.notified().await;
         order.released.store(true, Ordering::SeqCst);
@@ -1191,8 +1194,37 @@ async fn rc_arr(
     })
 }
 
+/// A one-file NZB of a small MKV, with the articles that hold it.
+fn clip_nzb(prefix: &str) -> (Vec<infinidysk_testkit::Article>, String) {
+    use std::fmt::Write as _;
+
+    let mut clip = vec![7u8; 4000];
+    clip[..4].copy_from_slice(&[0x1A, 0x45, 0xDF, 0xA3]);
+    let articles = infinidysk_testkit::post(prefix, "Clip.mkv", &clip, 1000);
+    let mut segments = String::new();
+    for (number, article) in articles.iter().enumerate() {
+        let (number, id) = (number + 1, &article.message_id);
+        write!(
+            segments,
+            "<segment bytes=\"1021\" number=\"{number}\">{id}</segment>"
+        )
+        .unwrap();
+    }
+    let nzb = format!(
+        "<?xml version=\"1.0\"?><nzb><file poster=\"p\" date=\"0\" subject=\"Clip.mkv\">\
+         <groups><group>a.b</group></groups><segments>{segments}</segments></file></nzb>"
+    );
+    (articles, nzb)
+}
+
 #[tokio::test]
 async fn rclone_forget_finishes_before_the_owning_arr_is_told() {
+    let (mut articles, first) = clip_nzb("first");
+    let (more, second) = clip_nzb("second");
+    articles.extend(more);
+    let provider = infinidysk_testkit::LoopbackServer::start(articles)
+        .await
+        .unwrap();
     let order = Arc::new(RcOrder::default());
     let rc_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let rc = rc_listener.local_addr().unwrap();
@@ -1234,6 +1266,9 @@ async fn rclone_forget_finishes_before_the_owning_arr_is_told() {
     settings["arr_instances"] = json!([
         { "name": "series", "profile": "sonarr", "url": format!("http://{arr}/s"), "api_key": "k" },
     ]);
+    settings["providers"] = json!([{
+        "hostname": "127.0.0.1", "port": provider.addr().port(), "tls": false,
+    }]);
     let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
     assert_eq!(status(addr, &put).await, "HTTP/1.1 200 OK");
     let request = admin_request("GET", "/api/v1/arr/status", "");
@@ -1251,9 +1286,9 @@ async fn rclone_forget_finishes_before_the_owning_arr_is_told() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    let add = |n: u8| {
+    let add = |name: &str, nzb: &str| {
         let multipart = format!(
-            "--b\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"bad{n}.nzb\"\r\n\r\nnot xml {n}\r\n--b--\r\n"
+            "--b\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"{name}.nzb\"\r\n\r\n{nzb}\r\n--b--\r\n"
         );
         format!(
             "POST /api?mode=addfile&cat=tv&apikey=sabkey HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\
@@ -1262,9 +1297,9 @@ async fn rclone_forget_finishes_before_the_owning_arr_is_told() {
         )
     };
 
-    // The forget for a finished job is answered before its Arr hears of it.
+    // The forget for a finished job's files is answered before its Arr hears of it.
     order.gate.store(true, Ordering::SeqCst);
-    send(addr, &add(1)).await;
+    send(addr, &add("first", &first)).await;
     tokio::time::timeout(Duration::from_secs(20), order.arrived.notified())
         .await
         .expect("the Arr-bound forget arrives");
@@ -1277,13 +1312,22 @@ async fn rclone_forget_finishes_before_the_owning_arr_is_told() {
     .await;
     assert_eq!(*order.told.lock().unwrap(), [true]);
 
-    // A failed forget never holds the Arr back.
-    order.fail.store(true, Ordering::SeqCst);
+    // A job that made no files changes no listing, so nothing is forgotten for it.
     let before = order.forgets.load(Ordering::SeqCst);
-    send(addr, &add(2)).await;
-    wait("second refresh", {
+    send(addr, &add("bad", "not xml")).await;
+    wait("refused refresh", {
         let order = Arc::clone(&order);
         Box::new(move || order.told.lock().unwrap().len() == 2)
+    })
+    .await;
+    assert_eq!(order.forgets.load(Ordering::SeqCst), before);
+
+    // A failed forget never holds the Arr back.
+    order.fail.store(true, Ordering::SeqCst);
+    send(addr, &add("second", &second)).await;
+    wait("second refresh", {
+        let order = Arc::clone(&order);
+        Box::new(move || order.told.lock().unwrap().len() == 3)
     })
     .await;
     assert!(order.forgets.load(Ordering::SeqCst) > before);

@@ -178,32 +178,58 @@ const FIXED_MODIFIED: i64 = 946_684_800_000;
 /// How long a deleted `/completed-symlinks` entry stays hidden after it was last asked for.
 const DELETE_HIDE: Duration = Duration::from_secs(30);
 
-/// `/completed-symlinks` entries apps deleted, by content path, with when they show again.
-/// Nothing stored changes; the history row decides when a download goes for good.
+/// `/completed-symlinks` entries apps deleted, by content path, with when they show again
+/// and the hide that set it. Nothing stored changes; the history row decides when a
+/// download goes for good.
 // ponytail: in memory, 30 s idle like 1.x; a long import can see its first links return. Hide a job's links until its history row goes if apps trip on that.
 #[derive(Default)]
-struct Deleted(Mutex<HashMap<String, Instant>>);
+struct Deleted {
+    hidden: Mutex<HashMap<String, (Instant, u64)>>,
+    hides: AtomicU64,
+}
+
+/// Where a hide stands when its timer fires.
+#[derive(Debug, PartialEq, Eq)]
+enum Expiry {
+    /// It ended; the entry shows again.
+    Shown,
+    /// A read kept it hidden until then.
+    Later(Instant),
+    /// A newer hide of the same path took over.
+    Replaced,
+}
 
 impl Deleted {
-    fn hide(&self, path: &str, now: Instant) {
-        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        all.retain(|_, until| *until > now);
-        all.insert(path.to_owned(), now + DELETE_HIDE);
+    /// Hides `path`; [`Self::expire`] takes the returned hide.
+    fn hide(&self, path: &str, now: Instant) -> u64 {
+        let hide = self.hides.fetch_add(1, Ordering::Relaxed);
+        let mut all = self.hidden.lock().unwrap_or_else(PoisonError::into_inner);
+        all.insert(path.to_owned(), (now + DELETE_HIDE, hide));
+        hide
     }
 
     /// Whether `path` is hidden; asking keeps it hidden for another [`DELETE_HIDE`].
     fn hides(&self, path: &str, now: Instant) -> bool {
-        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut all = self.hidden.lock().unwrap_or_else(PoisonError::into_inner);
         match all.get_mut(path) {
-            Some(until) if *until > now => {
+            Some((until, _)) if *until > now => {
                 *until = now + DELETE_HIDE;
                 true
             }
-            Some(_) => {
+            _ => false,
+        }
+    }
+
+    /// Ends `hide` of `path` when it is over at `now`.
+    fn expire(&self, path: &str, hide: u64, now: Instant) -> Expiry {
+        let mut all = self.hidden.lock().unwrap_or_else(PoisonError::into_inner);
+        match all.get(path) {
+            Some(&(_, other)) if other != hide => Expiry::Replaced,
+            Some(&(until, _)) if until > now => Expiry::Later(until),
+            _ => {
                 all.remove(path);
-                false
+                Expiry::Shown
             }
-            None => false,
         }
     }
 }
@@ -244,7 +270,7 @@ pub struct Vfs {
     /// Decoded metadata by blob and [`Db::blob_epoch`], so reopening a file skips
     /// fetching and decoding it.
     metas: Metas,
-    deleted: Deleted,
+    deleted: Arc<Deleted>,
 }
 
 // ponytail: a fixed 64 MB, about 570k segments; make it a setting if libraries outgrow it.
@@ -308,7 +334,7 @@ impl Vfs {
                 RandomState::new(),
                 quick_cache::sync::DefaultLifecycle::default(),
             ),
-            deleted: Deleted::default(),
+            deleted: Arc::default(),
         }
     }
 
@@ -519,9 +545,30 @@ impl Vfs {
         if item.parent == Some(ItemId::CONTENT) {
             return false;
         }
-        self.deleted.hide(&item.path, Instant::now());
+        let now = Instant::now();
+        let hide = self.deleted.hide(&item.path, now);
         self.db
-            .listing_changed(|| ListingChange::HiddenLink(item.path.clone()));
+            .listing_changed(|| ListingChange::Link(item.path.clone()));
+        let (deleted, db, path) = (
+            Arc::clone(&self.deleted),
+            self.db.clone(),
+            item.path.clone(),
+        );
+        // Announces the end too, so a listing read while it was hidden is not kept.
+        tokio::spawn(async move {
+            let mut until = now + DELETE_HIDE;
+            loop {
+                tokio::time::sleep_until(until.into()).await;
+                match deleted.expire(&path, hide, Instant::now()) {
+                    Expiry::Later(later) => until = later,
+                    Expiry::Replaced => return,
+                    Expiry::Shown => {
+                        db.listing_changed(|| ListingChange::Link(path));
+                        return;
+                    }
+                }
+            }
+        });
         true
     }
 
@@ -862,19 +909,35 @@ mod tests {
         let deleted = Deleted::default();
         let start = Instant::now();
         let at = |secs| start + Duration::from_secs(secs);
-        deleted.hide("/content/tv/job/a.mkv", start);
+        let hide = deleted.hide("/content/tv/job/a.mkv", start);
         assert!(!deleted.hides("/content/tv/job/b.mkv", at(1)));
         assert!(!deleted.hides("/content/tv/job", at(1)));
 
-        // Each ask restarts the 30 s.
-        assert!(deleted.hides("/content/tv/job/a.mkv", at(29)));
-        assert!(deleted.hides("/content/tv/job/a.mkv", at(58)));
-        assert!(!deleted.hides("/content/tv/job/a.mkv", at(88)));
-        assert!(!deleted.hides("/content/tv/job/a.mkv", at(89)));
+        // Each ask restarts the 30 s; the timer ends it only once it is over.
+        let a = "/content/tv/job/a.mkv";
+        assert!(deleted.hides(a, at(29)));
+        assert_eq!(deleted.expire(a, hide, at(30)), Expiry::Later(at(59)));
+        assert!(deleted.hides(a, at(58)));
+        assert!(!deleted.hides(a, at(88)));
+        assert!(!deleted.hides(a, at(89)));
+        assert_eq!(deleted.expire(a, hide, at(89)), Expiry::Shown);
 
-        deleted.hide("/content/tv/old", at(100));
+        // A newer hide of the same path owns its end.
+        let old = deleted.hide("/content/tv/old", at(100));
+        let new = deleted.hide("/content/tv/old", at(110));
         deleted.hide("/content/tv/new", at(131));
-        let all = deleted.0.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(
+            deleted.expire("/content/tv/old", old, at(150)),
+            Expiry::Replaced
+        );
+        assert_eq!(
+            deleted.expire("/content/tv/old", new, at(150)),
+            Expiry::Shown
+        );
+        let all = deleted
+            .hidden
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         assert_eq!(all.keys().collect::<Vec<_>>(), ["/content/tv/new"]);
     }
 }

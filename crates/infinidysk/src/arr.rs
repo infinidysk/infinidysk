@@ -481,10 +481,11 @@ impl Discovery {
                 }
             }
             let due = need_arr && Clock::now() >= next_arr;
-            // Read before the forget: generations committed later wait for the next one.
+            // Read before the drain below, which then holds the listing changes of every
+            // job these refreshes cover; later jobs wait for the next round.
             let mut snapshot = None;
             if due {
-                match db.pending_refreshes().await {
+                match db.announced_refreshes().await {
                     Ok(pending) => snapshot = Some(pending),
                     Err(error) => {
                         tracing::warn!(reason = %error, "reading pending Arr refreshes failed");
@@ -501,23 +502,6 @@ impl Discovery {
                 }
                 if index == 31 {
                     batch.all();
-                }
-            }
-            let known: Vec<Known> = if snapshot.as_ref().is_some_and(|p| !p.is_empty()) {
-                self.lock().values().cloned().collect()
-            } else {
-                Vec::new()
-            };
-            if !known.is_empty() {
-                // A committed job may not have announced its paths yet; only an owner
-                // that gets a refresh will look for them now.
-                let refreshed =
-                    owners(known.iter().filter(|k| k.arr.profile.refreshes_downloads()));
-                if snapshot
-                    .as_ref()
-                    .is_some_and(|p| p.iter().any(|(c, _)| refreshed.contains_key(c)))
-                {
-                    batch.tree();
                 }
             }
             if std::mem::take(&mut startup) || (missed && !batch.dirs().is_empty()) {
@@ -540,6 +524,7 @@ impl Discovery {
             if due {
                 let done = if let Some(pending) = snapshot {
                     let _writing = db.write_permit().await;
+                    let known: Vec<Known> = self.lock().values().cloned().collect();
                     self.send_pending(db, pending, known).await
                 } else {
                     false
@@ -662,9 +647,7 @@ impl Discovery {
 }
 
 /// Lowercased categories of verified clients, with the media their Arrs import there.
-fn owners<'a>(
-    known: impl IntoIterator<Item = &'a Known>,
-) -> BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> {
+fn owners(known: &[Known]) -> BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> {
     let mut owners: BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> = BTreeMap::new();
     for k in known {
         for (client, _) in k.clients.iter().filter(|(_, b)| *b == ArrBinding::Verified) {

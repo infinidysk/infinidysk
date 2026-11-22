@@ -947,6 +947,14 @@ async fn listing_changes_follow_committed_writes(db: &Db) {
         "announced only once queryable"
     );
     assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+    assert!(
+        db.announced_refreshes()
+            .await
+            .expect("query")
+            .iter()
+            .any(|(category, _)| category == "tv"),
+        "its Arr refresh is readable once its listings went out"
+    );
 
     assert!(
         !db.finish_job(&history, &[], &[], &[], &[])
@@ -971,6 +979,17 @@ async fn listing_changes_follow_committed_writes(db: &Db) {
 
     db.delete_item(dir.id).await.expect("delete");
     assert!(matches!(listings.try_recv(), Ok(ListingChange::Tree)));
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+
+    // Files brought back from another install show like any other.
+    let imported = Item::child(&content, "imported job", ItemKind::Directory).expect("valid");
+    db.import_items(&[(imported.clone(), HealthStatus::default())], &[])
+        .await
+        .expect("import");
+    let Ok(ListingChange::Items(items)) = listings.try_recv() else {
+        panic!("imported items are announced");
+    };
+    assert_eq!(items.as_ref(), [(imported.path.clone(), None)]);
     assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
 }
 
