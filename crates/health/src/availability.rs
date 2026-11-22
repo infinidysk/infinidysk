@@ -58,6 +58,8 @@ struct Key {
     id: String,
     begin: Option<u64>,
     size: Option<u32>,
+    /// A STAT receipt must not satisfy a BODY probe.
+    body: bool,
 }
 
 #[derive(Default)]
@@ -237,6 +239,7 @@ impl Health {
                                         id: segment.id.clone(),
                                         begin: placed.then_some(begin).flatten(),
                                         size: placed.then_some(segment.size),
+                                        body,
                                     })
                                 });
                             let body_permits = &body_permits;
