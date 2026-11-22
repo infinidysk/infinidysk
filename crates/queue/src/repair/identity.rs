@@ -90,10 +90,18 @@ impl<'a> Identity<'a> {
     }
 
     fn slices(&mut self, body: &Body, budget: &mut Budget) -> Result<(), Error> {
-        if self.checks.capacity() == 0 {
+        let length = body.file_size;
+        // Only a source of this length with slice checksums can use the observations.
+        let checksummed = match self.proven {
+            Some(source) => !self.sources[source].slices.is_empty(),
+            None => self
+                .sources
+                .iter()
+                .any(|source| source.length == length && !source.slices.is_empty()),
+        };
+        if self.checks.capacity() == 0 || !checksummed {
             return Ok(());
         }
-        let length = body.file_size;
         let size = self.size as u64;
         let mut offset = body.offset;
         let mut bytes = body.data.as_ref();
@@ -218,7 +226,7 @@ mod tests {
             limits: crate::repair::Limits {
                 requests: 0,
                 decoded_bytes: 0,
-                memory_bytes: 0,
+                memory_bytes: 1_000_000,
                 comparisons: 1_000,
                 retained_bytes: 0,
             },
@@ -234,47 +242,73 @@ mod tests {
         }
     }
 
-    #[test]
-    fn shared_slice_evidence_needs_a_distinguishing_slice_or_a_stored_proof() {
-        let file = |last: &[u8]| File {
+    fn body(data: &'static [u8]) -> Body {
+        Body {
+            data: data.into(),
+            offset: 0,
+            file_size: data.len() as u64,
+            part: None,
+            total: None,
+        }
+    }
+
+    fn file(length: u64, slices: &[&[u8]]) -> File {
+        File {
             id: [0; 16],
             hash: [0; 16],
             hash_16k: [0; 16],
-            length: 8,
+            length,
             name: String::new(),
-            slices: vec![slice(b"same"), slice(last)],
-        };
-        let sources = [file(b"aaaa"), file(b"bbbb"), file(b"cccc")];
-        let tied = |matched: Vec<bool>, checks: Vec<(usize, Slice)>| Identity {
-            sources: &sources,
-            size: 4,
-            length: Some(8),
-            prefix: Vec::new(),
-            prefix_done: false,
-            proven: None,
-            matched,
-            slice: Vec::new(),
-            next: 0,
-            start: 0,
-            checks,
-        };
-        let tie = || tied(vec![true, true, false], vec![(0, slice(b"same"))]);
+            slices: slices.iter().map(|bytes| slice(bytes)).collect(),
+        }
+    }
+
+    #[test]
+    fn shared_slice_evidence_needs_a_distinguishing_slice_or_a_stored_proof() {
+        let sources = [
+            file(8, &[b"same", b"aaaa"]),
+            file(8, &[b"same", b"bbbb"]),
+            file(8, &[b"othr", b"cccc"]),
+        ];
         let b = &mut budget();
-        assert!(matches!(tie().finish(None, b), Err(Error::Ambiguous(_))));
-        assert!(matches!(tie().finish(Some(1), b), Ok(Some((1, _)))));
-        assert!(matches!(tie().finish(Some(2), b), Err(Error::Ambiguous(_))));
+        let observe = |data: &'static [u8], b: &mut Budget| {
+            let mut identity = Identity::new(&sources, 4, b).unwrap();
+            identity.feed(&body(data), b).unwrap();
+            identity
+        };
+        // `same` matches the first two sources only; `zzzz` matches none.
+        assert!(matches!(
+            observe(b"samezzzz", b).finish(None, b),
+            Err(Error::Ambiguous(_))
+        ));
+        assert!(matches!(
+            observe(b"samezzzz", b).finish(Some(1), b),
+            Ok(Some((1, _)))
+        ));
+        assert!(matches!(
+            observe(b"samezzzz", b).finish(Some(2), b),
+            Err(Error::Ambiguous(_))
+        ));
         // A unique match is returned as is; the caller rejects a stored proof it contradicts.
         assert!(matches!(
-            tied(vec![true, false, false], vec![(0, slice(b"same"))]).finish(Some(2), b),
+            observe(b"zzzzaaaa", b).finish(Some(2), b),
             Ok(Some((0, _)))
         ));
-        let distinguished = tied(
-            vec![true, true, false],
-            vec![(0, slice(b"same")), (1, slice(b"aaaa"))],
-        );
         assert!(matches!(
-            distinguished.finish(None, b),
+            observe(b"sameaaaa", b).finish(None, b),
             Ok(Some((0, checked))) if checked == [true, true]
         ));
+    }
+
+    #[test]
+    fn lengths_without_slice_checksums_collect_no_observations() {
+        // The longer file has no IFSC packet; the shorter one reserves two observations.
+        let sources = [file(16, &[]), file(8, &[b"aaaa", b"bbbb"])];
+        let b = &mut budget();
+        let mut identity = Identity::new(&sources, 4, b).unwrap();
+        identity
+            .feed(&body(b"0123456789abcdef"), b)
+            .expect("valid bytes of an unchecked length are not slice evidence");
+        assert!(matches!(identity.finish(None, b), Ok(None)));
     }
 }
