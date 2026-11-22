@@ -1661,6 +1661,19 @@ async fn a_blocklisted_nzb_is_not_followed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn without_par2_an_unavailable_plain_file_keeps_the_sab_failure() {
+    let notes = post("t", "notes.txt", &[3; 500], 1000);
+    let outer = nzb(&[("notes.txt", &notes, 500, 1000)]);
+    let (_server, queue) = setup(Vec::new()).await;
+    let db = queue.db().clone();
+    let history = run(&queue, &db, &outer).await;
+    assert_eq!(
+        history.fail_message.as_deref(),
+        Some("No importable files found.")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_nzb_next_to_other_files_stays_a_file() {
     let release = b"<nzb/>";
     let inner = post("n", "release.nzb", release, 1000);
