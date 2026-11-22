@@ -1597,3 +1597,34 @@ async fn a_full_import_holds_a_broken_mp4() {
     let health = Health::new(db.clone(), client(&server), arr, settings).unwrap();
     assert!(!health.step().await.unwrap(), "the confirming check waits");
 }
+
+#[tokio::test]
+async fn an_inconclusive_requested_check_keeps_its_request() {
+    let (articles, len) = mkv("inconclusive-request");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (_arr_tx, arr) = watch::channel(Vec::new());
+    let (_settings_tx, settings) = watch::channel(Settings {
+        enabled: false,
+        ..Settings::default()
+    });
+    let health = Health::new(db.clone(), client(&server), arr, settings).unwrap();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Unchecked;
+    status.last_check = None;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    db.request_recheck(item.id, Recheck::User).await.unwrap();
+    drop(server);
+    assert!(health.step().await.unwrap());
+    let (_, result) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(result.state, HealthState::Unchecked);
+    assert_eq!(
+        result.recheck,
+        Recheck::Deferred,
+        "routine checks are off, so only the request brings the retry back"
+    );
+    assert!(result.next_check.unwrap() > result.last_check.unwrap());
+}

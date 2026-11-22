@@ -661,6 +661,10 @@ impl Health {
                     tracing::debug!(path = %item.path, reason = %error, "health check inconclusive");
                 }
                 next.next_check = Some(now + INCONCLUSIVE_RECHECK_MS);
+                // A request stays until a check answers it, even with routine checks off.
+                if status.recheck != Recheck::None {
+                    pending = Recheck::Deferred;
+                }
             }
             Outcome::Missing(message) => {
                 self.count(UNHEALTHY);
