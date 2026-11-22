@@ -173,8 +173,9 @@ impl Fences {
         if stamp != entries.stamp {
             return Admission::Retry;
         }
+        // Selected items wait whatever they open; newly affected ones are caught by scope.
         if let Some(active) = &entries.active
-            && active.effects.affects(&scope)
+            && (active.items.contains(&item) || active.effects.affects(&scope))
         {
             return Admission::Wait(active.done.subscribe());
         }
@@ -592,6 +593,23 @@ mod tests {
         }))
     }
 
+    fn named_patch(id: &str) -> Patch {
+        use infinidysk_core::{ByteRange, PatchId, repair::Source};
+        Patch {
+            id: PatchId::new(),
+            source: Source {
+                set: [1; 16],
+                file: [2; 16],
+                range: ByteRange { start: 0, end: 1 },
+                file_length: 1,
+                message_id: Some(id.into()),
+                part: None,
+                total: None,
+            },
+            sha256: [0; 32],
+        }
+    }
+
     #[tokio::test]
     async fn active_readers_pin_their_layout_before_reading_it() {
         let registry = Fences::default();
@@ -601,6 +619,30 @@ mod tests {
         assert!(matches!(admitted, Admission::Ready(_)));
         let (_, articles) = registry.repair_pins(|_| false);
         assert!(articles.contains("later@test"));
+    }
+
+    #[tokio::test]
+    async fn opens_of_a_selected_item_wait_for_its_publication() {
+        let registry = Fences::default();
+        let shared = one_segment("shared@test");
+        let fence = registry.get(ItemId::new());
+        let admitted = registry.admit(registry.stamp(), fence.item(), Scope::new(None, &shared));
+        assert!(matches!(admitted, Admission::Ready(_)));
+        fence.version().access("shared@test").await.unwrap();
+        drop(shared);
+        let publication = registry
+            .publish(BlobId::new(), &[named_patch("shared@test")])
+            .unwrap();
+        let other = one_segment("other@test");
+        assert!(matches!(
+            registry.admit(registry.stamp(), fence.item(), Scope::new(None, &other)),
+            Admission::Wait(_)
+        ));
+        drop(publication);
+        assert!(matches!(
+            registry.admit(registry.stamp(), fence.item(), Scope::new(None, &other)),
+            Admission::Ready(_)
+        ));
     }
 
     #[tokio::test]
