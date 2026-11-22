@@ -1066,7 +1066,16 @@ impl SegmentReader {
                     if data.2 {
                         let layout = &self.layout;
                         let sizes = || layout.segments.iter().map(|s| s.size).collect();
-                        if let Err(error) = gaps.filled(index, sizes) {
+                        let client = &self.client;
+                        let may_repair = |i: usize| {
+                            layout.segments.get(i).is_some_and(|segment| {
+                                client.may_repair(match layout.omitted.get(&i) {
+                                    Some(key) => RepairKey::Omitted(key),
+                                    None => RepairKey::Article(&segment.message_id),
+                                })
+                            })
+                        };
+                        if let Err(error) = gaps.filled(index, sizes, may_repair) {
                             if let Some(suppressed) = gaps.log() {
                                 tracing::warn!(reason = %error, suppressed, "stopping a read over too much damage");
                             }
