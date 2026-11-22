@@ -2,7 +2,8 @@ use infinidysk_core::{BlobId, ItemId, ItemKind, JobId};
 use infinidysk_db::{
     ArrOwner, Db, Defect, Error, FileQuery, FileSort, FirstCheck, Handoff, HealthCheck,
     HealthResult, HealthState, HealthStatus, HistoryEntry, HistoryQuery, Item, JobStatus,
-    MediaProbe, OwnedFile, ProbeAttempt, ProbeOutcome, QueueEntry, Recheck, Repair, SubtreeStats,
+    ListingChange, MediaProbe, OwnedFile, ProbeAttempt, ProbeOutcome, QueueEntry, Recheck, Repair,
+    SubtreeStats,
 };
 
 /// Exercises the tree, blob and config paths that must behave the same on both backends.
@@ -866,6 +867,111 @@ async fn exercise(db: &Db) {
     unlinked(db).await;
     restored_nzb_links(db).await;
     first_checks(db).await;
+    listing_changes_follow_committed_writes(db).await;
+}
+
+/// Listing changes go out after their commit, and only for writes that changed
+/// something.
+async fn listing_changes_follow_committed_writes(db: &Db) {
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    let mut listings = db.subscribe_listings();
+    let content = db
+        .item_by_path("/content")
+        .await
+        .expect("query")
+        .expect("seeded");
+    let job = QueueEntry {
+        id: JobId::new(),
+        created_at: 1,
+        file_name: "listing.nzb".into(),
+        job_name: "listing job".into(),
+        category: "tv".into(),
+        priority: 0,
+        post_processing: 3,
+        nzb_blob: BlobId::new(),
+        nzb_size: 3,
+        total_bytes: 1,
+        paused: false,
+        retry_at: None,
+        attempts: 0,
+        stuck_count: 0,
+        last_error: None,
+        content_hash: None,
+    };
+    db.enqueue(&job, b"nzb").await.expect("enqueue");
+    assert!(matches!(listings.try_recv(), Ok(ListingChange::Nzbs)));
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+
+    let mut dir = Item::child(&content, "listing job", ItemKind::Directory).expect("valid");
+    dir.nzb_blob = Some(job.nzb_blob);
+    let mut file = Item::child(&dir, "a.mkv", ItemKind::NzbFile).expect("valid");
+    let meta = BlobId::new();
+    file.meta_blob = Some(meta);
+    file.nzb_blob = Some(job.nzb_blob);
+    file.size = Some(1);
+    let history = HistoryEntry {
+        id: job.id,
+        created_at: 2,
+        file_name: job.file_name.clone(),
+        job_name: job.job_name.clone(),
+        category: job.category.clone(),
+        status: JobStatus::Completed,
+        total_bytes: job.total_bytes,
+        download_seconds: 1,
+        fail_message: None,
+        download_dir: Some(dir.id),
+        nzb_blob: Some(job.nzb_blob),
+        storage: None,
+    };
+    assert!(
+        db.finish_job(
+            &history,
+            &[dir.clone(), file.clone()],
+            &[(meta, b"meta")],
+            &[],
+            &[]
+        )
+        .await
+        .expect("finish")
+    );
+    assert!(matches!(listings.try_recv(), Ok(ListingChange::Nzbs)));
+    let Ok(ListingChange::Items(items)) = listings.try_recv() else {
+        panic!("finishing names the published items");
+    };
+    assert!(items.contains(&(file.path.clone(), Some(file.id))));
+    assert!(items.contains(&(dir.path.clone(), None)));
+    assert_eq!(
+        db.item_by_path(&file.path).await.expect("query"),
+        Some(file.clone()),
+        "announced only once queryable"
+    );
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+
+    assert!(
+        !db.finish_job(&history, &[], &[], &[], &[])
+            .await
+            .expect("finish")
+    );
+    assert!(!db.remove_job(job.id).await.expect("remove"));
+    assert!(
+        matches!(listings.try_recv(), Err(TryRecvError::Empty)),
+        "no-ops change no listing"
+    );
+
+    assert_eq!(db.delete_history(&[job.id]).await.expect("delete"), 1);
+    assert!(matches!(listings.try_recv(), Ok(ListingChange::Completed)));
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+    assert!(
+        db.item_by_path(&file.path).await.expect("query").is_some(),
+        "deleting history keeps the content"
+    );
+    assert_eq!(db.delete_history(&[job.id]).await.expect("delete"), 0);
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+
+    db.delete_item(dir.id).await.expect("delete");
+    assert!(matches!(listings.try_recv(), Ok(ListingChange::Tree)));
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
 }
 
 /// A finished job stores its files' first health checks with its output.

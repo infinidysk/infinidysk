@@ -33,6 +33,10 @@ static SQLITE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/s
 
 /// Buffered change notices per subscriber before it lags.
 const CHANGES: usize = 256;
+/// Buffered listing changes per subscriber before it lags.
+const LISTING_EVENTS: usize = 32;
+/// Items one [`ListingChange::Items`] names; more become [`ListingChange::Tree`].
+const LISTING_ITEMS: usize = 64;
 /// Files per health state; `items_health_summary` covers it.
 const HEALTH_SUMMARY: &str = "SELECT health_state, CAST(COUNT(*) AS BIGINT) FROM items \
                               WHERE kind <> $1 AND meta_blob IS NOT NULL GROUP BY health_state";
@@ -188,6 +192,7 @@ fn migrated(result: Result<(), sqlx::migrate::MigrateError>) -> Result<(), Error
 pub struct Db {
     pool: Pool,
     changes: broadcast::Sender<Change>,
+    listings: broadcast::Sender<ListingChange>,
     // ponytail: serializes reservations within this process; one process owns the
     // database. Multiple writers would need a row lock per media.
     searches: Arc<Mutex<()>>,
@@ -214,6 +219,21 @@ pub enum Change {
     Queue,
     History,
     Health,
+}
+
+/// A committed write that changed what a directory listing shows.
+#[derive(Clone, Debug)]
+pub enum ListingChange {
+    /// `/nzbs`.
+    Nzbs,
+    /// `/completed-symlinks`.
+    Completed,
+    /// `/content`, `/completed-symlinks` and `/.ids`, not `/nzbs`.
+    Tree,
+    /// Items by path, with the id of each file.
+    Items(Arc<[(String, Option<ItemId>)]>),
+    /// A completed link or folder hidden after an app deleted it, by its `/content` path.
+    HiddenLink(String),
 }
 
 /// Runs `$body` with `$pool` bound to the native pool of whichever backend is active.
@@ -1084,6 +1104,7 @@ impl Db {
         Ok(Self {
             pool,
             changes: broadcast::channel(CHANGES).0,
+            listings: broadcast::channel(LISTING_EVENTS).0,
             searches: Arc::default(),
             nzb_retention_ms: Arc::new(AtomicI64::new(30 * DAY_MS)),
             writes: Arc::default(),
@@ -1208,6 +1229,40 @@ impl Db {
         let _ = self.changes.send(change);
     }
 
+    /// Listing changes from now on. A lagging receiver gets `Lagged` and should assume
+    /// every listing changed.
+    #[must_use]
+    pub fn subscribe_listings(&self) -> broadcast::Receiver<ListingChange> {
+        self.listings.subscribe()
+    }
+
+    /// Announces a listing change; `make` runs only when someone listens.
+    pub fn listing_changed(&self, make: impl FnOnce() -> ListingChange) {
+        if self.listings.receiver_count() != 0 {
+            let _ = self.listings.send(make());
+        }
+    }
+
+    /// Announces that `items` appeared, went or changed visibility.
+    pub fn items_changed(&self, items: &[Item]) {
+        if !items.is_empty() {
+            self.listing_changed(|| {
+                if items.len() > LISTING_ITEMS {
+                    return ListingChange::Tree;
+                }
+                ListingChange::Items(
+                    items
+                        .iter()
+                        .map(|item| {
+                            let file = (item.kind != ItemKind::Directory).then_some(item.id);
+                            (item.path.clone(), file)
+                        })
+                        .collect(),
+                )
+            });
+        }
+    }
+
     pub async fn close(&self) {
         on!(self, pool => pool.close().await);
     }
@@ -1298,6 +1353,7 @@ impl Db {
             insert_rows!(tx, items, blobs);
             tx.commit().await?;
         });
+        self.items_changed(items);
         Ok(())
     }
 
@@ -1546,6 +1602,7 @@ impl Db {
             .await?;
             tx.commit().await?;
         });
+        self.listing_changed(|| ListingChange::Nzbs);
         self.notify(Change::Queue);
         Ok(())
     }
@@ -1623,6 +1680,7 @@ impl Db {
             blob.is_some()
         });
         if removed {
+            self.listing_changed(|| ListingChange::Nzbs);
             self.notify(Change::Queue);
         }
         Ok(removed)
@@ -1758,6 +1816,8 @@ impl Db {
             queued.is_some()
         });
         if finished {
+            self.listing_changed(|| ListingChange::Nzbs);
+            self.history_listed(history, items);
             self.notify(Change::Queue);
             self.notify(Change::History);
             if !checks.is_empty() {
@@ -1780,8 +1840,21 @@ impl Db {
             insert_history!(tx, history, items, blobs);
             tx.commit().await?;
         });
+        self.history_listed(history, items);
         self.notify(Change::History);
         Ok(())
+    }
+
+    /// Announces the output of a job that went to history; a download directory that
+    /// already existed now shows in `/completed-symlinks`.
+    fn history_listed(&self, history: &HistoryEntry, items: &[Item]) {
+        if items.is_empty() {
+            if history.download_dir.is_some() {
+                self.listing_changed(|| ListingChange::Completed);
+            }
+        } else {
+            self.items_changed(items);
+        }
     }
 
     pub async fn history_entry(&self, id: JobId) -> Result<Option<HistoryEntry>, Error> {
@@ -1909,6 +1982,7 @@ impl Db {
             removed
         });
         if removed > 0 {
+            self.listing_changed(|| ListingChange::Completed);
             self.notify(Change::History);
         }
         Ok(removed)
@@ -1917,11 +1991,15 @@ impl Db {
     /// Deletes `id`, its subtree, the job folders this leaves empty, and the blobs nothing
     /// references anymore.
     pub async fn delete_item(&self, id: ItemId) -> Result<(), Error> {
-        on!(self, pool => {
+        let removed = on!(self, pool => {
             let mut tx = pool.begin().await?;
-            delete_subtree!(self, tx, id.0);
+            let removed = delete_subtree!(self, tx, id.0);
             tx.commit().await?;
+            removed
         });
+        if removed > 0 {
+            self.listing_changed(|| ListingChange::Tree);
+        }
         // A job whose download directory is gone reports as failed.
         self.notify(Change::History);
         Ok(())
@@ -1968,6 +2046,7 @@ impl Db {
             still.is_some()
         });
         if deleted {
+            self.listing_changed(|| ListingChange::Tree);
             self.notify(Change::History);
         }
         Ok(deleted)
@@ -1989,9 +2068,15 @@ impl Db {
                 .bind(id.0)
                 .fetch_optional(&mut *tx)
                 .await?;
-            if holds.is_none() {
-                delete_subtree!(self, tx, id.0);
+            let removed = if holds.is_none() {
+                let removed = delete_subtree!(self, tx, id.0);
                 tx.commit().await?;
+                removed
+            } else {
+                0
+            };
+            if removed > 0 {
+                self.listing_changed(|| ListingChange::Tree);
             }
             holds.is_none()
         });
@@ -2035,6 +2120,7 @@ impl Db {
             unowned.is_some()
         });
         if deleted {
+            self.listing_changed(|| ListingChange::Tree);
             self.notify(Change::History);
         }
         Ok(deleted)
@@ -2065,6 +2151,7 @@ impl Db {
             removed
         });
         if removed > 0 {
+            self.listing_changed(|| ListingChange::Tree);
             self.notify(Change::History);
         }
         Ok(removed)

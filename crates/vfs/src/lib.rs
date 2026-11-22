@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use infinidysk_core::{BlobId, FileMeta, ItemId, ItemKind, blob};
-use infinidysk_db::{Db, HealthState, Item, QueueEntry};
+use infinidysk_db::{Db, HealthState, Item, ListingChange, QueueEntry};
 use infinidysk_nntp::Client;
 use infinidysk_stream::{Budget, Cache, Fault, Gaps};
 use uuid::Uuid;
@@ -520,6 +520,8 @@ impl Vfs {
             return false;
         }
         self.deleted.hide(&item.path, Instant::now());
+        self.db
+            .listing_changed(|| ListingChange::HiddenLink(item.path.clone()));
         true
     }
 
