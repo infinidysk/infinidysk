@@ -569,8 +569,6 @@ pub struct Overview {
     bucket_ms: i64,
     points: Vec<Point>,
     totals: Totals,
-    /// Latest terminal PAR2 repair results updated in this window, excluding availability checks.
-    par2: Par2History,
     /// Since the metrics store was created.
     lifetime: Totals,
     providers: Vec<ProviderScore>,
@@ -590,14 +588,6 @@ pub struct Overview {
     /// Newest first.
     breaker_events: Vec<BreakerView>,
     writer_error: Option<String>,
-}
-
-#[derive(Serialize, ToSchema)]
-struct Par2History {
-    verified: i64,
-    repaired: i64,
-    unavailable: i64,
-    cancelled: i64,
 }
 
 /// Bytes and requests in one bucket starting at `ts`.
@@ -1422,8 +1412,6 @@ impl Metrics {
                 None => Default::default(),
             };
         let catalogue = self.sources.vfs.db().catalogue(now - 7 * DAY_MS).await?;
-        let (verified, repaired, unavailable, cancelled) =
-            self.sources.vfs.db().par2_history(since, now).await?;
         let (pending, error, at, pending_minute, open) = {
             let state = self.state();
             (
@@ -1522,12 +1510,6 @@ impl Metrics {
             bucket_ms: bucket,
             points,
             totals: totals(&sums),
-            par2: Par2History {
-                verified,
-                repaired,
-                unavailable,
-                cancelled,
-            },
             lifetime: totals(&lifetime),
             providers,
             workloads: workloads(&sums),

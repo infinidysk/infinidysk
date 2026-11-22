@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { api, body, type Schemas } from "../api/client";
 import { ago, stamp } from "../format";
 import { useSettings } from "../settings";
-import { Par2Scan } from "../par2";
+import { Par2Jobs } from "../par2";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -405,7 +405,7 @@ export function Health() {
       <Reconcile />
       <Attention />
       <Schedule />
-      <Par2Scan />
+      <Par2Jobs />
       <Rejected />
       <h2 className="mb-3 font-medium">History</h2>
       <div className="mb-3 flex flex-wrap items-center gap-2">

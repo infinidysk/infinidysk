@@ -214,8 +214,8 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
         assert_eq!(dav.as_ref(), from_mount);
         assert_eq!(<[u8; 32]>::from(Sha256::digest(&from_mount)), expected);
     }
-    let settings = http
-        .get(format!("{base}/api/v1/settings"))
+    let jobs = http
+        .get(format!("{base}/api/v1/health/par2"))
         .header("X-Api-Key", "fixture-admin")
         .send()
         .await
@@ -225,58 +225,9 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
         .json::<Value>()
         .await
         .unwrap();
-    let mut settings = settings["settings"].clone();
-    settings["repair"]["memory_mb"] = json!(512);
-    settings["repair"]["storage_gb"] = json!(20);
-    let saved = http
-        .put(format!("{base}/api/v1/settings"))
-        .header("X-Api-Key", "fixture-admin")
-        .json(&settings)
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json::<Value>()
-        .await
-        .unwrap();
-    assert_eq!(saved["settings"]["repair"]["storage_gb"], 20);
-    assert_eq!(saved["restart_required"], false);
-    assert_eq!(
-        http.post(format!("{base}/api/v1/health/par2-scan?repair=true"))
-            .header("X-Api-Key", "fixture-admin")
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::ACCEPTED
-    );
-    let backlog = http
-        .get(format!("{base}/api/v1/health/par2-scan"))
-        .header("X-Api-Key", "fixture-admin")
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json::<Value>()
-        .await
-        .unwrap();
-    assert_eq!(backlog["scan"]["repair"], true);
-    assert!(backlog["scan"]["total_files"].as_u64().unwrap() >= 2);
-    assert_eq!(backlog["limits"]["memory_mb"], 512);
-    assert_eq!(backlog["limits"]["storage_gb"], 20);
-    assert!(backlog["storage_used_bytes"].as_u64().unwrap() >= (2 * ARTICLE) as u64);
-    assert!(backlog["jobs"][0]["id"].is_string());
-    assert_eq!(
-        http.delete(format!("{base}/api/v1/health/par2-scan"))
-            .header("X-Api-Key", "fixture-admin")
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::NO_CONTENT
-    );
+    assert_eq!(jobs["enabled"], true);
+    assert!(jobs["storage_used_bytes"].as_u64().unwrap() >= (2 * ARTICLE) as u64);
+    assert!(jobs["jobs"][0]["id"].is_string());
     db.close().await;
     let pid = app.id().unwrap().to_string();
     assert!(
@@ -357,7 +308,7 @@ async fn terminate(app: &mut Child) -> Duration {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs the packaged binary inside a disposable image"]
-async fn packaged_worker_reports_memory_limits_and_resumes_after_shutdown() {
+async fn packaged_worker_resumes_after_shutdown() {
     let files = headers();
     let missing = [
         files[0].2[0].message_id.clone(),
@@ -457,91 +408,7 @@ async fn packaged_worker_reports_memory_limits_and_resumes_after_shutdown() {
         .await
         .unwrap();
     println!("Packaged revision: {}", status["commit"]);
-    let settings: Value = http
-        .get(format!("{base}/api/v1/settings"))
-        .header("X-Api-Key", "fixture-admin")
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let mut settings = settings["settings"].clone();
-    settings["repair"]["memory_mb"] = json!(128);
-    http.put(format!("{base}/api/v1/settings"))
-        .header("X-Api-Key", "fixture-admin")
-        .json(&settings)
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
     let action = format!("{base}/api/v1/files/{}/par2", item.id);
-    assert_eq!(
-        http.post(&action)
-            .header("X-Api-Key", "fixture-admin")
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::ACCEPTED
-    );
-    let failed = wait_repair_result(&db, item.id, 5).await;
-    let memory =
-        regex::Regex::new(r"needs another (\d+) working-memory bytes; (\d+) bytes available")
-            .unwrap();
-    let numbers = memory.captures(&failed.reason).unwrap();
-    assert!(numbers[1].parse::<u64>().unwrap() > numbers[2].parse::<u64>().unwrap());
-    assert!(
-        failed.reason.contains("Discovering PAR2 files")
-            || failed
-                .reason
-                .contains("Verifying source files and reconstructing damage")
-    );
-    assert!(
-        failed
-            .reason
-            .contains("Increase working memory in Settings > PAR2 repair and retry.")
-    );
-    assert_eq!(
-        (failed.attempts, failed.stored_bytes, failed.verified_bytes),
-        (1, 0, 0)
-    );
-    for article in &missing {
-        assert_eq!(db.article_repairs(article).await.unwrap(), []);
-    }
-    wait_ready(&mut app, &http, &base).await;
-    let failed_view: Value = http
-        .get(&action)
-        .header("X-Api-Key", "fixture-admin")
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(failed_view["repair"]["state"], "unavailable");
-    assert_eq!(failed_view["repair"]["reason"], failed.reason);
-    println!("128 MB refusal: {}; saved bytes: 0", failed.reason);
-
-    settings["repair"]["memory_mb"] = json!(256);
-    let saved: Value = http
-        .put(format!("{base}/api/v1/settings"))
-        .header("X-Api-Key", "fixture-admin")
-        .json(&settings)
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(saved["restart_required"], false);
     provider.stall_article(&stalled, 1, Duration::from_secs(30));
     assert_eq!(
         http.post(&action)
@@ -574,7 +441,6 @@ async fn packaged_worker_reports_memory_limits_and_resumes_after_shutdown() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(interrupted.id, failed.id);
     assert_eq!(
         (
             interrupted.state,
@@ -596,7 +462,7 @@ async fn packaged_worker_reports_memory_limits_and_resumes_after_shutdown() {
     app = start();
     wait_ready(&mut app, &http, &base).await;
     let repaired = wait_repair_result(&db, item.id, 3).await;
-    assert_eq!(repaired.id, failed.id);
+    assert_eq!(repaired.id, interrupted.id);
     assert_eq!(repaired.attempts, 1);
     assert_eq!(repaired.stored_bytes, i64::try_from(2 * ARTICLE).unwrap());
     assert_eq!(
@@ -624,7 +490,7 @@ async fn packaged_worker_reports_memory_limits_and_resumes_after_shutdown() {
     );
     terminate(&mut app).await;
     let logs = std::fs::read_to_string(root.join("output.log")).unwrap();
-    assert_eq!(logs.matches("repair did not finish").count(), 1);
+    assert_eq!(logs.matches("repair did not finish").count(), 0);
     assert!(!logs.contains("panicked at") && !logs.contains("stack backtrace"));
     assert!(
         !logs.contains("ERROR"),

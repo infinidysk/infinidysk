@@ -4,12 +4,15 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
 };
 use infinidysk_core::ItemId;
-use infinidysk_db::{repair::Owner, repair_jobs::Job};
-use serde::{Deserialize, Serialize};
+use infinidysk_db::{
+    repair::Owner,
+    repair_jobs::{DAMAGED, EXHAUSTED, Job},
+};
+use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -47,12 +50,8 @@ impl From<Job> for Par2Job {
                 2 => "verified",
                 3 => "repaired",
                 4 => "deferred",
-                5 if job.verify_only
-                    && job.reason.starts_with("Missing or corrupt articles found") =>
-                {
-                    "damaged"
-                }
-                5 if job.reason.starts_with("Retry limit reached:") => "failed",
+                5 if job.outcome == DAMAGED => "damaged",
+                5 if job.outcome == EXHAUSTED => "failed",
                 5 => "unavailable",
                 6 => "cancelled",
                 _ => "failed",
@@ -184,35 +183,20 @@ pub async fn delete_par2_verify(
 }
 
 #[derive(Serialize, ToSchema)]
-pub struct Par2ScanStatus {
+pub struct Par2Jobs {
     enabled: bool,
     pending_jobs: i64,
-    scan: Option<super::scan::Scan>,
+    /// Pending jobs, then the latest finished ones.
     jobs: Vec<Par2Job>,
-    counts: Vec<Par2Count>,
     storage_used_bytes: u64,
-    limits: crate::config::Repair,
 }
 
-#[derive(Serialize, ToSchema)]
-pub struct Par2Count {
-    state: i16,
-    count: i64,
-    /// Availability jobs included in this state total.
-    checks: i64,
-    /// Availability jobs that found damage, rather than failing to finish.
-    damaged_checks: i64,
-}
-
-#[utoipa::path(get, path = "/api/v1/health/par2-scan", tag = "health",
-    responses((status = 200, body = Par2ScanStatus), (status = 500, body = ApiError)))]
-pub async fn get_par2_scan(State(admin): State<Arc<Admin>>) -> Result<Json<Par2ScanStatus>, Fail> {
-    Ok(Json(Par2ScanStatus {
+#[utoipa::path(get, path = "/api/v1/health/par2", tag = "health",
+    responses((status = 200, body = Par2Jobs), (status = 500, body = ApiError)))]
+pub async fn get_par2_jobs(State(admin): State<Arc<Admin>>) -> Result<Json<Par2Jobs>, Fail> {
+    Ok(Json(Par2Jobs {
         enabled: infinidysk_core::experiment("par2-repair"),
         pending_jobs: admin.queue.db().par2_pending().await?,
-        scan: super::scan::load(admin.queue.db())
-            .await
-            .map_err(|e| Fail::Failed(e.to_string()))?,
         jobs: admin
             .queue
             .db()
@@ -221,84 +205,12 @@ pub async fn get_par2_scan(State(admin): State<Arc<Admin>>) -> Result<Json<Par2S
             .into_iter()
             .map(Into::into)
             .collect(),
-        counts: admin
-            .queue
-            .db()
-            .par2_counts()
-            .await?
-            .into_iter()
-            .map(|(state, count, checks, damaged_checks)| Par2Count {
-                state,
-                count,
-                checks,
-                damaged_checks,
-            })
-            .collect(),
         storage_used_bytes: admin
             .repairs
             .used_bytes()
             .await
             .map_err(|e| Fail::Failed(e.to_string()))?,
-        limits: admin.config.read().await.settings().repair.clone(),
     }))
-}
-
-#[derive(Default, Deserialize)]
-pub struct ScanOptions {
-    #[serde(default)]
-    repair: bool,
-}
-
-#[utoipa::path(post, path = "/api/v1/health/par2-scan", tag = "health",
-    params(("repair" = Option<bool>, Query, description = "Check and repair source sets instead of read-only verification")),
-    responses((status = 202), (status = 409, body = ApiError)))]
-pub async fn post_par2_scan(
-    State(admin): State<Arc<Admin>>,
-    Query(options): Query<ScanOptions>,
-) -> Result<StatusCode, Fail> {
-    if !infinidysk_core::experiment("par2-repair") {
-        return Err(Fail::Conflict(
-            "Enable PAR2 repair in Settings → Experiments and restart first.".into(),
-        ));
-    }
-    if super::scan::load(admin.queue.db())
-        .await
-        .map_err(|e| Fail::Failed(e.to_string()))?
-        .is_some_and(|scan| !scan.complete)
-    {
-        return Ok(StatusCode::ACCEPTED);
-    }
-    let requested_at = infinidysk_db::now_ms();
-    let boundary = admin.queue.db().par2_scan_boundary().await?;
-    let total_files = if let Some(boundary) = boundary {
-        Some(
-            u64::try_from(
-                admin
-                    .queue
-                    .db()
-                    .par2_scan_total(boundary, requested_at)
-                    .await?,
-            )
-            .unwrap_or(0),
-        )
-    } else {
-        Some(0)
-    };
-    let scan = super::scan::Scan {
-        boundary,
-        cursor: None,
-        requested_at,
-        scanned_files: 0,
-        complete: false,
-        cancelled: false,
-        repair: options.repair,
-        total_files,
-        skipped_files: 0,
-    };
-    super::scan::save(admin.queue.db(), &scan)
-        .await
-        .map_err(|e| Fail::Failed(e.to_string()))?;
-    Ok(StatusCode::ACCEPTED)
 }
 
 #[utoipa::path(delete, path = "/api/v1/health/par2-jobs/{id}", tag = "health",
@@ -315,30 +227,19 @@ pub async fn delete_par2_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(delete, path = "/api/v1/health/par2-scan", tag = "health",
-    responses((status = 204), (status = 500, body = ApiError)))]
-pub async fn delete_par2_scan(State(admin): State<Arc<Admin>>) -> Result<StatusCode, Fail> {
-    if let Some(mut scan) = super::scan::load(admin.queue.db())
-        .await
-        .map_err(|e| Fail::Failed(e.to_string()))?
-    {
-        scan.complete = true;
-        scan.cancelled = true;
-        super::scan::save(admin.queue.db(), &scan)
-            .await
-            .map_err(|e| Fail::Failed(e.to_string()))?;
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
-    fn exhausted_retries_are_failed_and_terminal_duration_stops_growing() {
-        for (reason, expected) in [
-            ("Retry limit reached: provider timed out", "failed"),
-            ("repair unavailable: no recovery data", "unavailable"),
+    fn stored_outcome_names_terminal_states_and_duration_stops_growing() {
+        use infinidysk_db::repair_jobs::{DAMAGED, EXHAUSTED};
+        for (outcome, verify_only, expected) in [
+            (EXHAUSTED, false, "failed"),
+            (0, false, "unavailable"),
+            (DAMAGED, true, "damaged"),
+            // Reason text no longer decides the state.
+            (0, true, "unavailable"),
         ] {
+            let reason = "Retry limit reached: Missing or corrupt articles found.";
             let view = super::Par2Job::from(infinidysk_db::repair_jobs::Job {
                 id: uuid::Uuid::nil(),
                 nzb_blob: None,
@@ -346,7 +247,8 @@ mod tests {
                 meta_blob: None,
                 meta_generation: None,
                 generation: 0,
-                verify_only: false,
+                claim_generation: 0,
+                verify_only,
                 state: 5,
                 attempts: 3,
                 reason: reason.into(),
@@ -364,7 +266,9 @@ mod tests {
                 completed_requests: 0,
                 missing_requests: 0,
                 file_path: None,
+                outcome,
             });
+
             assert_eq!(view.state, expected);
             assert_eq!(view.duration_ms, 100);
         }

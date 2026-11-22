@@ -122,9 +122,7 @@ pub struct Admin {
         crate::repair::api::post_par2_verify,
         crate::repair::api::delete_par2_repair,
         crate::repair::api::delete_par2_verify,
-        crate::repair::api::get_par2_scan,
-        crate::repair::api::post_par2_scan,
-        crate::repair::api::delete_par2_scan,
+        crate::repair::api::get_par2_jobs,
         crate::repair::api::delete_par2_job,
         files::post_analyze,
         files::get_nzb,
@@ -273,10 +271,8 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         .route("/api/v1/health", get(get_health))
         .route("/api/v1/health/summary", get(get_health_summary))
         .route(
-            "/api/v1/health/par2-scan",
-            get(crate::repair::api::get_par2_scan)
-                .post(crate::repair::api::post_par2_scan)
-                .delete(crate::repair::api::delete_par2_scan),
+            "/api/v1/health/par2",
+            get(crate::repair::api::get_par2_jobs),
         )
         .route(
             "/api/v1/files/{id}/par2",
