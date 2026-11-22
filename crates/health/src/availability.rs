@@ -187,6 +187,21 @@ impl Health {
             };
             let result = runtime.block_on(async {
                 let (segments, _, corrupt) = check::flatten(&meta);
+                let mut segments: Vec<_> = segments.into_iter().enumerate().collect();
+                if let infinidysk_core::FileMeta::Multipart(file) = &meta {
+                    let mut overlaps = file.parts.iter().flat_map(|part| {
+                        part.segments.items.iter().scan(part.offset, |at, segment| {
+                            let start = *at;
+                            *at = start.saturating_add(u64::from(segment.size));
+                            Some(
+                                !part.data.is_empty()
+                                    && start < part.data.end
+                                    && *at > part.data.start,
+                            )
+                        })
+                    });
+                    segments.retain(|_| overlaps.next().expect("one range per flattened segment"));
+                }
                 let total = segments.len();
                 options
                     .progress
@@ -199,109 +214,111 @@ impl Health {
                 let remaining = AtomicU64::new(options.decoded_bytes);
                 let evidence = options.evidence.as_deref();
                 let progress = &options.progress;
-                let requests = segments
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &(segment, begin, proof))| {
-                        // STAT cannot clear a recorded corrupt article; only its body can.
-                        let body = segment.id.is_empty()
-                            || corrupt.contains(&i)
-                            || [0, total / 2, total - 1].contains(&i);
-                        let slot = evidence.filter(|_| !segment.id.is_empty()).map(|evidence| {
-                            evidence.slot(Key {
-                                epoch,
-                                source,
-                                id: segment.id.clone(),
-                                begin: body.then_some(begin).flatten(),
-                                size: body.then_some(segment.size),
-                            })
-                        });
-                        let body_permits = &body_permits;
-                        let remaining = &remaining;
-                        let direct = &direct;
-                        async move {
-                            let mut receipt = if let Some(slot) = &slot {
-                                Some(slot.lock().await)
-                            } else {
-                                None
-                            };
-                            if receipt.as_deref().copied() == Some(true) {
+                let requests =
+                    segments
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &(index, (segment, begin, proof)))| {
+                            // STAT cannot clear a recorded corrupt article; only its body can.
+                            let body = segment.id.is_empty()
+                                || corrupt.contains(&index)
+                                || [0, total / 2, total - 1].contains(&i);
+                            let slot =
+                                evidence.filter(|_| !segment.id.is_empty()).map(|evidence| {
+                                    evidence.slot(Key {
+                                        epoch,
+                                        source,
+                                        id: segment.id.clone(),
+                                        begin: body.then_some(begin).flatten(),
+                                        size: body.then_some(segment.size),
+                                    })
+                                });
+                            let body_permits = &body_permits;
+                            let remaining = &remaining;
+                            let direct = &direct;
+                            async move {
+                                let mut receipt = if let Some(slot) = &slot {
+                                    Some(slot.lock().await)
+                                } else {
+                                    None
+                                };
+                                if receipt.as_deref().copied() == Some(true) {
+                                    drop(receipt);
+                                    progress.checked.fetch_add(1, Ordering::Release);
+                                    return Ok(Probe::Present);
+                                }
+                                let mut result = None;
+                                if body || direct.client.has_repair_lookup() {
+                                    let _permit = body_permits
+                                        .acquire()
+                                        .await
+                                        .expect("spot check semaphore never closes");
+                                    if remaining
+                                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                                            left.checked_sub(MAX_DECODED_LEN as u64)
+                                        })
+                                        .is_err()
+                                    {
+                                        return Err("source read allowance exceeded");
+                                    }
+                                    let used = if body {
+                                        let (probe, bytes) =
+                                            check::fetch(direct, segment, begin, proof).await;
+                                        // A missing article decoded nothing.
+                                        let used = match (&probe, bytes) {
+                                            (_, Some(bytes)) => Some(bytes.len()),
+                                            (Probe::Missing, None) => Some(0),
+                                            _ => None,
+                                        };
+                                        result = Some(probe);
+                                        used
+                                    } else {
+                                        match direct.client.repaired(&segment.id, None).await {
+                                            Ok(Some(repair)) => {
+                                                result = Some(Probe::Present);
+                                                Some(repair.data.len())
+                                            }
+                                            Ok(None) => Some(0),
+                                            Err(error) => {
+                                                result = Some(Probe::Inconclusive(error));
+                                                None
+                                            }
+                                        }
+                                    };
+                                    if let Some(used) = used {
+                                        progress
+                                            .body_bytes
+                                            .fetch_add(used as u64, Ordering::Relaxed);
+                                        remaining.fetch_add(
+                                            MAX_DECODED_LEN as u64 - used as u64,
+                                            Ordering::Relaxed,
+                                        );
+                                    }
+                                }
+                                let result = match result {
+                                    Some(probe) => probe,
+                                    None => match direct
+                                        .client
+                                        .provider_stat(
+                                            &segment.id,
+                                            infinidysk_nntp::Workload::Health,
+                                            None,
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => Probe::Present,
+                                        Err(SourceError::NotFound) => Probe::Missing,
+                                        Err(error) => Probe::Inconclusive(error),
+                                    },
+                                };
+                                if let Some(receipt) = &mut receipt {
+                                    **receipt = matches!(result, Probe::Present);
+                                }
                                 drop(receipt);
                                 progress.checked.fetch_add(1, Ordering::Release);
-                                return Ok(Probe::Present);
+                                Ok(result)
                             }
-                            let mut result = None;
-                            if body || direct.client.has_repair_lookup() {
-                                let _permit = body_permits
-                                    .acquire()
-                                    .await
-                                    .expect("spot check semaphore never closes");
-                                if remaining
-                                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                                        left.checked_sub(MAX_DECODED_LEN as u64)
-                                    })
-                                    .is_err()
-                                {
-                                    return Err("source read allowance exceeded");
-                                }
-                                let used = if body {
-                                    let (probe, bytes) =
-                                        check::fetch(direct, segment, begin, proof).await;
-                                    // A missing article decoded nothing.
-                                    let used = match (&probe, bytes) {
-                                        (_, Some(bytes)) => Some(bytes.len()),
-                                        (Probe::Missing, None) => Some(0),
-                                        _ => None,
-                                    };
-                                    result = Some(probe);
-                                    used
-                                } else {
-                                    match direct.client.repaired(&segment.id, None).await {
-                                        Ok(Some(repair)) => {
-                                            result = Some(Probe::Present);
-                                            Some(repair.data.len())
-                                        }
-                                        Ok(None) => Some(0),
-                                        Err(error) => {
-                                            result = Some(Probe::Inconclusive(error));
-                                            None
-                                        }
-                                    }
-                                };
-                                if let Some(used) = used {
-                                    progress
-                                        .body_bytes
-                                        .fetch_add(used as u64, Ordering::Relaxed);
-                                    remaining.fetch_add(
-                                        MAX_DECODED_LEN as u64 - used as u64,
-                                        Ordering::Relaxed,
-                                    );
-                                }
-                            }
-                            let result = match result {
-                                Some(probe) => probe,
-                                None => match direct
-                                    .client
-                                    .provider_stat(
-                                        &segment.id,
-                                        infinidysk_nntp::Workload::Health,
-                                        None,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => Probe::Present,
-                                    Err(SourceError::NotFound) => Probe::Missing,
-                                    Err(error) => Probe::Inconclusive(error),
-                                },
-                            };
-                            if let Some(receipt) = &mut receipt {
-                                **receipt = matches!(result, Probe::Present);
-                            }
-                            drop(receipt);
-                            progress.checked.fetch_add(1, Ordering::Release);
-                            Ok(result)
-                        }
-                    });
+                        });
                 let mut requests = stream::iter(requests).buffer_unordered(concurrency);
                 let (mut missing, mut corrupt) = (0, 0);
                 loop {

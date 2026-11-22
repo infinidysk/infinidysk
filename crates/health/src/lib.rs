@@ -573,6 +573,7 @@ impl Health {
         settings: &Settings,
         writing: &mut Writing,
     ) -> Result<(), Error> {
+        let observed = self.db.blob_epoch();
         let Some((blob_id, mut meta)) = self.meta(item).await? else {
             tracing::warn!(item = %item.id, path = %item.path, reason = "its stored metadata is gone", "cannot check a file; retrying tomorrow");
             self.db.postpone_health(item.id, now_ms() + DAY_MS).await?;
@@ -596,7 +597,6 @@ impl Health {
             source,
             meter: None,
         };
-        let observed = self.db.blob_epoch();
         let (outcome, changed, head) = self
             .released(writing, check::run(&client, &mut meta, &item.name, &opts))
             .await;

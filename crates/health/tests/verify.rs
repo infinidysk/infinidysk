@@ -116,7 +116,7 @@ async fn playback_preempts_an_availability_check_and_releases_publication() {
 async fn archive_members_check_their_stored_ranges_without_a_par2_proof() {
     use infinidysk_core::{ByteRange, FilePart, MultipartFile};
     let (data, _) = content();
-    let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
+    let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE).into_iter().skip(1))
         .await
         .unwrap();
     let (_scratch, db, item, health) = stored(&server, &data, None).await;
@@ -130,7 +130,7 @@ async fn archive_members_check_their_stored_ranges_without_a_par2_proof() {
             segments: plain.segments,
             offset: 0,
             data: ByteRange {
-                start: 150,
+                start: ARTICLE as u64,
                 end: data.len() as u64 - 150,
             },
             split_after: false,
@@ -150,10 +150,10 @@ async fn archive_members_check_their_stored_ranges_without_a_par2_proof() {
             )
             .await
             .unwrap(),
-        Availability::Available { articles: 15 }
+        Availability::Available { articles: 14 }
     ));
     assert_eq!(server.body_commands(), 3);
-    assert_eq!(server.stat_commands(), 12);
+    assert_eq!(server.stat_commands(), 11);
 }
 
 #[tokio::test]
