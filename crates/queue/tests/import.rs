@@ -537,6 +537,15 @@ async fn archives_open_three_levels_deep_and_compressed_inner_members_fail() {
 
 #[tokio::test]
 async fn missing_obfuscated_data_waits_for_par2_instead_of_failing_empty() {
+    missing_import(false).await;
+}
+
+#[tokio::test]
+async fn repair_completed_during_a_failed_import_retries_the_job() {
+    missing_import(true).await;
+}
+
+async fn missing_import(complete_during_import: bool) {
     let missing = post("missing-obfuscated", "obfuscated", &[1; 1000], 1000);
     let parity = fixture("par2/tests/fixtures/set.par2");
     let index = post("surviving-index", "set.par2", &parity, 32 << 10);
@@ -544,7 +553,7 @@ async fn missing_obfuscated_data_waits_for_par2_instead_of_failing_empty() {
         ("obfuscated", &missing, 1000, 1000),
         ("set.par2", &index, parity.len(), 32 << 10),
     ]);
-    let (_server, queue) = setup(index).await;
+    let (server, queue) = setup(index).await;
     queue.enable_par2();
     let db = queue.db();
     let id = queue
@@ -559,7 +568,28 @@ async fn missing_obfuscated_data_waits_for_par2_instead_of_failing_empty() {
         )
         .await
         .unwrap();
-    assert!(queue.process_next().await);
+    if complete_during_import {
+        let (arrived, release) = server.hold_article(&missing[0].message_id);
+        let complete = async {
+            tokio::time::timeout(Duration::from_secs(5), arrived)
+                .await
+                .unwrap()
+                .unwrap();
+            db.request_par2(infinidysk_db::repair::Owner::Queue(id), false, 0)
+                .await
+                .unwrap()
+                .unwrap();
+            let job = db.claim_par2(1).await.unwrap().unwrap();
+            db.finish_par2(job.claim(), 3, "repaired", 0, 0, 2, None)
+                .await
+                .unwrap();
+            release.send(()).unwrap();
+        };
+        let (processed, ()) = tokio::join!(queue.process_next(), complete);
+        assert!(processed);
+    } else {
+        assert!(queue.process_next().await);
+    }
     assert!(
         db.history_entry(id).await.unwrap().is_none(),
         "repair must be requested before failure"
@@ -570,7 +600,7 @@ async fn missing_obfuscated_data_waits_for_par2_instead_of_failing_empty() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(repair.state, 0);
+    assert_eq!(repair.state, if complete_during_import { 3 } else { 0 });
 }
 
 #[tokio::test]

@@ -816,15 +816,17 @@ impl Queue {
 
     async fn attempt(&self, job: &QueueEntry, progress: &Arc<Progress>) -> Result<Outcome, Error> {
         let repair_owner = infinidysk_db::repair::Owner::Queue(job.id);
-        if self.par2.load(Ordering::Acquire)
-            && self
-                .db
-                .par2_result(repair_owner, false)
-                .await?
-                .is_some_and(|result| result.pending())
-        {
-            return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
-        }
+        let prior_success = if self.par2.load(Ordering::Acquire) {
+            match self.db.par2_result(repair_owner, false).await? {
+                Some(job) if job.pending() => {
+                    return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
+                }
+                Some(job) if matches!(job.state, 2 | 3) => Some(job.claim()),
+                _ => None,
+            }
+        } else {
+            None
+        };
         let Some((source, raw)) = self.db.queued_repair_nzb(job.id, job.nzb_blob).await? else {
             return Ok(Outcome::Failed(
                 "The NZB is missing from storage.".to_owned(),
@@ -908,8 +910,21 @@ impl Queue {
                         failed.nzb_size = nzb_size;
                         failed.total_bytes = inner.total_bytes;
                         failed.file_name = file_name;
+                    } else if self.db.repair_source(repair_owner).await?.as_ref() != Some(&source) {
+                        return Ok(Outcome::Retry(
+                            "The stored NZB changed during the import.".to_owned(),
+                        ));
                     }
-                    if self.db.par2_result(repair_owner, false).await?.is_none() {
+                    if let Some(result) = self.db.par2_result(repair_owner, false).await? {
+                        if result.pending() {
+                            return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
+                        }
+                        if matches!(result.state, 2 | 3) && Some(result.claim()) != prior_success {
+                            return Ok(Outcome::Retry(
+                                "PAR2 completed during the import.".to_owned(),
+                            ));
+                        }
+                    } else {
                         match self.db.request_par2(repair_owner, false, now_ms()).await {
                             Ok(Some(_)) => {
                                 return Ok(Outcome::Retry(format!(
