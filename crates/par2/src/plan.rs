@@ -247,6 +247,40 @@ pub(super) fn read(reader: &Reader, set: Id, verify: bool) -> Result<RepairSet<'
     })
 }
 
+/// Adds the rows of `set`'s recovery packets found from packet `from` on to `rank`;
+/// returns where the next call continues.
+pub(super) fn recovery_rank(
+    reader: &Reader,
+    set: Id,
+    slice_size: usize,
+    from: usize,
+    rank: &mut crate::Rank<'_>,
+) -> Result<usize, Error> {
+    if slice_size == 0 || !slice_size.is_multiple_of(4) {
+        return Err(Error::Invalid(
+            "slice size must be a positive multiple of four",
+        ));
+    }
+    let found = &reader.scan.found;
+    for packet in found
+        .get(from..)
+        .unwrap_or_default()
+        .iter()
+        .filter(|p| p.set == set && &p.kind == RECOVERY)
+    {
+        if packet.body.len().checked_sub(4) != Some(slice_size) {
+            continue;
+        }
+        let row = Recovery::scanned(
+            &reader.buf[packet.body.start - HEADER..packet.body.end],
+            set,
+            slice_size,
+        )?;
+        rank.add(&row);
+    }
+    Ok(found.len())
+}
+
 pub(super) fn recovery(
     reader: &Reader,
     set: Id,

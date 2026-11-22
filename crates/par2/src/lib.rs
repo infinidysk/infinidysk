@@ -15,7 +15,7 @@ mod repair;
 mod verify;
 
 pub use plan::{RepairSet, Source};
-pub use repair::{Error, Input, Recovered, Recovery, Repair};
+pub use repair::{Error, Input, Rank, Recovered, Recovery, Repair};
 pub use verify::{Verified, Verifier};
 
 const MAGIC: &[u8; 8] = b"PAR2\0PKT";
@@ -294,6 +294,13 @@ impl Reader {
         self.buf.len()
     }
 
+    /// The first checksum-validated packet starting at or after the volume boundary.
+    pub fn volume_set(&self, start: usize) -> Option<Id> {
+        let found = &self.scan.found;
+        let index = found.partition_point(|packet| packet.body.start - HEADER < start);
+        found.get(index).map(|packet| packet.set)
+    }
+
     /// Recovery sets with at least one checksum-validated packet.
     pub fn sets(&self) -> Vec<Id> {
         self.scan
@@ -328,6 +335,18 @@ impl Reader {
 
     pub fn recovery_slices(&self, set: Id, slice_size: usize) -> Result<Vec<Recovery<'_>>, Error> {
         plan::recovery(self, set, slice_size)
+    }
+
+    /// Adds `set`'s recovery rows in packets found since packet `from` to `rank`, so a
+    /// growing read is counted without rescanning; returns the `from` of the next call.
+    pub fn recovery_rank(
+        &self,
+        set: Id,
+        slice_size: usize,
+        from: usize,
+        rank: &mut Rank<'_>,
+    ) -> Result<usize, Error> {
+        plan::recovery_rank(self, set, slice_size, from, rank)
     }
 }
 

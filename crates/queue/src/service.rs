@@ -143,6 +143,7 @@ pub struct Queue {
     rules: Mutex<Arc<import::Rules>>,
     handoff: OnceLock<Arc<dyn HandoffWriter>>,
     verifier: OnceLock<Arc<dyn Verifier>>,
+    par2: AtomicBool,
     /// An inspection is running; one at a time.
     inspecting: AtomicBool,
 }
@@ -233,6 +234,8 @@ enum Outcome {
         inner: Option<Inner>,
     },
     Failed(String),
+    /// Failed after the attempt replaced the queued NZB; history names the replacement.
+    FailedAs(Box<QueueEntry>, String),
     Retry(String),
     /// The watchdog cancelled it.
     Stuck,
@@ -273,6 +276,7 @@ impl Queue {
             rules: Mutex::default(),
             handoff: OnceLock::new(),
             verifier: OnceLock::new(),
+            par2: AtomicBool::new(false),
             inspecting: AtomicBool::new(false),
         }
     }
@@ -289,6 +293,11 @@ impl Queue {
     /// `storage` from the mount. Set once, before [`Queue::run`].
     pub fn set_handoff(&self, writer: Arc<dyn HandoffWriter>) {
         let _ = self.handoff.set(writer);
+    }
+
+    /// Enable parked imports while their original articles are reconstructed.
+    pub fn enable_par2(&self) {
+        self.par2.store(true, Ordering::Release);
     }
 
     /// Counts an import at a 100 % sample as each file's first health check, run by
@@ -661,6 +670,7 @@ impl Queue {
                     .map_err(Error::from)
             }
             Outcome::Failed(reason) => self.fail(job, started, reason).await,
+            Outcome::FailedAs(failed, reason) => self.fail(&failed, started, reason).await,
             Outcome::Stuck if job.stuck_count.saturating_add(1) >= STUCK_LIMIT => {
                 let reason = "Import stalled three times.".to_owned();
                 self.fail(job, started, reason).await
@@ -805,7 +815,35 @@ impl Queue {
     }
 
     async fn attempt(&self, job: &QueueEntry, progress: &Arc<Progress>) -> Result<Outcome, Error> {
-        let Some(raw) = self.db.blob(job.nzb_blob).await? else {
+        let repair_owner = infinidysk_db::repair::Owner::Queue(job.id);
+        let par2 = self.par2.load(Ordering::Acquire);
+        let prior_success = if par2 {
+            match self.db.par2_result(repair_owner, false).await? {
+                Some(job) if job.pending() => {
+                    return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
+                }
+                Some(job) if matches!(job.state, 2 | 3) => Some(job.claim()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        // Without PAR2 no repair can replace the NZB or serve omitted articles.
+        let loaded = if par2 {
+            self.db
+                .queued_repair_nzb(job.id, job.nzb_blob)
+                .await?
+                .map(|(source, raw)| (Some(source), raw))
+        } else {
+            self.db.blob(job.nzb_blob).await?.map(|raw| (None, raw))
+        };
+        let Some((source, raw)) = loaded else {
+            // The row may still be queued under a replacement NZB; only a missing one fails.
+            if par2 && self.db.repair_source(repair_owner).await?.is_some() {
+                return Ok(Outcome::Retry(
+                    "The stored NZB changed before the import.".to_owned(),
+                ));
+            }
             return Ok(Outcome::Failed(
                 "The NZB is missing from storage.".to_owned(),
             ));
@@ -837,11 +875,23 @@ impl Queue {
                     password,
                     Arc::clone(progress),
                     self.verifier.get().map(|v| &**v as &dyn Verifier),
+                    source
+                        .as_ref()
+                        .filter(|_| inner.is_none())
+                        .map(|source| (source.nzb(), source.generation())),
+                    source.is_some(),
                 ) => imported,
                 () = self.stalled(progress) => return Ok(Outcome::Stuck),
             };
             let raw = match imported {
                 Ok(Imported::Files { outputs, checks }) => {
+                    if let Some(source) = &source
+                        && self.db.repair_source(repair_owner).await?.as_ref() != Some(source)
+                    {
+                        return Ok(Outcome::Retry(
+                            "The stored NZB changed during the import.".to_owned(),
+                        ));
+                    }
                     return Ok(Outcome::Done {
                         outputs,
                         checks,
@@ -851,6 +901,67 @@ impl Queue {
                 }
                 Ok(Imported::Nzb(raw)) => raw,
                 Err(import::Error::Retry(error)) => return Ok(Outcome::Retry(error.to_string())),
+                Err(
+                    import::Error::Unrepairable(reason)
+                    | import::Error::Password(reason)
+                    | import::Error::Unsupported(reason),
+                ) => return Ok(Outcome::Failed(reason)),
+                Err(error) if let Some(source) = &source => {
+                    let mut failed = job.clone();
+                    if let Some(inner) = inner {
+                        let nzb_size = inner.xml.len() as u64;
+                        let file_name = names::without_password(&job.file_name);
+                        let encoded = blocking(move || blob::encode_nzb(&inner.xml)).await?;
+                        let Some(promoted) = self
+                            .db
+                            .replace_queued_repair_nzb(
+                                source,
+                                &encoded,
+                                nzb_size,
+                                inner.total_bytes,
+                                &file_name,
+                            )
+                            .await?
+                        else {
+                            return Ok(Outcome::Retry(
+                                "The stored NZB changed during the import.".to_owned(),
+                            ));
+                        };
+                        // Failed history must name the NZB the queue row now holds.
+                        failed.nzb_blob = promoted;
+                        failed.nzb_size = nzb_size;
+                        failed.total_bytes = inner.total_bytes;
+                        failed.file_name = file_name;
+                    } else if self.db.repair_source(repair_owner).await?.as_ref() != Some(source) {
+                        return Ok(Outcome::Retry(
+                            "The stored NZB changed during the import.".to_owned(),
+                        ));
+                    }
+                    if let Some(result) = self.db.par2_result(repair_owner, false).await? {
+                        if result.pending() {
+                            return Ok(Outcome::Retry("Waiting for PAR2 repair.".to_owned()));
+                        }
+                        if matches!(result.state, 2 | 3) && Some(result.claim()) != prior_success {
+                            return Ok(Outcome::Retry(
+                                "PAR2 completed during the import.".to_owned(),
+                            ));
+                        }
+                    } else {
+                        match self.db.request_par2(repair_owner, false, now_ms()).await {
+                            Ok(Some(_)) => {
+                                return Ok(Outcome::Retry(format!(
+                                    "Waiting for PAR2 repair: {error}"
+                                )));
+                            }
+                            Err(infinidysk_db::Error::RepairQueueFull) => {
+                                return Ok(Outcome::Retry("The repair queue is full.".to_owned()));
+                            }
+                            Ok(None) => {}
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
+                    return Ok(Outcome::FailedAs(Box::new(failed), error.to_string()));
+                }
                 Err(error) => return Ok(Outcome::Failed(error.to_string())),
             };
             let xml = match parse_inner(raw).await {

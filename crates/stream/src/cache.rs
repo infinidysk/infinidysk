@@ -301,7 +301,7 @@ impl Cache {
     ) -> Body {
         self.misses.fetch_add(1, Ordering::Relaxed);
         let body = client
-            .body_with(message_id, workload, probe, progress, begin)
+            .provider_body_with(message_id, workload, probe, progress, begin)
             .await;
         let data = body.map_err(Arc::new)?.data;
         self.insert(message_id, data.clone());
@@ -317,7 +317,7 @@ impl Cache {
         probe: Option<&Probe>,
     ) -> Body {
         self.misses.fetch_add(1, Ordering::Relaxed);
-        let body = client.hedge(message_id, probe, begin).await;
+        let body = client.provider_hedge(message_id, probe, begin).await;
         let data = body.map_err(Arc::new)?.data;
         self.insert(message_id, data.clone());
         Ok(data)

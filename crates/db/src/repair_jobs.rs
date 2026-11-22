@@ -51,6 +51,11 @@ pub struct Claim {
 }
 
 impl Job {
+    /// Queued, running or deferred: the job has not reached a result yet.
+    pub const fn pending(&self) -> bool {
+        matches!(self.state, 0 | 1 | 4)
+    }
+
     pub const fn claim(&self) -> Claim {
         Claim {
             id: self.id,
@@ -296,13 +301,29 @@ impl Db {
             if !state.is_some_and(|s| matches!(s, 2 | 3 | 5 | 6)) { tx.rollback().await?; return Ok(()) }
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
                 .fetch_one(&mut *tx).await?;
-            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
             sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = $3, repair_on_failure = $4, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND state IN (2, 3, 5, 6)")
                 .bind(id).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;
             tx.commit().await?;
             Ok(())
         })
     }
+    /// Queues a verified or repaired job again only while it still holds the result
+    /// `claim` observed; `false` when the job moved on since.
+    pub async fn retry_par2(&self, claim: Claim, now: i64) -> Result<bool, Error> {
+        let _serial = self.searches.lock().await;
+        on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
+                .fetch_one(&mut *tx).await?;
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
+            let retried = sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = NULL, repair_on_failure = FALSE, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND claim_generation = $3 AND state IN (2, 3)")
+                .bind(claim.id).bind(now).bind(claim.generation).execute(&mut *tx).await?.rows_affected() == 1;
+            tx.commit().await?;
+            Ok(retried)
+        })
+    }
+
     /// Recheck availability through committed repairs and retry parked imports.
     pub async fn wake_par2(&self, nzb: BlobId, now: i64) -> Result<(), Error> {
         on!(self, pool => {
@@ -355,7 +376,7 @@ impl Db {
                 "SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = $3")
                 .bind(source.nzb().0).bind(source.generation()).bind(verify).fetch_optional(&mut *tx).await?;
             if let Some(id) = existing { tx.rollback().await?; return Ok(Some(id)); }
-            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
             let id = Uuid::new_v4();
             sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, generation, verify_only, next_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)")
                 .bind(id).bind(source.nzb().0).bind(source.generation()).bind(verify).bind(now)
@@ -478,7 +499,7 @@ impl Db {
                 return Ok(Some(id));
             }
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)").fetch_one(&mut *tx).await?;
-            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairBounds("pending job count")); }
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
             let id = Uuid::new_v4();
             sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, item_id, meta_blob, meta_generation, generation, verify_only, next_at, updated_at, scan_at, repair_on_failure) VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $7, $8, $9)")
                 .bind(id).bind(nzb).bind(item.0).bind(meta).bind(meta_generation).bind(generation).bind(now).bind(scan_at).bind(repair).execute(&mut *tx).await?;

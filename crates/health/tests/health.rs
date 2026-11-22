@@ -72,6 +72,295 @@ fn nzb(articles: &[Article], len: usize, name: &str) -> Vec<u8> {
 
 type Log = Arc<(Mutex<Vec<String>>, AtomicBool)>;
 
+#[tokio::test]
+async fn a_check_discards_observations_when_repairs_change_during_provider_reads() {
+    use infinidysk_core::{FileMeta, blob};
+    for metadata_change in [true, false] {
+        let (articles, len) = mkv("health-publication");
+        let server = LoopbackServer::start(articles.clone()).await.unwrap();
+        let (db, item, _) = import(&server, &articles, len).await;
+        let (_arr_tx, arr) = watch::channel(Vec::new());
+        let (_settings_tx, settings) = watch::channel(Settings::default());
+        let health = Health::new(db.clone(), client(&server), arr, settings)
+            .unwrap()
+            .with_par2();
+        let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+        status.state = HealthState::Unchecked;
+        status.last_check = None;
+        status.next_check = Some(0);
+        db.set_health(item.id, &status, Recheck::None)
+            .await
+            .unwrap();
+        let (arrived, release) = server.hold_article(&articles[0].message_id);
+        let checking = tokio::spawn(async move { health.step().await.unwrap() });
+        tokio::time::timeout(Duration::from_secs(2), arrived)
+            .await
+            .unwrap()
+            .unwrap();
+        let paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+            .await
+            .unwrap();
+        let meta_id = item.meta_blob.unwrap();
+        let raw = db.blob(meta_id).await.unwrap().unwrap();
+        let mut metadata = blob::decode_meta(&raw).unwrap();
+        let FileMeta::Nzb(file) = &mut metadata else {
+            panic!("plain file")
+        };
+        if metadata_change {
+            file.segments.items[0]
+                .fallbacks
+                .push("after-publication@loopback".into());
+            db.update_blob(meta_id, &blob::encode_meta(&metadata).unwrap())
+                .await
+                .unwrap();
+        } else {
+            let source = db
+                .repair_source(infinidysk_db::repair::Owner::Item(item.id))
+                .await
+                .unwrap()
+                .unwrap();
+            let patch = infinidysk_core::repair::Patch {
+                id: infinidysk_core::PatchId::new(),
+                source: infinidysk_core::repair::Source {
+                    set: [1; 16],
+                    file: [2; 16],
+                    range: infinidysk_core::ByteRange {
+                        start: 0,
+                        end: ARTICLE as u64,
+                    },
+                    file_length: len as u64,
+                    message_id: Some(articles[0].message_id.clone()),
+                    part: Some(1),
+                    total: Some(u32::try_from(articles.len()).unwrap()),
+                },
+                sha256: [3; 32],
+            };
+            // Only the SQL publication boundary is exercised; this client never reads the patch.
+            assert!(db.publish_patches((), &source, &[patch]).await.unwrap());
+        }
+        drop(paused);
+        assert!(
+            !checking.is_finished(),
+            "provider read remains held through publication"
+        );
+        release.send(()).unwrap();
+        assert!(checking.await.unwrap());
+        let (_, result) = db.health(item.id).await.unwrap().unwrap();
+        assert_eq!(
+            result.last_check, None,
+            "an old observation must not become a current check"
+        );
+        assert_eq!(result.state, HealthState::Unchecked);
+        // A discarded result stays due; the error path would postpone it.
+        assert!(
+            result
+                .next_check
+                .is_none_or(|due| due <= infinidysk_db::now_ms()),
+            "{:?}",
+            result.next_check
+        );
+        assert_eq!(
+            blob::decode_meta(&db.blob(meta_id).await.unwrap().unwrap()).unwrap(),
+            metadata
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_check_keeps_its_result_when_another_blob_changes_during_provider_reads() {
+    let (articles, len) = mkv("unrelated-write");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let queued = Queue::new(db.clone(), client(&server));
+    let job = Submission {
+        file_name: "other.nzb",
+        category: "tv",
+        priority: 0,
+        post_processing: 0,
+    };
+    queued
+        .enqueue(&job, &nzb(&articles, len, "other.mkv"))
+        .await
+        .unwrap();
+    let other = db
+        .blob_ids()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|id| Some(*id) != item.meta_blob && Some(*id) != item.nzb_blob)
+        .unwrap();
+    let (_arr_tx, arr) = watch::channel(Vec::new());
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings).unwrap();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Unchecked;
+    status.last_check = None;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    let (arrived, release) = server.hold_article(&articles[0].message_id);
+    let checking = tokio::spawn(async move { health.step().await.unwrap() });
+    tokio::time::timeout(Duration::from_secs(2), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    let raw = db.blob(other).await.unwrap().unwrap();
+    db.update_blob(other, &raw).await.unwrap();
+    release.send(()).unwrap();
+    assert!(checking.await.unwrap());
+    let (_, result) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(result.state, HealthState::Healthy);
+    assert!(result.last_check.is_some());
+}
+
+#[tokio::test]
+async fn a_degraded_item_queues_par2_without_asking_arr_to_replace_it() {
+    let (mut articles, len) = mkv("degraded-repair");
+    let full = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&full, &articles, len).await;
+    articles.pop().unwrap();
+    let missing = articles.len();
+    let partial = LoopbackServer::start(articles).await.unwrap();
+    let (calls, arr) = fake_sonarr().await;
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&partial), arr, settings)
+        .unwrap()
+        .with_par2();
+
+    health.report(item.id, &[missing], &[]).await.unwrap();
+    assert!(health.step().await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Degraded);
+    assert!(calls.0.lock().unwrap().is_empty());
+    assert_eq!(
+        db.par2_result(infinidysk_db::repair::Owner::Item(item.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        0
+    );
+}
+
+#[tokio::test]
+async fn new_damage_after_a_par2_success_queues_it_again_but_an_unavailable_result_stands() {
+    for (finished, rerun) in [(3, true), (5, false)] {
+        let (mut articles, len) = mkv("degraded-again");
+        let full = LoopbackServer::start(articles.clone()).await.unwrap();
+        let (db, item, _) = import(&full, &articles, len).await;
+        let owner = infinidysk_db::repair::Owner::Item(item.id);
+        db.request_par2(owner, false, 1).await.unwrap().unwrap();
+        let claim = db.claim_par2(1).await.unwrap().unwrap().claim();
+        db.finish_par2(claim, finished, "", 0, 0, 2, None)
+            .await
+            .unwrap();
+        articles.pop().unwrap();
+        let missing = articles.len();
+        let partial = LoopbackServer::start(articles).await.unwrap();
+        let (_calls, arr) = fake_sonarr().await;
+        let (_settings_tx, settings) = watch::channel(Settings::default());
+        let health = Health::new(db.clone(), client(&partial), arr, settings)
+            .unwrap()
+            .with_par2();
+
+        health.report(item.id, &[missing], &[]).await.unwrap();
+        assert!(health.step().await.unwrap());
+        let job = db.par2_result(owner, false).await.unwrap().unwrap();
+        assert_eq!(job.pending(), rerun, "after state {finished}");
+    }
+}
+
+#[tokio::test]
+async fn exhausted_arr_attempts_fall_back_to_par2() {
+    let (articles, len) = mkv("spent-repair-budget");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (calls, arr) = fake_sonarr().await;
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_par2();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Repairing;
+    status.repair_attempts = 3;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    assert!(health.step().await.unwrap());
+    assert!(calls.0.lock().unwrap().is_empty());
+    assert_eq!(
+        db.health(item.id).await.unwrap().unwrap().1.state,
+        HealthState::Repairing
+    );
+    assert_eq!(
+        db.par2_result(infinidysk_db::repair::Owner::Item(item.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        0
+    );
+}
+
+#[tokio::test]
+async fn exhausted_arr_attempts_give_up_without_par2_even_while_open() {
+    let (articles, len) = mkv("spent-no-par2");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (calls, arr) = fake_sonarr().await;
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_in_use(move |id| id == item.id);
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Repairing;
+    status.repair_attempts = 3;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    assert!(health.step().await.unwrap());
+    assert!(calls.0.lock().unwrap().is_empty());
+    assert_eq!(
+        db.health(item.id).await.unwrap().unwrap().1.state,
+        HealthState::ActionNeeded
+    );
+}
+
+#[tokio::test]
+async fn unavailable_arr_falls_back_to_par2_and_releases_write_admission() {
+    let (articles, len) = mkv("par2-health");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (_arr_tx, arr) = watch::channel(Vec::new());
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_par2();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Repairing;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    assert!(health.step().await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Repairing);
+    assert_eq!(
+        db.par2_result(infinidysk_db::repair::Owner::Item(item.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        0
+    );
+    let _paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+        .await
+        .unwrap();
+}
+
 /// A 100 KB MKV posted under `prefix`.
 fn mkv(prefix: &str) -> (Vec<Article>, usize) {
     let mut data: Vec<u8> = (0..100_000u32)
@@ -303,6 +592,7 @@ async fn missing_article_is_replaced_through_sonarr() {
     let partial = LoopbackServer::start(gone).await.unwrap();
     let health = Health::new(db.clone(), client(&partial), arr, settings)
         .unwrap()
+        .with_par2()
         .with_arr_wait(Duration::ZERO);
     assert!(health.request_check(item.id).await.unwrap());
     assert!(health.step().await.unwrap());
@@ -327,6 +617,7 @@ async fn missing_article_is_replaced_through_sonarr() {
     assert_eq!(state(db.clone()).await, Some(HealthState::Repairing));
     assert!(health.step().await.unwrap());
     assert_eq!(state(db.clone()).await, Some(HealthState::Hidden));
+    assert!(db.par2_jobs().await.unwrap().is_empty());
     assert_eq!(
         log.0.lock().unwrap().clone(),
         [
@@ -1389,4 +1680,35 @@ async fn a_full_import_holds_a_broken_mp4() {
     let (_settings_tx, settings) = watch::channel(Settings::default());
     let health = Health::new(db.clone(), client(&server), arr, settings).unwrap();
     assert!(!health.step().await.unwrap(), "the confirming check waits");
+}
+
+#[tokio::test]
+async fn an_inconclusive_requested_check_keeps_its_request() {
+    let (articles, len) = mkv("inconclusive-request");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let (_arr_tx, arr) = watch::channel(Vec::new());
+    let (_settings_tx, settings) = watch::channel(Settings {
+        enabled: false,
+        ..Settings::default()
+    });
+    let health = Health::new(db.clone(), client(&server), arr, settings).unwrap();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Unchecked;
+    status.last_check = None;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    db.request_recheck(item.id, Recheck::User).await.unwrap();
+    drop(server);
+    assert!(health.step().await.unwrap());
+    let (_, result) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(result.state, HealthState::Unchecked);
+    assert_eq!(
+        result.recheck,
+        Recheck::Deferred,
+        "routine checks are off, so only the request brings the retry back"
+    );
+    assert!(result.next_check.unwrap() > result.last_check.unwrap());
 }

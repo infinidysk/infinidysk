@@ -7,6 +7,7 @@
 
 #![allow(clippy::cast_precision_loss)] // Byte counts stay far below 2^52.
 
+mod repair_bench;
 mod usage;
 
 use std::error::Error;
@@ -188,6 +189,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?;
     let client_rt = Builder::new_multi_thread().enable_all().build()?;
+    if filter.starts_with("par2-")
+        || (!filter.is_empty()
+            && repair_bench::scenarios(&filter).next().is_some()
+            && !SCENARIOS
+                .iter()
+                .any(|scenario| scenario.name.contains(&filter))
+            && !SEEK_SCENARIO.contains(&filter))
+    {
+        if trace {
+            return Err("--trace is not supported by the PAR2 scenarios".into());
+        }
+        return repair_bench::run(&filter, json_path.as_deref(), &server_rt, &client_rt);
+    }
 
     let mut json = String::new();
     let mut shape = None;
@@ -287,9 +301,15 @@ async fn seek_read(
     let start = Instant::now();
     let (mut buf, mut total, mut first) = (vec![0; READ_SIZE], 0, None);
     while total < SEEK_BYTES {
-        let n = reader.read(&mut buf).await?;
+        // Never past the target, so the timer stops at exactly SEEK_BYTES.
+        let want =
+            usize::try_from(SEEK_BYTES - total).map_or(buf.len(), |left| left.min(buf.len()));
+        let n = reader.read(&mut buf[..want]).await?;
         if n == 0 {
-            break;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "seek ended before the timing sample was complete",
+            ));
         }
         first.get_or_insert_with(|| start.elapsed());
         total += n as u64;

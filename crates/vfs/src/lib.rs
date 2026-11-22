@@ -7,22 +7,28 @@
 //! - `/nzbs/<category>/<file>`: queued NZBs.
 //! - `/README`.
 
+mod fence;
+mod live;
 mod reader;
+mod scope;
 mod session;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::hash::RandomState;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use infinidysk_core::{BlobId, FileMeta, ItemId, ItemKind, blob, media};
+use infinidysk_core::{BlobId, FileMeta, ItemId, ItemKind, blob};
 use infinidysk_db::{Db, HealthState, Item, QueueEntry};
 use infinidysk_nntp::Client;
-use infinidysk_stream::{Budget, Cache, Fault, Gaps, Report};
+use infinidysk_stream::{Budget, Cache, Fault, Gaps};
 use uuid::Uuid;
 
+pub use fence::{
+    ArmedWrites, Publication, ReadFence, ReadLease, ReadVersion, RetiredWrites, WriteLease, Writers,
+};
 pub use reader::{PartsReader, Reader};
 pub use session::{
     Delivery, FuseOp, FuseOps, Handle, OpInFlight, Origin, PendingOp, PendingRead, ReadStage,
@@ -56,6 +62,8 @@ impl Kernel {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     Db(#[from] infinidysk_db::Error),
     #[error("stored blob is unreadable")]
@@ -201,7 +209,19 @@ impl Deleted {
 }
 
 /// Told which segment (flat index across parts) of which file playback zero-filled.
-pub type FaultReport = Arc<dyn Fn(ItemId, usize, Fault) + Send + Sync>;
+/// The version is `None` for a read no repair publication coordinates.
+pub type FaultReport = Arc<dyn Fn(ItemId, Option<ReadVersion>, usize, Fault) + Send + Sync>;
+type GapEntries = Arc<Mutex<HashMap<ItemId, (Option<ReadVersion>, Arc<Gaps>)>>>;
+
+struct Opening {
+    /// The item the repair context came from, refreshed when the node had no NZB link.
+    item: Item,
+    meta: Arc<FileMeta>,
+    source: Option<(BlobId, i64)>,
+    /// `None` when no repair can publish or be served.
+    version: Option<ReadVersion>,
+    _lease: Option<ReadLease>,
+}
 
 pub struct Vfs {
     db: Db,
@@ -209,12 +229,15 @@ pub struct Vfs {
     budget: Budget,
     cache: Option<Arc<Cache>>,
     report: Option<FaultReport>,
+    fences: fence::Fences,
+    /// Whether a repair worker may publish while files are open; set before serving.
+    publisher: bool,
     /// Bytes each reader keeps in flight ahead of its position.
     read_ahead: AtomicU64,
     /// Damage caps for gap-tolerant media; off, every file stops at its 3rd fill in a row.
     gap_tolerance: AtomicBool,
     /// Holes of recently read files, shared by all their readers.
-    gaps: Mutex<HashMap<ItemId, Arc<Gaps>>>,
+    gaps: GapEntries,
     /// Where the tree is mounted for the apps that follow links; link targets start here.
     mount_dir: String,
     sessions: Arc<Sessions>,
@@ -233,17 +256,17 @@ const SEGMENT_BYTES: u64 = 112;
 /// file's metadata is several MB. Opens are too rare to contend on it.
 type Metas = quick_cache::sync::Cache<
     (BlobId, u64),
-    Arc<FileMeta>,
+    (i64, Arc<FileMeta>),
     BySegments,
     RandomState,
-    quick_cache::sync::DefaultLifecycle<(BlobId, u64), Arc<FileMeta>>,
+    quick_cache::sync::DefaultLifecycle<(BlobId, u64), (i64, Arc<FileMeta>)>,
 >;
 
 #[derive(Clone)]
 struct BySegments;
 
-impl quick_cache::Weighter<(BlobId, u64), Arc<FileMeta>> for BySegments {
-    fn weight(&self, _: &(BlobId, u64), meta: &Arc<FileMeta>) -> u64 {
+impl quick_cache::Weighter<(BlobId, u64), (i64, Arc<FileMeta>)> for BySegments {
+    fn weight(&self, _: &(BlobId, u64), (_, meta): &(i64, Arc<FileMeta>)) -> u64 {
         let segments = match &**meta {
             FileMeta::Nzb(f) => f.segments.items.len(),
             FileMeta::Multipart(f) => f.parts.iter().map(|p| p.segments.items.len()).sum(),
@@ -267,9 +290,11 @@ impl Vfs {
             budget,
             cache: None,
             report: None,
+            fences: fence::Fences::default(),
+            publisher: false,
             read_ahead: AtomicU64::new(read_ahead),
             gap_tolerance: AtomicBool::new(true),
-            gaps: Mutex::default(),
+            gaps: Arc::default(),
             mount_dir: mount_dir.trim_end_matches('/').to_owned(),
             sessions: Arc::default(),
             metas: Metas::with_options(
@@ -285,6 +310,47 @@ impl Vfs {
             ),
             deleted: Deleted::default(),
         }
+    }
+
+    /// Lets [`Self::begin_publication`] replace bytes under open readers.
+    #[must_use]
+    pub const fn with_repair_publisher(mut self) -> Self {
+        self.publisher = true;
+        self
+    }
+
+    /// Whether reads coordinate with repairs: a publisher exists or stored repairs may
+    /// be served. Without either, files open the plain reader.
+    pub fn coordinates_repairs(&self) -> bool {
+        self.publisher || self.db.may_have_repairs()
+    }
+
+    /// Shared read admission for every FUSE path and handle of an item.
+    pub fn read_fence(&self, item: ItemId) -> ReadFence {
+        self.fences.get(item)
+    }
+
+    /// [`Self::read_fence`] when reads coordinate with repairs.
+    pub fn coordinated_fence(&self, item: ItemId) -> Option<ReadFence> {
+        self.coordinates_repairs().then(|| self.fences.get(item))
+    }
+
+    pub fn uses_database(&self, db: &Db) -> bool {
+        self.db.same_owner(db)
+    }
+
+    /// Close admission only for this NZB and globally shared named articles.
+    pub fn begin_publication(
+        &self,
+        nzb: BlobId,
+        patches: &[infinidysk_core::repair::Patch],
+    ) -> std::io::Result<Publication> {
+        if !self.publisher {
+            return Err(std::io::Error::other(
+                "repair publication needs a VFS built with a repair publisher",
+            ));
+        }
+        self.fences.publish(nzb, patches)
     }
 
     /// Readers serve and keep segments through `cache`.
@@ -311,31 +377,6 @@ impl Vfs {
         self.gap_tolerance.store(on, Ordering::Relaxed);
     }
 
-    /// The file's shared holes, refreshed with those its metadata records.
-    fn gaps(&self, item: &Item, meta: &FileMeta) -> Arc<Gaps> {
-        let gaps = {
-            let mut all = self.gaps.lock().unwrap_or_else(PoisonError::into_inner);
-            all.retain(|_, g| Arc::strong_count(g) > 1 || !g.stale());
-            Arc::clone(all.entry(item.id).or_default())
-        };
-        let parts = match meta {
-            FileMeta::Nzb(f) => vec![&f.segments],
-            FileMeta::Multipart(f) => f.parts.iter().map(|p| &p.segments).collect(),
-        };
-        let (mut known, mut base) = (BTreeSet::new(), 0);
-        for part in parts {
-            let flat = |i: &u32| base + usize::try_from(*i).unwrap_or(usize::MAX);
-            known.extend(part.missing.iter().chain(&part.corrupt).map(flat));
-            base += part.items.len();
-        }
-        // Archive members' bytes are not the container's, so they get no budget.
-        let budget = self.gap_tolerance.load(Ordering::Relaxed)
-            && matches!(meta, FileMeta::Nzb(_))
-            && media::is_gap_tolerant(&item.name);
-        gaps.refresh(known, budget);
-        gaps
-    }
-
     /// Decoded bytes all readers may hold together.
     pub const fn budget(&self) -> &Budget {
         &self.budget
@@ -343,6 +384,20 @@ impl Vfs {
 
     pub const fn db(&self) -> &Db {
         &self.db
+    }
+
+    /// Native aliases and active readers retain their source/article identities.
+    pub fn repair_pins(
+        &self,
+    ) -> (
+        std::collections::BTreeSet<BlobId>,
+        std::collections::BTreeSet<String>,
+    ) {
+        let gaps = self
+            .gaps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.fences.repair_pins(|item| gaps.contains_key(&item))
     }
 
     /// Item files open now, and traced reads.
@@ -589,27 +644,32 @@ impl Vfs {
                 memory(blob::decode_nzb(&raw)?)
             }
             Node::Item(item) | Node::IdFile(item) if item.kind != ItemKind::Directory => {
-                let meta = self.meta(item).await?;
+                let Opening {
+                    item: current,
+                    meta,
+                    source,
+                    version,
+                    _lease,
+                } = self.opening(item).await?;
                 let session =
                     self.sessions
                         .start(item.id, item.path.clone(), item.size.unwrap_or(0), origin);
-                let trace = session.trace();
-                let report = self.report.as_ref().map(|report| {
-                    let (report, id) = (Arc::clone(report), item.id);
-                    Arc::new(move |index, fault| report(id, index, fault)) as Report
-                });
-                let reader = Reader::new(
-                    &meta,
-                    &self.client,
-                    &self.budget,
-                    self.cache.as_ref(),
-                    self.read_ahead.load(Ordering::Relaxed),
-                    trace.as_ref(),
-                    report.as_ref(),
-                )?
-                .with_filler(&meta, &item.name)
-                .with_gaps(self.gaps(item, &meta))
-                .with_watch(session.watch());
+                let reader = live::Opened {
+                    db: self.db.clone(),
+                    item: current,
+                    client: Arc::clone(&self.client),
+                    budget: self.budget.clone(),
+                    cache: self.cache.clone(),
+                    read_ahead: self.read_ahead.load(Ordering::Relaxed),
+                    trace: session.trace(),
+                    report: self.report.clone(),
+                    gaps: Some((
+                        Arc::clone(&self.gaps),
+                        self.gap_tolerance.load(Ordering::Relaxed),
+                    )),
+                    watch: Some(session.watch()),
+                }
+                .reader(&meta, source, version)?;
                 Ok(Some(Handle::new(reader, Some(session))))
             }
             _ => Ok(None),
@@ -619,20 +679,120 @@ impl Vfs {
     /// A reader for media analysis: shared cache, minimum read window, no session or
     /// fault reports, and reads fail instead of zero-filling.
     pub async fn open_analysis(&self, item: &Item) -> Result<Reader, Error> {
-        Ok(Reader::new(
-            &*self.meta(item).await?,
-            &self.client,
-            &self.budget,
-            self.cache.as_ref(),
-            0,
-            None,
-            None,
-        )?
-        .into_strict())
+        let Opening {
+            item,
+            meta,
+            source,
+            version,
+            _lease,
+        } = self.opening(item).await?;
+        let mut reader = live::Opened {
+            db: self.db.clone(),
+            item,
+            client: Arc::clone(&self.client),
+            budget: self.budget.clone(),
+            cache: self.cache.clone(),
+            read_ahead: 0,
+            trace: None,
+            report: None,
+            gaps: None,
+            watch: None,
+        }
+        .reader(&meta, source, version)?;
+        if let Reader::Live(live) = &mut reader {
+            live.settle_publications();
+        }
+        Ok(reader)
     }
 
-    /// The file's decoded metadata; concurrent first opens fetch it once.
-    async fn meta(&self, item: &Item) -> Result<Arc<FileMeta>, Error> {
+    async fn opening(&self, item: &Item) -> Result<Opening, Error> {
+        if !self.coordinates_repairs() {
+            let (_, meta) = self.meta(item).await?;
+            return Ok(Opening {
+                item: item.clone(),
+                meta,
+                source: None,
+                version: None,
+                _lease: None,
+            });
+        }
+        // A retained node may predate a restored NZB link; without it the repair
+        // context below could not find committed repairs.
+        let current;
+        let item = if item.nzb_blob.is_none() {
+            current = self.db.item(item.id).await?;
+            current.as_ref().unwrap_or(item)
+        } else {
+            item
+        };
+        // A health write can advance the metadata generation mid-open; reload a few times.
+        let mut stale = 0;
+        loop {
+            let stamp = self.fences.stamp();
+            let (generation, meta) = self.meta(item).await?;
+            match self
+                .fences
+                .admit(stamp, item.id, scope::Scope::new(item.nzb_blob, &meta))
+            {
+                fence::Admission::Retry => {}
+                fence::Admission::Wait(mut done) => {
+                    let _ = done.changed().await;
+                }
+                fence::Admission::Ready(fence) => {
+                    let lease = fence.read().await?;
+                    if stamp != self.fences.stamp() {
+                        continue;
+                    }
+                    let Some(source) = self.repair_context(item, generation, &meta).await? else {
+                        stale += 1;
+                        if stale >= 3 {
+                            return Err(Error::Corrupt(
+                                "repair metadata changed while opening file",
+                            ));
+                        }
+                        continue;
+                    };
+                    return Ok(Opening {
+                        item: item.clone(),
+                        meta,
+                        source,
+                        version: Some(fence.version()),
+                        _lease: Some(lease),
+                    });
+                }
+            }
+        }
+    }
+
+    async fn repair_context(
+        &self,
+        item: &Item,
+        meta_generation: i64,
+        meta: &FileMeta,
+    ) -> Result<Option<Option<(BlobId, i64)>>, Error> {
+        let Some((metadata, nzb)) = item.meta_blob.zip(item.nzb_blob) else {
+            return Ok(Some(None));
+        };
+        let Some((generation, current)) =
+            self.db.repair_generations(item.id, metadata, nzb).await?
+        else {
+            return if self.db.may_have_repairs() && meta.has_placeholders() {
+                Err(Error::Corrupt("repair source changed while opening file"))
+            } else {
+                Ok(Some(None))
+            };
+        };
+        // Cached metadata can straddle a blob update; never pair it with newer NZB bytes.
+        // `None` asks the caller to reload the metadata and admit again.
+        if current != meta_generation {
+            return Ok(None);
+        }
+        Ok(Some(Some((nzb, generation))))
+    }
+
+    /// The file's decoded metadata and its blob generation; concurrent first opens
+    /// fetch it once.
+    async fn meta(&self, item: &Item) -> Result<(i64, Arc<FileMeta>), Error> {
         let id = item
             .meta_blob
             .ok_or(Error::Corrupt("file has no metadata"))?;
@@ -640,19 +800,19 @@ impl Vfs {
         let key = (id, self.db.blob_epoch());
         self.metas
             .get_or_insert_async(&key, async {
-                let raw = self
+                let (generation, raw) = self
                     .db
-                    .blob(id)
+                    .blob_with_generation(id)
                     .await?
                     .ok_or(Error::Corrupt("metadata blob is missing"))?;
-                Ok(Arc::new(blob::decode_meta(&raw)?))
+                Ok((generation, Arc::new(blob::decode_meta(&raw)?)))
             })
             .await
     }
 
     /// Like [`open_analysis`](Self::open_analysis), but uncached, for a file not stored yet.
     pub fn open_meta(&self, meta: &FileMeta) -> Result<Reader, Error> {
-        Ok(Reader::new(meta, &self.client, &self.budget, None, 0, None, None)?.into_strict())
+        Ok(Reader::new(meta, None, &self.client, &self.budget, None, 0, None, None)?.into_strict())
     }
 }
 

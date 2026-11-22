@@ -32,16 +32,28 @@ const ARTICLE: usize = 4096;
 /// `user:pass`.
 const BASIC: &str = "Basic dXNlcjpwYXNz";
 
-async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2]) {
+async fn setup(data: &[u8]) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2], Arc<Vfs>) {
     setup_timed(data, Duration::from_secs(5)).await
 }
 
 async fn setup_timed(
     data: &[u8],
     timeout: Duration,
-) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2]) {
+) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2], Arc<Vfs>) {
+    setup_published(data, timeout, None).await
+}
+
+async fn setup_published(
+    data: &[u8],
+    timeout: Duration,
+    replacement: Option<&[u8]>,
+) -> (LoopbackServer, Router, Item, [Arc<AtomicU64>; 2], Arc<Vfs>) {
     let articles = post("a", "a.mkv", data, ARTICLE);
-    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let replacements =
+        replacement.map_or_else(Vec::new, |bytes| post("published", "a.mkv", bytes, ARTICLE));
+    let server = LoopbackServer::start(articles.iter().cloned().chain(replacements))
+        .await
+        .unwrap();
     let endpoint = Endpoint::new(
         "127.0.0.1",
         server.addr().port(),
@@ -111,16 +123,19 @@ async fn setup_timed(
         .await
         .unwrap();
 
-    let vfs = Vfs::new(
-        db.clone(),
-        Arc::clone(&client),
-        Budget::new(1 << 20),
-        1 << 20,
-        "/mnt",
+    let vfs = Arc::new(
+        Vfs::new(
+            db.clone(),
+            Arc::clone(&client),
+            Budget::new(1 << 20),
+            1 << 20,
+            "/mnt",
+        )
+        .with_repair_publisher(),
     );
     let (legacy, previous) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
     let dav = WebDav {
-        vfs: Arc::new(vfs),
+        vfs: Arc::clone(&vfs),
         queue: Arc::new(Queue::new(db, client)),
         access: RwLock::new(Access {
             auth: Auth::Basic {
@@ -135,7 +150,7 @@ async fn setup_timed(
             trusted_proxies: Vec::new(),
         }),
     };
-    (server, router(Arc::new(dav)), file, [legacy, previous])
+    (server, router(Arc::new(dav)), file, [legacy, previous], vfs)
 }
 
 async fn send(
@@ -166,11 +181,87 @@ async fn body(response: Response) -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn publication_waits_for_http_bytes_then_refreshes_the_remaining_response() {
+    let data = vec![23; 4 * ARTICLE];
+    let replacement = vec![47; data.len()];
+    let (_server, app, file, _, vfs) =
+        setup_published(&data, Duration::from_secs(5), Some(&replacement)).await;
+    let fence = vfs.read_fence(file.id);
+    let response = send(
+        &app,
+        "GET",
+        "/content/tv/my%20job/a.mkv",
+        &[("authorization", BASIC)],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut response = response.into_body();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), fence.write())
+            .await
+            .is_err()
+    );
+    let first = response
+        .frame()
+        .await
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    let received = first.len();
+    assert!(
+        received > 0 && received < data.len(),
+        "first frame leaves unread bytes"
+    );
+    let held = first.slice(1..3);
+    drop(first);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), fence.write())
+            .await
+            .is_err()
+    );
+    drop(held);
+    let mut writers = [fence.write().await];
+    let publication = infinidysk_vfs::WriteLease::arm(&mut writers);
+    let metadata = file.meta_blob.unwrap();
+    let mut updated = blob::decode_meta(&vfs.db().blob(metadata).await.unwrap().unwrap()).unwrap();
+    let FileMeta::Nzb(updated_file) = &mut updated else {
+        panic!("plain file")
+    };
+    for (segment, article) in updated_file.segments.items.iter_mut().zip(post(
+        "published",
+        "a.mkv",
+        &replacement,
+        ARTICLE,
+    )) {
+        segment.id = article.message_id;
+    }
+    vfs.db()
+        .update_blob(metadata, &blob::encode_meta(&updated).unwrap())
+        .await
+        .unwrap();
+    // This fixture has no native mount aliases.
+    publication
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(writers);
+    assert_eq!(
+        response.collect().await.unwrap().to_bytes().as_ref(),
+        &replacement[received..]
+    );
+    drop(fence.write().await);
+}
+
+#[tokio::test]
 async fn serves_the_tree_over_webdav() {
     let data: Vec<u8> = (0..3 * ARTICLE + 123)
         .map(|i| u8::try_from(i * 7 % 251).unwrap())
         .collect();
-    let (_server, app, file, [legacy, previous]) = setup(&data).await;
+    let (_server, app, file, [legacy, previous], _) = setup(&data).await;
     let auth = [("authorization", BASIC)];
 
     let r = send(&app, "PROPFIND", "/", &[], Vec::new()).await;
@@ -397,7 +488,7 @@ async fn serves_the_tree_over_webdav() {
 #[tokio::test]
 async fn deleted_completed_links_go_while_content_stays() {
     let data = vec![7; ARTICLE + 5];
-    let (_server, app, _file, _) = setup(&data).await;
+    let (_server, app, _file, _, _) = setup(&data).await;
     let auth = [("authorization", BASIC)];
     let status = |method: &'static str, uri: &'static str| {
         let app = &app;
@@ -440,7 +531,7 @@ async fn deleted_completed_links_go_while_content_stays() {
 #[tokio::test]
 async fn unreachable_providers_answer_retryable_503_before_the_body() {
     let data = vec![7; 2 * ARTICLE];
-    let (server, app, _, _) = setup(&data).await;
+    let (server, app, _, _, _) = setup(&data).await;
     drop(server);
     let path = "/content/tv/my%20job/a.mkv";
     for range in [None, Some("bytes=4090-")] {
@@ -458,7 +549,7 @@ async fn webdav_stream_preserves_first_bytes_and_ranges() {
     let data: Vec<u8> = (0..150 * ARTICLE + 123)
         .map(|i| u8::try_from(i * 13 % 251).unwrap())
         .collect();
-    let (_server, app, _, _) = setup(&data).await;
+    let (_server, app, _, _, _) = setup(&data).await;
     let path = "/content/tv/my%20job/a.mkv";
     let r = send(&app, "GET", path, &[("authorization", BASIC)], Vec::new()).await;
     assert_eq!(r.status(), StatusCode::OK);
@@ -507,7 +598,7 @@ async fn a_read_failure_mid_body_logs_one_warning() {
     let data: Vec<u8> = (0..3 * ARTICLE)
         .map(|i| u8::try_from(i % 251).unwrap())
         .collect();
-    let (server, app, _, _) = setup_timed(&data, Duration::from_millis(200)).await;
+    let (server, app, _, _, _) = setup_timed(&data, Duration::from_millis(200)).await;
     let last = post("a", "a.mkv", &data, ARTICLE).pop().unwrap().message_id;
     server.stall_article(&last, usize::MAX, Duration::from_secs(30));
     let path = "/content/tv/my%20job/a.mkv";

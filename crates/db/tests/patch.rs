@@ -864,7 +864,7 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
             attempts: 0,
             stuck_count: 0,
             last_error: None,
-            content_hash: None,
+            content_hash: Some("wrapper".into()),
         };
         fixture.db.enqueue(&job, b"nzb").await.unwrap();
         let source = fixture
@@ -929,25 +929,30 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert_eq!(raw, b"new NZB");
         assert_ne!(changed, source);
         assert!(
-            !fixture
+            fixture
                 .db
                 .replace_queued_repair_nzb(&source, b"inner NZB", 9, 200, "inner.nzb")
                 .await
                 .unwrap()
+                .is_none()
         );
-        assert!(
-            fixture
-                .db
-                .replace_queued_repair_nzb(&changed, b"inner NZB", 9, 200, "inner.nzb")
-                .await
-                .unwrap()
-        );
+        let promoted = fixture
+            .db
+            .replace_queued_repair_nzb(&changed, b"inner NZB", 9, 200, "inner.nzb")
+            .await
+            .unwrap();
         let queued = fixture.db.queue().await.unwrap();
         let current = queued.iter().find(|queued| queued.id == job.id).unwrap();
+        assert_eq!(promoted, Some(current.nzb_blob));
         assert_ne!(current.nzb_blob, job.nzb_blob);
         assert_eq!(current.file_name, "inner.nzb");
         assert_eq!(current.total_bytes, 200);
         assert_eq!(current.nzb_size, 9);
+        assert_eq!(
+            fixture.db.job_with_content("wrapper").await.unwrap(),
+            Some(job.id),
+            "a resubmitted wrapper must still find the promoted job"
+        );
         let (inner, bytes) = fixture
             .db
             .queued_repair_nzb(job.id, current.nzb_blob)
@@ -958,11 +963,12 @@ async fn queued_sources_publish_before_import_and_stop_when_the_job_disappears()
         assert_eq!(inner.nzb(), current.nzb_blob);
         assert_eq!(inner.generation(), 0);
         assert!(
-            !fixture
+            fixture
                 .db
                 .replace_queued_repair_nzb(&changed, b"stale replacement", 17, 300, "stale.nzb")
                 .await
                 .unwrap()
+                .is_none()
         );
         let mut live = patch.clone();
         live.id = PatchId::new();
@@ -1305,6 +1311,18 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
     for fixture in fixtures().await {
         let source = fixture.source().await;
         let repair = patch();
+        let defect = infinidysk_db::Defect {
+            offset: 0,
+            size: 1,
+            seen_at: 1,
+            source: 7,
+        };
+        fixture
+            .db
+            .set_structural(fixture.file.id, Some(&defect), true)
+            .await
+            .unwrap();
+        let published = fixture.db.repair_epoch();
         assert!(
             fixture
                 .db
@@ -1312,6 +1330,15 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
                 .await
                 .unwrap()
         );
+        assert!(fixture.db.repair_epoch() > published);
+        let probe = fixture.db.media_probe(fixture.file.id).await.unwrap();
+        assert_eq!(probe.defect, None, "publication starts the evidence over");
+        assert!(probe.structural_hold);
+        fixture
+            .db
+            .set_structural(fixture.file.id, Some(&defect), true)
+            .await
+            .unwrap();
         let mut status = fixture.db.health(fixture.file.id).await.unwrap().unwrap().1;
         status.state = infinidysk_db::HealthState::Healthy;
         fixture
@@ -1320,11 +1347,23 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
             .await
             .unwrap();
         let before = fixture.db.blob_epoch();
+        let evicted = fixture.db.repair_epoch();
         assert_eq!(
             fixture.db.evict_patch(repair.id).await.unwrap(),
             vec![(fixture.file.id, fixture.file.path.clone())]
         );
         assert!(fixture.db.blob_epoch() > before);
+        assert!(fixture.db.repair_epoch() > evicted);
+        assert_eq!(
+            fixture
+                .db
+                .media_probe(fixture.file.id)
+                .await
+                .unwrap()
+                .defect,
+            None,
+            "eviction starts the evidence over"
+        );
         assert_eq!(
             fixture
                 .db
@@ -1337,6 +1376,51 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
         assert_eq!(status.state, infinidysk_db::HealthState::Unchecked);
         assert_ne!(status.recheck, infinidysk_db::Recheck::None);
         assert_eq!(fixture.db.evict_patch(repair.id).await.unwrap(), []);
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn an_idempotent_publication_retry_keeps_later_defect_evidence() {
+    for fixture in fixtures().await {
+        let defect = infinidysk_db::Defect {
+            offset: 8,
+            size: 4,
+            seen_at: 50,
+            source: 1,
+        };
+        let id = fixture.file.id;
+        let patch = patch();
+        fixture
+            .db
+            .set_structural(id, Some(&defect), true)
+            .await
+            .unwrap();
+        assert!(
+            fixture
+                .db
+                .publish_patches((), &fixture.source().await, slice::from_ref(&patch))
+                .await
+                .unwrap()
+        );
+        assert_eq!(fixture.db.media_probe(id).await.unwrap().defect, None);
+        // Seen after the first publication; replaying the same patch adds no bytes.
+        fixture
+            .db
+            .set_structural(id, Some(&defect), true)
+            .await
+            .unwrap();
+        assert!(
+            fixture
+                .db
+                .publish_patches((), &fixture.source().await, slice::from_ref(&patch))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            fixture.db.media_probe(id).await.unwrap().defect,
+            Some(defect)
+        );
         fixture.close().await;
     }
 }

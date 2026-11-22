@@ -153,6 +153,8 @@ pub enum Error {
     RepairDescriptor(#[from] infinidysk_core::repair::Error),
     #[error("repair publication exceeds its {0} bound")]
     RepairBounds(&'static str),
+    #[error("the repair queue is full")]
+    RepairQueueFull,
     #[error("repair publication conflicts with an immutable reference")]
     RepairConflict,
 }
@@ -195,6 +197,8 @@ pub struct Db {
     writes: Arc<RwLock<()>>,
     /// See [`Db::blob_epoch`].
     blob_epoch: Arc<AtomicU64>,
+    /// See [`Db::repair_epoch`].
+    repair_epoch: Arc<AtomicU64>,
     repair_present: Arc<AtomicBool>,
 }
 
@@ -357,6 +361,7 @@ impl TryFrom<i16> for HealthState {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(i16)]
 pub enum Recheck {
+    Deferred = -1,
     #[default]
     None = 0,
     User = 1,
@@ -403,6 +408,7 @@ impl TryFrom<HealthWorkRow> for (Item, HealthStatus) {
             repair_attempts: r.repair_attempts,
             hidden_until: r.hidden_until,
             recheck: match r.recheck_requested {
+                -1 => Recheck::Deferred,
                 0 => Recheck::None,
                 1 => Recheck::User,
                 2 => Recheck::Playback,
@@ -1082,6 +1088,7 @@ impl Db {
             nzb_retention_ms: Arc::new(AtomicI64::new(30 * DAY_MS)),
             writes: Arc::default(),
             blob_epoch: Arc::default(),
+            repair_epoch: Arc::default(),
             repair_present: Arc::new(AtomicBool::new(repair_present)),
         })
     }
@@ -2072,6 +2079,26 @@ impl Db {
         )
     }
 
+    /// A blob's bytes with the generation every write of them advances.
+    pub async fn blob_with_generation(&self, id: BlobId) -> Result<Option<(i64, Vec<u8>)>, Error> {
+        Ok(
+            on!(self, pool => sqlx::query_as("SELECT generation, data FROM blobs WHERE id = $1")
+            .bind(id.0)
+            .fetch_optional(pool)
+            .await?),
+        )
+    }
+
+    /// The metadata blob `item` links to now, with its generation.
+    pub async fn item_meta_generation(&self, item: ItemId) -> Result<Option<(BlobId, i64)>, Error> {
+        let row: Option<(Uuid, i64)> = on!(self, pool => sqlx::query_as(
+            "SELECT b.id, b.generation FROM items i JOIN blobs b ON b.id = i.meta_blob WHERE i.id = $1")
+            .bind(item.0)
+            .fetch_optional(pool)
+            .await?);
+        Ok(row.map(|(id, generation)| (BlobId(id), generation)))
+    }
+
     /// Replaces a blob's bytes, e.g. after health checks record missing segments.
     pub async fn update_blob(&self, id: BlobId, data: &[u8]) -> Result<(), Error> {
         on!(self, pool => {
@@ -2085,10 +2112,38 @@ impl Db {
         Ok(())
     }
 
+    /// Replaces a blob's bytes only while it is still at `generation`, so a write
+    /// computed from older bytes never replaces a newer one. `false` when it changed.
+    pub async fn update_blob_if(
+        &self,
+        id: BlobId,
+        generation: i64,
+        data: &[u8],
+    ) -> Result<bool, Error> {
+        let updated = on!(self, pool => sqlx::query(
+            "UPDATE blobs SET data = $2, generation = generation + 1 WHERE id = $1 AND generation = $3")
+            .bind(id.0)
+            .bind(data)
+            .bind(generation)
+            .execute(pool)
+            .await?
+            .rows_affected());
+        if updated == 0 {
+            return Ok(false);
+        }
+        self.blob_epoch.fetch_add(1, Ordering::Release);
+        Ok(true)
+    }
+
     /// Changes after blob updates or repair publication in this process. Cached metadata
     /// and health observations must be refreshed when their epoch changes.
     pub fn blob_epoch(&self) -> u64 {
         self.blob_epoch.load(Ordering::Acquire)
+    }
+
+    /// Changes after repair patches are published or evicted in this process.
+    pub fn repair_epoch(&self) -> u64 {
+        self.repair_epoch.load(Ordering::Acquire)
     }
 
     /// Every stored config entry as `(key, value)`.
@@ -2156,8 +2211,8 @@ impl Db {
 
     /// Up to `limit` items with health work due at `now`, most urgent first: playback
     /// reports, due repairs and hidden follow-ups, never checked, user rechecks, then by
-    /// schedule (newest release on ties). Without `routine` only rechecks and pending
-    /// repairs are returned.
+    /// schedule (newest release on ties). Without `routine` only rechecks, confirming
+    /// re-checks of `suspect` files and pending repairs are returned.
     pub async fn due_health_work(
         &self,
         now: i64,
@@ -2187,14 +2242,15 @@ impl Db {
         routine: bool,
         limit: i64,
     ) -> Result<Vec<(Item, HealthStatus)>, Error> {
-        // 4 = repairing, 5 = hidden, 7 = ignored.
+        // 3 = suspect, 4 = repairing, 5 = hidden, 7 = ignored. A suspect file's
+        // confirming re-check is repair work, so it runs with routine checks off.
         let sql = select_health!(
             "WHERE kind <> $1 AND meta_blob IS NOT NULL AND ( \
-                (recheck_requested <> 0 AND health_state NOT IN (4, 5)) \
+                (recheck_requested > 0 AND health_state NOT IN (4, 5)) \
                 OR (COALESCE(next_health_check, 0) <= $2 \
-                    AND (health_state IN (4, 5) OR ($3 AND health_state <> 7)))) \
+                    AND (recheck_requested = -1 OR health_state IN (3, 4, 5) OR ($3 AND health_state <> 7)))) \
              ORDER BY CASE WHEN COALESCE(next_health_check, 0) > $5 \
-                    AND (recheck_requested = 0 OR health_state IN (4, 5)) THEN 5 \
+                    AND (recheck_requested <= 0 OR health_state IN (4, 5)) THEN 5 \
                 WHEN recheck_requested = 2 THEN 0 WHEN health_state IN (4, 5) THEN 1 \
                 WHEN health_state = 0 THEN 2 WHEN recheck_requested = 1 THEN 3 ELSE 4 END, \
                 COALESCE(next_health_check, 0), COALESCE(release_date, created_at) DESC \
@@ -2227,9 +2283,20 @@ impl Db {
         status: &HealthStatus,
         handled: Recheck,
     ) -> Result<(), Error> {
+        self.set_health_recheck(id, status, handled, Recheck::None)
+            .await
+    }
+
+    pub async fn set_health_recheck(
+        &self,
+        id: ItemId,
+        status: &HealthStatus,
+        handled: Recheck,
+        pending: Recheck,
+    ) -> Result<(), Error> {
         let sql = "UPDATE items SET health_state = $2, last_health_check = $3, \
                    next_health_check = $4, repair_attempts = $5, hidden_until = $6, \
-                   recheck_requested = CASE WHEN recheck_requested = $7 THEN 0 \
+                   recheck_requested = CASE WHEN recheck_requested = $7 THEN $9 \
                    ELSE recheck_requested END, suspect_since = $8 WHERE id = $1";
         let suspect_since = status
             .suspect_since
@@ -2243,6 +2310,7 @@ impl Db {
             .bind(status.hidden_until)
             .bind(handled as i16)
             .bind(suspect_since)
+            .bind(pending as i16)
             .execute(pool)
             .await?
             .rows_affected());

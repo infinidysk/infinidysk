@@ -2,8 +2,11 @@
 //! stored files on an age-based schedule, confirm misses twice, and get broken files replaced
 //! through the Arr that imported them.
 
+mod availability;
 mod check;
 mod structure;
+
+pub use availability::{Availability, AvailabilityOptions, AvailabilityProgress, Evidence};
 
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
@@ -65,6 +68,8 @@ pub enum Error {
     Meta(#[from] infinidysk_core::blob::Error),
     #[error("HTTP client setup failed")]
     Http(#[from] reqwest::Error),
+    #[error("verification worker failed")]
+    VerificationTask(#[from] tokio::task::JoinError),
 }
 
 /// The user-settable choices of §10.
@@ -133,7 +138,7 @@ pub struct Health {
     arr: watch::Receiver<Vec<Arr>>,
     settings: watch::Receiver<Settings>,
     importing: Gate,
-    streaming: Gate,
+    streaming: Arc<dyn Fn() -> bool + Send + Sync>,
     in_use: Box<dyn Fn(ItemId) -> bool + Send + Sync>,
     analyzer: Option<Analyzer>,
     http: reqwest::Client,
@@ -144,6 +149,7 @@ pub struct Health {
     /// newest grab id read before the blocklist.
     searching: Mutex<HashMap<ItemId, (uuid::Uuid, i64)>>,
     wake: Notify,
+    par2: bool,
 }
 
 /// Checks since start, by result.
@@ -198,7 +204,7 @@ impl Health {
             arr,
             settings,
             importing: Box::new(|| false),
-            streaming: Box::new(|| false),
+            streaming: Arc::new(|| false),
             in_use: Box::new(|_| false),
             analyzer: None,
             http,
@@ -207,6 +213,7 @@ impl Health {
             inconclusive: Mutex::default(),
             searching: Mutex::default(),
             wake: Notify::new(),
+            par2: false,
         })
     }
 
@@ -219,14 +226,25 @@ impl Health {
         streaming: impl Fn() -> bool + Send + Sync + 'static,
     ) -> Self {
         self.importing = Box::new(importing);
-        self.streaming = Box::new(streaming);
+        self.streaming = Arc::new(streaming);
         self
+    }
+
+    pub fn playback_active(&self) -> bool {
+        (self.streaming)()
     }
 
     /// Holds back the repair of a file while `in_use` says it is open.
     #[must_use]
     pub fn with_in_use(mut self, in_use: impl Fn(ItemId) -> bool + Send + Sync + 'static) -> Self {
         self.in_use = Box::new(in_use);
+        self
+    }
+
+    /// Try PAR2 for degraded files and when Arr cannot replace a broken file or has exhausted its attempts.
+    #[must_use]
+    pub const fn with_par2(mut self) -> Self {
+        self.par2 = true;
         self
     }
 
@@ -555,7 +573,7 @@ impl Health {
         settings: &Settings,
         writing: &mut Writing,
     ) -> Result<(), Error> {
-        let Some((blob_id, mut meta)) = self.meta(item).await? else {
+        let Some((blob_id, generation, mut meta)) = self.meta_generation(item).await? else {
             tracing::warn!(item = %item.id, path = %item.path, reason = "its stored metadata is gone", "cannot check a file; retrying tomorrow");
             self.db.postpone_health(item.id, now_ms() + DAY_MS).await?;
             return Ok(());
@@ -570,16 +588,56 @@ impl Health {
             },
             proven: false,
         };
-        let client = check::Direct(&self.client);
+        let repair_epoch = self.db.repair_epoch();
+        // Replaced metadata is stale work: the pending recheck stays for the next step.
+        let Some(source) = self.omitted_source(item, blob_id, &meta).await? else {
+            return Ok(());
+        };
+        let original = source.map(|source| (source, meta.clone()));
+        let client = check::Direct {
+            client: &self.client,
+            source,
+            meter: None,
+        };
+        let started = now_ms();
         let (outcome, changed, head) = self
             .released(writing, check::run(&client, &mut meta, &item.name, &opts))
             .await;
-        if changed {
-            self.db
-                .update_blob(blob_id, &blob::encode_meta(&meta)?)
-                .await?;
+        // Only this item's metadata and published repairs change what the check read.
+        // Without PAR2 nothing publishes, and the hole write below stays conditional.
+        if self.par2
+            && (self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
+                || self.db.repair_epoch() != repair_epoch)
+        {
+            return Ok(());
         }
+        if let Some((source, original)) = original {
+            let current = self.meta(item).await?;
+            if current
+                .as_ref()
+                .is_none_or(|(id, meta)| *id != blob_id || *meta != original)
+                || self.omitted_source(item, blob_id, &original).await? != Some(Some(source))
+            {
+                return Ok(());
+            }
+        }
+        // The check's own hole write is part of its observation; any other write is not.
+        // It applies only to the bytes this check read, so a newer write is left in place
+        // and the next step checks again.
+        let generation = if changed {
+            if !self
+                .db
+                .update_blob_if(blob_id, generation, &blob::encode_meta(&meta)?)
+                .await?
+            {
+                return Ok(());
+            }
+            generation + 1
+        } else {
+            generation
+        };
         let probe = self.db.media_probe(item.id).await?;
+        let mut pending = Recheck::None;
         let now = now_ms();
         let mut next = HealthStatus {
             last_check: Some(now),
@@ -603,11 +661,15 @@ impl Health {
             Outcome::Inconclusive(error) => {
                 self.count(INCONCLUSIVE);
                 if streak == INCONCLUSIVE_WARN {
-                    tracing::warn!(path = %item.path, reason = %error, "health checks keep failing to reach providers; retrying every 30 minutes");
+                    tracing::warn!(path = %item.path, reason = %error, "cannot confirm file availability; retrying every 30 minutes");
                 } else {
                     tracing::debug!(path = %item.path, reason = %error, "health check inconclusive");
                 }
                 next.next_check = Some(now + INCONCLUSIVE_RECHECK_MS);
+                // A request stays until a check answers it, even with routine checks off.
+                if status.recheck != Recheck::None {
+                    pending = Recheck::Deferred;
+                }
             }
             Outcome::Missing(message) => {
                 self.count(UNHEALTHY);
@@ -653,9 +715,24 @@ impl Health {
                 let found = self
                     .released(writing, structure::walk(&client, &meta, &item.name, head))
                     .await;
+                if self.par2
+                    && (self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
+                        || self.db.repair_epoch() != repair_epoch)
+                {
+                    return Ok(());
+                }
                 let source = structure::source(&meta);
                 let verdict =
-                    structure::judge(probe.defect, &found, source, now, SUSPECT_RECHECK_MS);
+                    match structure::judge(probe.defect, &found, source, now, SUSPECT_RECHECK_MS) {
+                        // Repair publication forgets the defect but leaves its hold.
+                        Verdict::Nothing
+                            if probe.structural_hold
+                                && matches!(found, structure::Structure::Sound) =>
+                        {
+                            Verdict::Clear
+                        }
+                        verdict => verdict,
+                    };
                 if self
                     .structural(item, status, &mut next, verdict, now)
                     .await?
@@ -671,6 +748,26 @@ impl Health {
                 next.state = state;
                 next.repair_attempts = 0;
                 next.next_check = Some(cadence(item.release_date.unwrap_or(item.created_at), now));
+                // Pending work absorbs new damage. A job that found the release whole or
+                // repaired it before this check began cannot have covered what it found.
+                if state == HealthState::Degraded && self.par2 && settings.auto_repair {
+                    let owner = infinidysk_db::repair::Owner::Item(item.id);
+                    let requested = match self.db.par2_result(owner, false).await? {
+                        Some(job) if matches!(job.state, 2 | 3) && job.updated_at < started => {
+                            self.db.retry_par2(job.claim(), now).await.map(drop)
+                        }
+                        Some(_) => Ok(()),
+                        None => self.db.request_par2(owner, false, now).await.map(drop),
+                    };
+                    match requested {
+                        Ok(()) => {}
+                        Err(infinidysk_db::Error::RepairQueueFull) => {
+                            next.next_check = Some(now + MINUTE_MS);
+                            pending = Recheck::Deferred;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
                 self.record(item, result, Repair::None, &message).await?;
                 if settings.media_probe
                     && self.analyzer.is_some()
@@ -681,7 +778,9 @@ impl Health {
                 }
             }
         }
-        self.db.set_health(item.id, &next, status.recheck).await?;
+        self.db
+            .set_health_recheck(item.id, &next, status.recheck, pending)
+            .await?;
         Ok(())
     }
 
@@ -762,14 +861,9 @@ impl Health {
         if !settings.auto_repair {
             return self.give_up(item, status, "automatic repair is off").await;
         }
-        if status.repair_attempts >= REPAIR_BUDGET {
-            return self
-                .give_up(
-                    item,
-                    status,
-                    "repeated replacements brought no working copy",
-                )
-                .await;
+        if !self.par2 && status.repair_attempts >= REPAIR_BUDGET {
+            let reason = "repeated replacements brought no working copy";
+            return self.give_up(item, status, reason).await;
         }
         let now = now_ms();
         if (self.in_use)(item.id) {
@@ -785,7 +879,54 @@ impl Health {
             let reason = "its Arr is rescanning a converted library file";
             return self.retry(item, status, reason, true).await;
         }
-        let (arr, owner, job, job_name) = match self.released(writing, self.owner(item)).await? {
+        let lookup = if status.repair_attempts >= REPAIR_BUDGET {
+            Lookup::Unrepairable("repeated replacements brought no working copy".to_owned())
+        } else {
+            self.released(writing, self.owner(item)).await?
+        };
+        if self.par2 && matches!(lookup, Lookup::Unowned(_) | Lookup::Unrepairable(_)) {
+            let owner = infinidysk_db::repair::Owner::Item(item.id);
+            let result = self.db.par2_result(owner, false).await?;
+            let pending = match result {
+                Some(job) if job.pending() => true,
+                Some(job)
+                    if matches!(job.state, 2 | 3 | 5 | 6)
+                        && status.last_check.unwrap_or(0) <= job.updated_at =>
+                {
+                    let next = HealthStatus {
+                        state: HealthState::Unchecked,
+                        next_check: Some(now),
+                        ..status
+                    };
+                    self.db
+                        .set_health_recheck(item.id, &next, status.recheck, Recheck::User)
+                        .await?;
+                    return Ok(());
+                }
+                // A loss confirmed after a success is new damage; failures and cancels stand.
+                Some(job) if matches!(job.state, 2 | 3) => {
+                    match self.db.retry_par2(job.claim(), now).await {
+                        Ok(_) | Err(infinidysk_db::Error::RepairQueueFull) => true,
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                Some(_) => false,
+                None => match self.db.request_par2(owner, false, now).await {
+                    Ok(job) => job.is_some(),
+                    Err(infinidysk_db::Error::RepairQueueFull) => true,
+                    Err(error) => return Err(error.into()),
+                },
+            };
+            if pending {
+                let next = HealthStatus {
+                    next_check: Some(now + MINUTE_MS),
+                    ..status
+                };
+                self.db.set_health(item.id, &next, status.recheck).await?;
+                return Ok(());
+            }
+        }
+        let (arr, owner, job, job_name) = match lookup {
             Lookup::Found {
                 arr,
                 owner,
@@ -899,6 +1040,15 @@ impl Health {
         } else {
             next.repair_attempts += 1;
             if next.repair_attempts >= REPAIR_BUDGET {
+                if self.par2 {
+                    // Kept in history; the PAR2 fallback may replace the current reason.
+                    tracing::warn!(path = %item.path, reason = %message, "repair request failed; trying PAR2");
+                    self.record(item, HealthResult::Missing, Repair::None, message)
+                        .await?;
+                    next.next_check = Some(now);
+                    self.db.set_health(item.id, &next, status.recheck).await?;
+                    return Ok(());
+                }
                 return self.give_up(item, next, message).await;
             }
             let backoff = (HOUR_MS << (next.repair_attempts - 1)).min(DAY_MS);
@@ -968,7 +1118,8 @@ impl Health {
                 transient: true, ..
             } => {}
             _ if status.hidden_until.is_some_and(|t| now >= t) => {
-                if status.repair_attempts >= REPAIR_BUDGET {
+                let exhausted = status.repair_attempts >= REPAIR_BUDGET;
+                if exhausted && !(self.par2 && settings.auto_repair) {
                     return self
                         .give_up(
                             item,
@@ -981,7 +1132,11 @@ impl Health {
                     item,
                     HealthResult::Missing,
                     Repair::None,
-                    "no replacement arrived in time; asking again",
+                    if exhausted {
+                        "no replacement arrived after repeated requests; checking PAR2 repair"
+                    } else {
+                        "no replacement arrived in time; asking again"
+                    },
                 )
                 .await?;
                 next.state = HealthState::Repairing;
@@ -1198,6 +1353,40 @@ impl Health {
             .reject_release(job_name, &ids, now_ms() + REJECT_FOR_MS)
             .await?;
         Ok(())
+    }
+
+    /// The NZB and generation that omitted placeholders in `meta` read from; `None` when
+    /// the item's metadata or NZB was replaced while reading.
+    async fn omitted_source(
+        &self,
+        item: &Item,
+        metadata: BlobId,
+        meta: &FileMeta,
+    ) -> Result<Option<Option<(BlobId, i64)>>, Error> {
+        if !self.db.may_have_repairs() || !meta.has_placeholders() {
+            return Ok(Some(None));
+        }
+        let Some(nzb) = item.nzb_blob else {
+            return Ok(Some(None));
+        };
+        let Some((generation, raw)) = self.db.repair_metadata(item.id, metadata, nzb).await? else {
+            return Ok(None);
+        };
+        if blob::decode_meta(&raw)? != *meta {
+            return Ok(None);
+        }
+        Ok(Some(Some((nzb, generation))))
+    }
+
+    /// Like [`Self::meta`], with the blob generation its bytes were read at.
+    async fn meta_generation(&self, item: &Item) -> Result<Option<(BlobId, i64, FileMeta)>, Error> {
+        let Some(id) = item.meta_blob else {
+            return Ok(None);
+        };
+        let Some((generation, bytes)) = self.db.blob_with_generation(id).await? else {
+            return Ok(None);
+        };
+        Ok(Some((id, generation, blob::decode_meta(&bytes)?)))
     }
 
     async fn meta(&self, item: &Item) -> Result<Option<(BlobId, FileMeta)>, Error> {

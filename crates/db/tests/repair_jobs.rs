@@ -51,7 +51,7 @@ async fn capacity_bounds(db: &Db) {
         .unwrap()
         .unwrap();
     assert_eq!(db.par2_pending().await.unwrap(), QUEUE_CAPACITY);
-    let full = |r: Result<Option<uuid::Uuid>, Error>| matches!(r, Err(Error::RepairBounds(_)));
+    let full = |r: Result<Option<uuid::Uuid>, Error>| matches!(r, Err(Error::RepairQueueFull));
     let next = Owner::Item(items[last + 1]);
     assert!(full(db.request_par2(next, false, 11).await));
     assert!(full(db.request_par2(next, true, 11).await));
@@ -69,7 +69,7 @@ async fn capacity_bounds(db: &Db) {
     let check = db.request_par2(next, true, 13).await.unwrap().unwrap();
     assert!(matches!(
         db.restart_par2(repair, 14).await,
-        Err(Error::RepairBounds(_))
+        Err(Error::RepairQueueFull)
     ));
     db.cancel_par2(check, 15).await.unwrap();
     db.restart_par2(repair, 16).await.unwrap();
@@ -505,6 +505,69 @@ async fn durable_requests(db: &mut Db, url: &str) {
 }
 
 #[tokio::test]
+async fn a_stale_success_cannot_revive_a_cancelled_or_move_a_deferred_job() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    stale_retries(&db).await;
+}
+
+async fn stale_retries(db: &Db) {
+    for job in db.par2_jobs().await.unwrap() {
+        db.cancel_par2(job.id, 0).await.unwrap();
+    }
+    let root = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut item = Item::child(&root, "retry.bin", ItemKind::NzbFile).unwrap();
+    let (nzb, meta) = (BlobId::new(), BlobId::new());
+    item.nzb_blob = Some(nzb);
+    item.meta_blob = Some(meta);
+    db.insert(&[item.clone()], &[(nzb, b"nzb"), (meta, b"meta")])
+        .await
+        .unwrap();
+    let owner = Owner::Item(item.id);
+    let id = db.request_par2(owner, false, 10).await.unwrap().unwrap();
+    let job = |db: &Db| {
+        let db = db.clone();
+        async move { db.par2_result(owner, false).await.unwrap().unwrap() }
+    };
+    let claimed = db.claim_par2_lane(10, false, false).await.unwrap().unwrap();
+    db.finish_par2(claimed.claim(), 3, "repaired", 0, 0, 11, None)
+        .await
+        .unwrap();
+    let observed = job(db).await;
+    db.restart_par2(id, 12).await.unwrap();
+    db.cancel_par2(id, 13).await.unwrap();
+    assert!(!db.retry_par2(observed.claim(), 14).await.unwrap());
+    assert_eq!(job(db).await.state, 6, "the cancellation stands");
+
+    db.restart_par2(id, 15).await.unwrap();
+    let claimed = db.claim_par2_lane(15, false, false).await.unwrap().unwrap();
+    db.finish_par2(claimed.claim(), 3, "repaired", 0, 0, 16, None)
+        .await
+        .unwrap();
+    let observed = job(db).await;
+    db.restart_par2(id, 17).await.unwrap();
+    let claimed = db.claim_par2_lane(17, false, false).await.unwrap().unwrap();
+    db.finish_par2(claimed.claim(), 4, "busy", 0, 0, 18, Some(1_000))
+        .await
+        .unwrap();
+    assert!(!db.retry_par2(observed.claim(), 19).await.unwrap());
+    let deferred = job(db).await;
+    assert_eq!(
+        (deferred.state, deferred.next_at),
+        (4, 1_000),
+        "the cooldown stands"
+    );
+
+    db.cancel_par2(id, 20).await.unwrap();
+    db.restart_par2(id, 21).await.unwrap();
+    let claimed = db.claim_par2_lane(21, false, false).await.unwrap().unwrap();
+    db.finish_par2(claimed.claim(), 2, "verified", 0, 0, 22, None)
+        .await
+        .unwrap();
+    assert!(db.retry_par2(job(db).await.claim(), 23).await.unwrap());
+    assert_eq!(job(db).await.state, 0, "an unchanged result queues again");
+}
+
+#[tokio::test]
 async fn cancelled_attempt_cannot_finish_or_refund_a_restarted_claim() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     stale_claims(&db).await;
@@ -752,6 +815,7 @@ async fn postgres_requests_obey_the_same_claim_resume_and_cancellation_contract(
     handoff_at_capacity(&db).await;
     capacity_bounds(&db).await;
     stale_claims(&db).await;
+    stale_retries(&db).await;
     escalation_fencing(&db).await;
     verification_restoration(&db).await;
     db.close().await;

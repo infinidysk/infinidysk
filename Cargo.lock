@@ -1471,6 +1471,7 @@ dependencies = [
  "infinidysk",
  "infinidysk-core",
  "infinidysk-db",
+ "infinidysk-health",
  "infinidysk-nntp",
  "infinidysk-queue",
  "infinidysk-stream",
@@ -1481,6 +1482,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tokio-util",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -1514,8 +1516,7 @@ dependencies = [
 [[package]]
 name = "infinidysk-fuse"
 version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f074f6f3d1a60238cf914f56a7466bae65d981308f1aa42e8b00b808aac913d"
+source = "git+https://github.com/infinidysk/infinidysk-fuse?rev=06aaf3a46ad10354136d53fe7cb55d536feca1a4#06aaf3a46ad10354136d53fe7cb55d536feca1a4"
 dependencies = [
  "async-notify",
  "bytes",
@@ -1541,6 +1542,7 @@ dependencies = [
  "infinidysk-core",
  "infinidysk-db",
  "infinidysk-nntp",
+ "infinidysk-par2",
  "infinidysk-queue",
  "infinidysk-testkit",
  "jiff",
@@ -1549,6 +1551,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -1647,6 +1650,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -1699,6 +1703,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "bytes",
  "futures-util",
  "hmac 0.13.0",
  "http-body-util",
@@ -1716,7 +1721,6 @@ dependencies = [
  "serde",
  "sha2 0.11.1",
  "tokio",
- "tokio-util",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -3703,6 +3707,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

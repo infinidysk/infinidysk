@@ -14,6 +14,11 @@ use crate::{
 /// Bound the descriptors held for one atomic publication.
 pub const MAX_PATCHES: usize = 1024;
 
+/// Changed repair bytes start structural evidence over; the hold stays until a walk clears it.
+const FORGET_DEFECTS: &str = "UPDATE media_probes SET defect_offset = NULL, defect_size = NULL, \
+     defect_seen_at = NULL, defect_source = NULL \
+     WHERE item_id IN (SELECT id FROM items WHERE nzb_blob = $1)";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Item(ItemId),
@@ -133,6 +138,8 @@ pub(super) fn decode(row: &Row) -> Result<Patch, Error> {
 
 impl Db {
     /// Keep a damaged inner NZB as the queued repair source before parking its import.
+    /// Returns the new NZB blob, or `None` when the source changed. The job keeps the
+    /// submitted NZB's content hash, so resubmitting that NZB still finds this job.
     pub async fn replace_queued_repair_nzb(
         &self,
         source: &Source,
@@ -140,7 +147,7 @@ impl Db {
         nzb_size: u64,
         total_bytes: u64,
         file_name: &str,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<BlobId>, Error> {
         let Owner::Queue(job) = source.owner else {
             return Err(Error::RepairBounds("queued repair owner"));
         };
@@ -154,11 +161,11 @@ impl Db {
                 sqlx::query("SELECT id FROM blobs WHERE id = $1 FOR UPDATE").bind(source.nzb.0).execute(&mut *tx).await?;
             }
             if capture!(&mut *tx, source.owner) != Some(source.clone()) {
-                return Ok(false);
+                return Ok(None);
             }
             sqlx::query("INSERT INTO blobs (id, data) VALUES ($1, $2)")
                 .bind(replacement.0).bind(encoded).execute(&mut *tx).await?;
-            sqlx::query("UPDATE queue SET nzb_blob = $2, total_bytes = $3, file_name = $4, nzb_size = $5, content_hash = NULL WHERE id = $1")
+            sqlx::query("UPDATE queue SET nzb_blob = $2, total_bytes = $3, file_name = $4, nzb_size = $5 WHERE id = $1")
                 .bind(job.0).bind(replacement.0).bind(total).bind(file_name).bind(size).execute(&mut *tx).await?;
             crate::release_nzb!(self, tx, source.nzb.0);
             tx.commit().await?;
@@ -167,7 +174,7 @@ impl Db {
         if changed {
             self.notify(crate::Change::Queue);
         }
-        Ok(changed)
+        Ok(changed.then_some(replacement))
     }
 
     /// Bound compressed source allocation before loading it from either database.
@@ -272,8 +279,10 @@ impl Db {
             };
             let items = sqlx::query_as("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE nzb_blob = $1 AND kind <> 1 AND health_state <> 7 RETURNING id, path")
                 .bind(nzb).fetch_all(&mut *tx).await?;
+            sqlx::query(FORGET_DEFECTS).bind(nzb).execute(&mut *tx).await?;
             let committed = tx.commit().await;
             self.blob_epoch.fetch_add(1, Ordering::Release);
+            self.repair_epoch.fetch_add(1, Ordering::Release);
             committed?;
             items
         });
@@ -373,8 +382,33 @@ impl Db {
         meta: BlobId,
         nzb: BlobId,
     ) -> Result<Option<(i64, Vec<u8>)>, Error> {
+        self.repair_metadata_limited(item, meta, nzb, i64::MAX)
+            .await
+    }
+
+    pub async fn repair_metadata_limited(
+        &self,
+        item: ItemId,
+        meta: BlobId,
+        nzb: BlobId,
+        limit: i64,
+    ) -> Result<Option<(i64, Vec<u8>)>, Error> {
         Ok(on!(self, pool => sqlx::query_as(
             "SELECT b.generation, m.data FROM items i \
+             JOIN blobs b ON b.id = i.nzb_blob JOIN blobs m ON m.id = i.meta_blob \
+             WHERE i.id = $1 AND i.meta_blob = $2 AND i.nzb_blob = $3 AND i.kind <> 1 AND length(m.data) <= $4")
+            .bind(item.0).bind(meta.0).bind(nzb.0).bind(limit).fetch_optional(pool).await?))
+    }
+
+    /// Like [`Db::repair_metadata`], with the metadata blob's generation instead of its bytes.
+    pub async fn repair_generations(
+        &self,
+        item: ItemId,
+        meta: BlobId,
+        nzb: BlobId,
+    ) -> Result<Option<(i64, i64)>, Error> {
+        Ok(on!(self, pool => sqlx::query_as(
+            "SELECT b.generation, m.generation FROM items i \
              JOIN blobs b ON b.id = i.nzb_blob JOIN blobs m ON m.id = i.meta_blob \
              WHERE i.id = $1 AND i.meta_blob = $2 AND i.nzb_blob = $3 AND i.kind <> 1")
             .bind(item.0).bind(meta.0).bind(nzb.0).fetch_optional(pool).await?))
@@ -498,6 +532,7 @@ impl Db {
                 tx.rollback().await?;
                 return Ok(false);
             }
+            let mut inserted = false;
             for (patch, descriptor) in patches.iter().zip(&encoded) {
                 let s = &patch.source;
                 let start = i64::try_from(s.range.start).expect("validated SQL offset");
@@ -526,12 +561,18 @@ impl Db {
                 ).bind(patch.id.0).bind(source.nzb.0).bind(source.generation)
                     .bind(s.set.as_slice()).bind(s.file.as_slice()).bind(start).bind(end)
                     .bind(&s.message_id).bind(descriptor).execute(&mut *tx).await?;
+                inserted = true;
+            }
+            // An idempotent retry adds no bytes, so later defect evidence still stands.
+            if inserted {
+                sqlx::query(FORGET_DEFECTS).bind(source.nzb.0).execute(&mut *tx).await?;
             }
             // Enabled before visibility so a concurrent read cannot skip a committed row.
             self.repair_present.store(true, Ordering::Release);
             // Released health observations must retry even after an uncertain COMMIT.
             let committed = tx.commit().await;
             self.blob_epoch.fetch_add(1, Ordering::Release);
+            self.repair_epoch.fetch_add(1, Ordering::Release);
             committed?;
         });
         Ok(true)

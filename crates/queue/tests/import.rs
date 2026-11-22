@@ -535,19 +535,295 @@ async fn archives_open_three_levels_deep_and_compressed_inner_members_fail() {
     );
 }
 
+#[tokio::test]
+async fn missing_obfuscated_data_waits_for_par2_instead_of_failing_empty() {
+    missing_import(false).await;
+}
+
+#[tokio::test]
+async fn repair_completed_during_a_failed_import_retries_the_job() {
+    missing_import(true).await;
+}
+
+async fn missing_import(complete_during_import: bool) {
+    let missing = post("missing-obfuscated", "obfuscated", &[1; 1000], 1000);
+    let parity = fixture("par2/tests/fixtures/set.par2");
+    let index = post("surviving-index", "set.par2", &parity, 32 << 10);
+    let xml = nzb(&[
+        ("obfuscated", &missing, 1000, 1000),
+        ("set.par2", &index, parity.len(), 32 << 10),
+    ]);
+    let (server, queue) = setup(index).await;
+    queue.enable_par2();
+    let db = queue.db();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &xml,
+        )
+        .await
+        .unwrap();
+    if complete_during_import {
+        let (arrived, release) = server.hold_article(&missing[0].message_id);
+        let complete = async {
+            tokio::time::timeout(Duration::from_secs(5), arrived)
+                .await
+                .unwrap()
+                .unwrap();
+            db.request_par2(infinidysk_db::repair::Owner::Queue(id), false, 0)
+                .await
+                .unwrap()
+                .unwrap();
+            let job = db.claim_par2(1).await.unwrap().unwrap();
+            db.finish_par2(job.claim(), 3, "repaired", 0, 0, 2, None)
+                .await
+                .unwrap();
+            release.send(()).unwrap();
+        };
+        let (processed, ()) = tokio::join!(queue.process_next(), complete);
+        assert!(processed);
+    } else {
+        assert!(queue.process_next().await);
+    }
+    assert!(
+        db.history_entry(id).await.unwrap().is_none(),
+        "repair must be requested before failure"
+    );
+    let queued = db.queue().await.unwrap();
+    assert_eq!(queued.len(), 1);
+    if complete_during_import {
+        assert_eq!(
+            queued[0].last_error.as_deref(),
+            Some("PAR2 completed during the import.")
+        );
+    }
+    let repair = db
+        .par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repair.state, if complete_during_import { 3 } else { 0 });
+}
+
+#[tokio::test]
+async fn compressed_archives_fail_without_starting_a_repair_download() {
+    let data = fixture("archive/tests/fixtures/7Zip.LZMA.7z");
+    let articles = post("compressed", "source.7z", &data, 7000);
+    let xml = nzb(&[("source.7z", &articles, data.len(), 7000)]);
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let queue = queue_on(&[&server]).await;
+    let db = queue.db().clone();
+    queue.enable_par2();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &xml,
+        )
+        .await
+        .unwrap();
+    assert!(queue.process_next().await);
+    assert_eq!(
+        db.history_entry(id).await.unwrap().unwrap().status,
+        JobStatus::Failed
+    );
+    assert!(
+        db.par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(db.claim_par2(i64::MAX).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn category_rejections_fail_without_starting_a_repair_download() {
+    let data = sevenzip(&[("BDMV/STREAM/00001.m2ts", &mkv(4096, 4))]);
+    let articles = post("category-policy", "source.7z", &data, 7000);
+    let xml = nzb(&[("source.7z", &articles, data.len(), 7000)]);
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let queue = queue_on(&[&server]).await;
+    let db = queue.db().clone();
+    queue.update_rules(|rules| {
+        rules.owners.insert("tv".into(), vec![media::Kind::Video]);
+    });
+    queue.enable_par2();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &xml,
+        )
+        .await
+        .unwrap();
+    assert!(queue.process_next().await);
+    let history = db.history_entry(id).await.unwrap().unwrap();
+    assert_eq!(history.status, JobStatus::Failed);
+    assert_eq!(
+        history.fail_message.as_deref(),
+        Some("Full disc releases are not supported.")
+    );
+    assert!(
+        db.par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(db.claim_par2(i64::MAX).await.unwrap().is_none());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn par2_names_obfuscated_files() {
+    check_par2_names(0).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ambiguous_par2_sets_keep_file_names_but_do_not_authorize_omitted_reads() {
+    check_par2_names(1).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn conflicting_par2_file_descriptions_do_not_authorize_omitted_reads() {
+    check_par2_names(2).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_par2_copy_without_slice_checksums_keeps_the_set() {
+    check_par2_names(3).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_later_par2_copy_without_a_main_packet_keeps_the_set() {
+    check_par2_names(4).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_earlier_par2_copy_without_a_main_packet_keeps_the_set() {
+    check_par2_names(5).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_par2_copy_with_a_unicode_name_keeps_the_set() {
+    check_par2_names(6).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unread_recovery_volume_of_another_set_leaves_the_set_unset() {
+    check_par2_names(7).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prefix_matches_with_different_proofs_attach_none() {
+    check_par2_names(8).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prefix_matches_with_different_names_keep_the_first_name_without_a_proof() {
+    check_par2_names(9).await;
+}
+
+/// `ambiguity`: 0 one index, 1 a second set, 2 a conflicting copy, 3 a copy without
+/// IFSC packets, 4 and 5 a copy without the Main packet listed after or before, 6 a copy
+/// with an extra `UniFileN` packet, 7 a second set only in a recovery volume, 8 a second
+/// set describing a different full-file hash, 9 a second set naming the file differently.
+async fn check_par2_names(ambiguity: u8) {
     let data: Vec<u8> = (0..100_000usize)
         .map(|i| ((i * 31 + i / 251) % 256).to_le_bytes()[0])
         .collect();
     let a = post("a", "0123abcdef", &data, 32 << 10);
     let par2 = fixture("par2/tests/fixtures/set.par2");
     let p = post("p", "x.par2", &par2, 32 << 10);
-    let xml = nzb(&[
+    let mut entries: Vec<(&str, &[Article], usize, usize)> = vec![
         ("0123abcdef", &a, data.len(), 32 << 10),
         ("\"x.par2\"", &p, par2.len(), 32 << 10),
-    ]);
-    let (_server, queue) = setup([a.clone(), p.clone()].concat()).await;
+    ];
+    let mut other = par2.clone();
+    if matches!(ambiguity, 3..=5) {
+        let dropped: &[u8] = if ambiguity == 3 { b"IFSC" } else { b"Main" };
+        let mut kept = Vec::new();
+        let mut at = 0;
+        while at < other.len() {
+            let len = usize::try_from(u64::from_le_bytes(
+                other[at + 8..at + 16].try_into().unwrap(),
+            ))
+            .unwrap();
+            if !other[at + 56..at + 64].starts_with(dropped) {
+                kept.extend_from_slice(&other[at..at + len]);
+            }
+            at += len;
+        }
+        assert!(
+            kept.len() < other.len(),
+            "the fixture has the dropped packets"
+        );
+        other = kept;
+    }
+    if ambiguity == 6 {
+        let at = other
+            .windows(16)
+            .position(|w| w == b"PAR 2.0\0FileDesc")
+            .unwrap()
+            - 48;
+        let mut body = other[at + 64..at + 80].to_vec();
+        body.extend("b.bin\0".encode_utf16().flat_map(u16::to_le_bytes));
+        body.resize(body.len().next_multiple_of(4), 0);
+        let mut packet = b"PAR2\0PKT".to_vec();
+        packet.extend_from_slice(&(64 + body.len() as u64).to_le_bytes());
+        packet.extend_from_slice(&[0; 16]);
+        packet.extend_from_slice(&other[at + 32..at + 48]);
+        packet.extend_from_slice(b"PAR 2.0\0UniFileN");
+        packet.extend_from_slice(&body);
+        other.extend_from_slice(&packet);
+    }
+    // Recompute packet checksums after changing either the set or the full-file hash.
+    let mut at = 0;
+    while at < other.len() {
+        let len = usize::try_from(u64::from_le_bytes(
+            other[at + 8..at + 16].try_into().unwrap(),
+        ))
+        .unwrap();
+        let packet = &mut other[at..at + len];
+        assert!(len <= 16_384);
+        if matches!(ambiguity, 1 | 7 | 8 | 9) {
+            packet[32..48].fill(9);
+        }
+        if matches!(ambiguity, 2 | 8) && &packet[48..64] == b"PAR 2.0\0FileDesc" {
+            packet[80] ^= 1;
+        }
+        if ambiguity == 9
+            && &packet[48..64] == b"PAR 2.0\0FileDesc"
+            && &packet[120..125] == b"a.bin"
+        {
+            packet[122..125].copy_from_slice(b"mkv");
+        }
+        let hash = infinidysk_par2::hash_16k(&packet[32..]);
+        packet[16..32].copy_from_slice(&hash);
+        at += len;
+    }
+    let q = post("q", "y.par2", &other, 32 << 10);
+    assert!(ambiguity != 9 || other.windows(5).any(|w| w == b"a.mkv"));
+    if ambiguity == 5 {
+        entries.insert(1, ("\"y.par2\"", &q, other.len(), 32 << 10));
+    } else if ambiguity == 7 {
+        entries.push(("\"y.vol0+1.par2\"", &q, other.len(), 32 << 10));
+    } else if ambiguity != 0 {
+        entries.push(("\"y.par2\"", &q, other.len(), 32 << 10));
+    }
+    let xml = nzb(&entries);
+    let (_server, queue) = setup([a.clone(), p.clone(), q].concat()).await;
     let db = queue.db().clone();
 
     let history = run(&queue, &db, &xml).await;
@@ -560,7 +836,24 @@ async fn par2_names_obfuscated_files() {
     let Some(FileMeta::Nzb(f)) = meta(&db, "/content/tv/job/a.bin").await else {
         panic!("deobfuscated file imported")
     };
-    assert_eq!(f.proof.map(|p| p.file_length), Some(100_000));
+    if matches!(ambiguity, 8 | 9) {
+        assert!(f.proof.is_none(), "disagreeing candidates attach no proof");
+        return;
+    }
+    let proof = f.proof.expect("PAR2 proof");
+    assert_eq!(proof.file_length, 100_000);
+    let held = matches!(ambiguity, 0 | 3..=6);
+    assert_eq!(
+        proof.set_id,
+        if held {
+            infinidysk_par2::read(&par2).set_id
+        } else {
+            None
+        }
+    );
+    assert_eq!(proof.set_id.is_some(), held);
+    assert!(!held || !proof.slice_md5.is_empty(), "slice checksums kept");
+    assert!(!held || proof.slice_size > 0, "slice size kept");
 }
 
 /// Fixtures: `par2 create -c0 -s4096 one.par2 one.bin` and `-s8192 two.par2 two.bin`.
@@ -1150,6 +1443,102 @@ fn wrap(prefix: &str, xml: &[u8], articles: &mut Vec<Article>) -> Vec<u8> {
     outer
 }
 
+#[tokio::test]
+async fn repair_of_a_damaged_inner_nzb_keeps_the_inner_source_and_password() {
+    let archive = fixture("archive/tests/fixtures/aes-5.rar");
+    let packed = post("repair-inner", "pack.rar", &archive, 1000);
+    let release = String::from_utf8(nzb(&[("pack.rar", &packed, archive.len(), 1000)]))
+        .unwrap()
+        .replacen(
+            "<nzb>",
+            "<nzb><head><meta type=\"password\">test</meta></head>",
+            1,
+        );
+    let mut articles = packed[1..].to_vec();
+    let outer = wrap("repair-wrapper", release.as_bytes(), &mut articles);
+    let (_server, queue) = setup(articles).await;
+    queue.enable_par2();
+    let db = queue.db();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "job{{wrong}}.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &outer,
+        )
+        .await
+        .unwrap();
+    let original = db.queue().await.unwrap()[0].nzb_blob;
+    assert!(queue.process_next().await);
+    let pending = db.queue().await.unwrap();
+    assert_eq!(pending.len(), 1, "damaged inner content waits for repair");
+    assert_ne!(
+        pending[0].nzb_blob, original,
+        "repair must own the inner NZB"
+    );
+    let stored = db.blob(pending[0].nzb_blob).await.unwrap().unwrap();
+    assert_eq!(blob::decode_nzb(&stored).unwrap(), release.as_bytes());
+    assert_eq!(pending[0].file_name, "job.nzb");
+    let repair = db
+        .par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repair.nzb_blob, Some(pending[0].nzb_blob.0));
+    assert_eq!(repair.state, 0);
+    assert!(
+        !queue.process_next().await,
+        "parked work waits for its retry time"
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_inner_nzb_file_waits_for_par2_instead_of_failing_empty() {
+    let missing = post("missing-obfuscated", "obfuscated", &[1; 1000], 1000);
+    let parity = fixture("par2/tests/fixtures/set.par2");
+    let index = post("surviving-index", "set.par2", &parity, 32 << 10);
+    let release = nzb(&[
+        ("obfuscated", &missing, 1000, 1000),
+        ("set.par2", &index, parity.len(), 32 << 10),
+    ]);
+    let mut articles = index;
+    let outer = wrap("missing-wrapper", &release, &mut articles);
+    let (_server, queue) = setup(articles).await;
+    queue.enable_par2();
+    let db = queue.db();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &outer,
+        )
+        .await
+        .unwrap();
+    assert!(queue.process_next().await);
+    assert!(
+        db.history_entry(id).await.unwrap().is_none(),
+        "repair must be requested before failure"
+    );
+    let pending = db.queue().await.unwrap();
+    assert_eq!(pending.len(), 1);
+    let stored = db.blob(pending[0].nzb_blob).await.unwrap().unwrap();
+    assert_eq!(blob::decode_nzb(&stored).unwrap(), release);
+    let repair = db
+        .par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repair.nzb_blob, Some(pending[0].nzb_blob.0));
+    assert_eq!(repair.state, 0);
+}
+
 async fn names_in(db: &Db, path: &str) -> Vec<String> {
     let dir = db.item_by_path(path).await.unwrap().unwrap();
     let files = db.children(dir.id).await.unwrap();
@@ -1316,6 +1705,19 @@ async fn a_blocklisted_nzb_is_not_followed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn without_par2_an_unavailable_plain_file_keeps_the_sab_failure() {
+    let notes = post("t", "notes.txt", &[3; 500], 1000);
+    let outer = nzb(&[("notes.txt", &notes, 500, 1000)]);
+    let (_server, queue) = setup(Vec::new()).await;
+    let db = queue.db().clone();
+    let history = run(&queue, &db, &outer).await;
+    assert_eq!(
+        history.fail_message.as_deref(),
+        Some("No importable files found.")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_nzb_next_to_other_files_stays_a_file() {
     let release = b"<nzb/>";
     let inner = post("n", "release.nzb", release, 1000);
@@ -1352,6 +1754,8 @@ async fn several_or_unusable_inner_nzbs_fail_the_job() {
     let mut articles = [clip, a, b].concat();
     let unusable = wrap("u", b"<nzb/>", &mut articles);
     let (_server, queue) = setup(articles).await;
+    // Restored articles cannot change the file layout, so PAR2 must not park these jobs.
+    queue.enable_par2();
     let db = queue.db().clone();
 
     let history = run(&queue, &db, &several).await;

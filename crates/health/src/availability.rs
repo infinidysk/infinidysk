@@ -1,0 +1,407 @@
+//! Full article availability with bounded body spot checks, never a full-file download.
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use futures_util::{StreamExt as _, stream};
+use infinidysk_core::{BlobId, ItemId, blob};
+use infinidysk_nntp::{Error as SourceError, MAX_DECODED_LEN};
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
+use tokio_util::sync::CancellationToken;
+
+use super::check::{self, Direct, Probe};
+use super::{Error, Health};
+
+#[derive(Debug)]
+pub enum Availability {
+    Available { articles: u64 },
+    Damaged { missing: u64, corrupt: u64 },
+    Unavailable(&'static str),
+    Source(SourceError),
+    Changed,
+    Cancelled,
+    Yielded,
+}
+
+#[derive(Default)]
+pub struct AvailabilityProgress {
+    pub checked: AtomicU64,
+    pub total: AtomicU64,
+    pub body_bytes: AtomicU64,
+}
+
+pub struct AvailabilityOptions {
+    pub concurrency: usize,
+    pub memory_bytes: usize,
+    pub decoded_bytes: u64,
+    pub evidence: Option<Arc<Evidence>>,
+    pub progress: Arc<AvailabilityProgress>,
+}
+
+impl Default for AvailabilityOptions {
+    fn default() -> Self {
+        Self {
+            concurrency: 64,
+            memory_bytes: 256_000_000,
+            decoded_bytes: 100_000_000_000,
+            evidence: None,
+            progress: Arc::new(AvailabilityProgress::default()),
+        }
+    }
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct Key {
+    epoch: u64,
+    source: Option<(BlobId, i64)>,
+    id: String,
+    begin: Option<u64>,
+    size: Option<u32>,
+    /// A STAT receipt must not satisfy a BODY probe.
+    body: bool,
+}
+
+#[derive(Default)]
+struct Entries {
+    slots: HashMap<Arc<Key>, Arc<AsyncMutex<bool>>>,
+    order: VecDeque<Arc<Key>>,
+    bytes: usize,
+}
+
+/// Positive observations shared only by jobs from the same scan. Stores no article bytes.
+#[derive(Default)]
+pub struct Evidence(Mutex<Entries>);
+
+impl Evidence {
+    fn slot(&self, key: Key) -> Arc<AsyncMutex<bool>> {
+        let mut entries = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(slot) = entries.slots.get(&key) {
+            return Arc::clone(slot);
+        }
+        let bytes = key.id.len() + 512;
+        if bytes > 16_000_000 {
+            return Arc::new(AsyncMutex::new(false));
+        }
+        // ponytail: 16 MB of observations; revisit capacity if shared-source benchmarks repeat reads.
+        while entries.bytes + bytes > 16_000_000 {
+            let Some(old) = entries.order.pop_front() else {
+                break;
+            };
+            entries.bytes -= old.id.len() + 512;
+            entries.slots.remove(&old);
+        }
+        let key = Arc::new(key);
+        let slot = Arc::new(AsyncMutex::new(false));
+        entries.bytes += bytes;
+        entries.order.push_back(Arc::clone(&key));
+        entries.slots.insert(key, Arc::clone(&slot));
+        slot
+    }
+}
+
+impl Health {
+    async fn availability_snapshot(
+        &self,
+        id: ItemId,
+        meta_id: BlobId,
+        nzb: Option<BlobId>,
+    ) -> Result<Option<(infinidysk_core::FileMeta, Option<(BlobId, i64)>)>, Error> {
+        let (raw, source) = if let Some(nzb) = nzb.filter(|_| self.db.may_have_repairs()) {
+            let Some((generation, raw)) = self
+                .db
+                .repair_metadata_limited(id, meta_id, nzb, 16_000_000)
+                .await?
+            else {
+                return Ok(None);
+            };
+            (raw, Some((nzb, generation)))
+        } else {
+            let Some(raw) = self.db.repair_blob(meta_id, 16_000_000).await? else {
+                return Ok(None);
+            };
+            (raw, None)
+        };
+        let meta = blob::decode_meta_limited(&raw, 16_000_000)?;
+        Ok(Some((meta, source)))
+    }
+
+    /// Checks stored plain and archive metadata. Results never claim full byte integrity.
+    /// Call as top-level work, without holding a database write permit.
+    pub async fn check_availability(
+        &self,
+        id: ItemId,
+        cancel: &CancellationToken,
+        options: AvailabilityOptions,
+    ) -> Result<Availability, Error> {
+        let stopped = cancel.child_token();
+        let _stop = stopped.clone().drop_guard();
+        if stopped.is_cancelled() {
+            return Ok(Availability::Cancelled);
+        }
+        if self.playback_active() {
+            return Ok(Availability::Yielded);
+        }
+        // Repair publication and eviction advance it; a scan spanning one reports `Changed`.
+        let epoch = self.db.repair_epoch();
+        let Some(item) = self.db.item(id).await? else {
+            return Ok(Availability::Unavailable("file no longer exists"));
+        };
+        let Some(meta_id) = item.meta_blob else {
+            return Ok(Availability::Unavailable("file metadata is unavailable"));
+        };
+        let Some((meta, generation)) = self
+            .availability_snapshot(id, meta_id, item.nzb_blob)
+            .await?
+        else {
+            return Ok(Availability::Unavailable("file metadata is unavailable"));
+        };
+        // Only placeholders need the omitted-article identity. Named repairs still
+        // depend on the generation, so the final validation compares it for every file.
+        let source = generation.filter(|_| meta.has_placeholders());
+        let providers = self.client.stats();
+        let first = providers.iter().map(|provider| provider.priority).min();
+        // Keep at least half the primary pool's connections free for playback startup.
+        let headroom = providers
+            .iter()
+            .filter(|provider| Some(provider.priority) == first)
+            .map(|provider| provider.max_connections / 2)
+            .sum::<usize>()
+            .max(1);
+        let concurrency = options
+            .concurrency
+            .min(headroom)
+            .min(self.client.free_permits().unwrap_or(64).max(1))
+            .clamp(1, 256);
+        // Covers decoded metadata, observation keys and at least one maximum-sized body.
+        let bodies = options.memory_bytes.saturating_sub(80_000_000) / MAX_DECODED_LEN;
+        if bodies == 0 {
+            return Ok(Availability::Unavailable(
+                "working memory cannot admit a spot check",
+            ));
+        }
+        let client = Arc::clone(&self.client);
+        let streaming = Arc::clone(&self.streaming);
+        let runtime = tokio::runtime::Handle::current();
+        let (meta, result) = tokio::task::spawn_blocking(move || {
+            let direct = Direct {
+                client: &client,
+                source,
+                meter: None,
+            };
+            let result = runtime.block_on(async {
+                let (segments, _, corrupt) = check::flatten(&meta);
+                let mut segments: Vec<_> = segments.into_iter().enumerate().collect();
+                if let infinidysk_core::FileMeta::Multipart(file) = &meta {
+                    let mut overlaps = file.parts.iter().flat_map(|part| {
+                        part.segments.items.iter().scan(part.offset, |at, segment| {
+                            let start = *at;
+                            *at = start.saturating_add(u64::from(segment.size));
+                            // Untrusted sizes cannot place a segment, so it may overlap.
+                            Some(
+                                !part.data.is_empty()
+                                    && (!part.segments.sizes_trusted
+                                        || (start < part.data.end && *at > part.data.start)),
+                            )
+                        })
+                    });
+                    segments.retain(|_| overlaps.next().expect("one range per flattened segment"));
+                }
+                let total = segments.len();
+                options
+                    .progress
+                    .total
+                    .store(total as u64, Ordering::Relaxed);
+                if total == 0 {
+                    return Availability::Unavailable("no articles in file metadata");
+                }
+                let body_permits = Semaphore::new(bodies.min(3));
+                let remaining = AtomicU64::new(options.decoded_bytes);
+                let evidence = options.evidence.as_deref();
+                let progress = &options.progress;
+                let local_repairs = direct.client.has_repair_lookup();
+                let requests =
+                    segments
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &(index, (segment, begin, proof)))| {
+                            // STAT cannot clear a recorded corrupt article; only its body can.
+                            let body = segment.id.is_empty()
+                                || corrupt.contains(&index)
+                                || [0, total / 2, total - 1].contains(&i);
+                            // A local repair is checked against this layout, so its receipt is too.
+                            let placed = body || local_repairs;
+                            let slot =
+                                evidence.filter(|_| !segment.id.is_empty()).map(|evidence| {
+                                    evidence.slot(Key {
+                                        epoch,
+                                        // Repair patches are stored per generation, so receipts are too.
+                                        source: generation,
+                                        id: segment.id.clone(),
+                                        begin: placed.then_some(begin).flatten(),
+                                        size: placed.then_some(segment.size),
+                                        body,
+                                    })
+                                });
+                            let body_permits = &body_permits;
+                            let remaining = &remaining;
+                            let direct = &direct;
+                            async move {
+                                let mut receipt = if let Some(slot) = &slot {
+                                    Some(slot.lock().await)
+                                } else {
+                                    None
+                                };
+                                if receipt.as_deref().copied() == Some(true) {
+                                    drop(receipt);
+                                    progress.checked.fetch_add(1, Ordering::Release);
+                                    return Ok(Probe::Present);
+                                }
+                                let mut result = None;
+                                if placed {
+                                    let _permit = body_permits
+                                        .acquire()
+                                        .await
+                                        .expect("spot check semaphore never closes");
+                                    if remaining
+                                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                                            left.checked_sub(MAX_DECODED_LEN as u64)
+                                        })
+                                        .is_err()
+                                    {
+                                        return Err("source read allowance exceeded");
+                                    }
+                                    let used = if body {
+                                        let (probe, bytes) =
+                                            check::fetch(direct, segment, begin, proof).await;
+                                        // A missing article decoded nothing.
+                                        let used = match (&probe, bytes) {
+                                            (_, Some(bytes)) => Some(bytes.len()),
+                                            (Probe::Missing, None) => Some(0),
+                                            _ => None,
+                                        };
+                                        result = Some(probe);
+                                        used
+                                    } else {
+                                        match direct.client.repaired(&segment.id, begin).await {
+                                            // Playback rejects a placed repair of another length.
+                                            Ok(Some(repair))
+                                                if begin.is_some()
+                                                    && repair.data.len()
+                                                        != segment.size as usize =>
+                                            {
+                                                result = Some(Probe::Corrupt);
+                                                Some(repair.data.len())
+                                            }
+                                            Ok(Some(repair)) => {
+                                                result = Some(Probe::Present);
+                                                Some(repair.data.len())
+                                            }
+                                            Ok(None) => Some(0),
+                                            Err(error) => {
+                                                result = Some(Probe::Inconclusive(error));
+                                                None
+                                            }
+                                        }
+                                    };
+                                    if let Some(used) = used {
+                                        progress
+                                            .body_bytes
+                                            .fetch_add(used as u64, Ordering::Relaxed);
+                                        remaining.fetch_add(
+                                            MAX_DECODED_LEN as u64 - used as u64,
+                                            Ordering::Relaxed,
+                                        );
+                                    }
+                                }
+                                let result = match result {
+                                    Some(probe) => probe,
+                                    None => match direct
+                                        .client
+                                        .provider_stat(
+                                            &segment.id,
+                                            infinidysk_nntp::Workload::Health,
+                                            None,
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => Probe::Present,
+                                        Err(SourceError::NotFound) => Probe::Missing,
+                                        Err(error) => Probe::Inconclusive(error),
+                                    },
+                                };
+                                if let Some(receipt) = &mut receipt {
+                                    **receipt = matches!(result, Probe::Present);
+                                }
+                                drop(receipt);
+                                progress.checked.fetch_add(1, Ordering::Release);
+                                Ok(result)
+                            }
+                        });
+                let mut requests = stream::iter(requests).buffer_unordered(concurrency);
+                let (mut missing, mut corrupt) = (0, 0);
+                loop {
+                    if streaming() {
+                        return Availability::Yielded;
+                    }
+                    let result = tokio::select! {
+                        biased;
+                        () = stopped.cancelled() => return Availability::Cancelled,
+                        () = tokio::time::sleep(std::time::Duration::from_millis(25)) => continue,
+                        result = requests.next() => result,
+                    };
+                    match result {
+                        None => break,
+                        Some(Ok(Probe::Present)) => {}
+                        Some(Ok(Probe::Missing)) => missing += 1,
+                        Some(Ok(Probe::Corrupt)) => corrupt += 1,
+                        Some(Ok(Probe::Inconclusive(error))) => return Availability::Source(error),
+                        Some(Err(reason)) => return Availability::Unavailable(reason),
+                    }
+                }
+                if missing + corrupt == 0 {
+                    Availability::Available {
+                        articles: total as u64,
+                    }
+                } else {
+                    Availability::Damaged { missing, corrupt }
+                }
+            });
+            (meta, result)
+        })
+        .await?;
+        // Waits out a publication in progress, so its epoch change is visible below.
+        let _writing = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Ok(Availability::Cancelled),
+            writing = self.db.write_permit() => writing,
+        };
+        if cancel.is_cancelled() {
+            return Ok(Availability::Cancelled);
+        }
+        if self.db.repair_epoch() != epoch {
+            return Ok(Availability::Changed);
+        }
+        let Some(current) = self.db.item(id).await? else {
+            return Ok(Availability::Changed);
+        };
+        if current.meta_blob != Some(meta_id) || current.nzb_blob != item.nzb_blob {
+            return Ok(Availability::Changed);
+        }
+        if self
+            .availability_snapshot(id, meta_id, current.nzb_blob)
+            .await?
+            != Some((meta, generation))
+        {
+            return Ok(Availability::Changed);
+        }
+        if cancel.is_cancelled() {
+            return Ok(Availability::Cancelled);
+        }
+        // Eviction takes no write permit; one committed during the reads above shows here.
+        if self.db.repair_epoch() != epoch {
+            return Ok(Availability::Changed);
+        }
+        Ok(result)
+    }
+}

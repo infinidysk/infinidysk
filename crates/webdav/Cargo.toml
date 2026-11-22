@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 axum = { workspace = true, features = ["http1", "query", "tokio"] }
 base64.workspace = true
+bytes.workspace = true
 futures-util.workspace = true
 hmac.workspace = true
 httpdate.workspace = true
@@ -23,7 +24,6 @@ quick-xml.workspace = true
 serde.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
-tokio-util = { workspace = true, features = ["io"] }
 tracing.workspace = true
 
 [dev-dependencies]

@@ -247,7 +247,7 @@ impl Failure {
             Error::Password(_) => FailureKind::Password,
             Error::Unsupported(_) => FailureKind::Unsupported,
             Error::Limit(_) => FailureKind::Limit,
-            Error::Failed(_) => FailureKind::Other,
+            Error::Failed(_) | Error::Unrepairable(_) => FailureKind::Other,
         };
         Self {
             kind,
@@ -533,14 +533,15 @@ impl Inspector {
         let started = Instant::now();
         let limits = self.run.limits;
         let (progress, run) = (Arc::clone(&self.progress), Arc::clone(&self.run));
-        let job = &super::job(client, rules, password, progress, Some(run));
+        let job = &super::job(client, rules, password, progress, Some(run), None, false);
         let mut timings = Timings::default();
         self.files_read = self.files_read.saturating_add(nzb.files.len());
         let (planned, step) = if self.files_read > limits.files {
             (Err(job.over(TOO_MANY_FILES)), Step::Starting)
         } else {
             let planning = async {
-                let outputs = plan(job, nzb, rules.check_percent, started, &mut timings).await?;
+                let (outputs, _) =
+                    plan(job, nzb, rules.check_percent, started, &mut timings).await?;
                 // An import stops at an unreadable member before it looks for an NZB file.
                 let inner = if job.went_past() {
                     None
@@ -712,9 +713,11 @@ mod tests {
                 date: None,
                 segments: posted
                     .iter()
-                    .map(|a| Segment {
+                    .enumerate()
+                    .map(|(index, a)| Segment {
                         id: a.message_id.clone(),
                         bytes: 1000,
+                        number: i64::try_from(index + 1).unwrap(),
                     })
                     .collect(),
                 gap: false,
@@ -831,9 +834,11 @@ mod tests {
                 date: None,
                 segments: posted
                     .iter()
-                    .map(|article| Segment {
+                    .enumerate()
+                    .map(|(index, article)| Segment {
                         id: article.message_id.clone(),
                         bytes: u32::try_from(xml.len()).unwrap(),
+                        number: i64::try_from(index + 1).unwrap(),
                     })
                     .collect(),
                 gap: false,
@@ -895,6 +900,8 @@ mod tests {
             None,
             Arc::clone(&inspector.progress),
             Some(Arc::clone(&inspector.run)),
+            None,
+            false,
         );
         let output = Output {
             path: vec!["Readable Name.txt".to_owned()],

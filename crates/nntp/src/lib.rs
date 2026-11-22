@@ -23,7 +23,7 @@ use bytes::Bytes;
 
 pub use article::{Body, MAX_DECODED_LEN};
 pub use bandwidth::Bandwidth;
-pub use client::{BodySink, Client, Lease, Provider};
+pub use client::{BodySink, Client, Lease, Provider, RepairKey, RepairLookup};
 pub use connection::{Connection, ConnectionStats, Endpoint, Phase, Progress, Timing, TlsMode};
 pub use downloads::Downloads;
 pub use pool::{Pool, PoolConfig};
@@ -87,6 +87,50 @@ pub trait Articles: Send + Sync {
     fn stat<'a>(&'a self, id: &'a str) -> ArticleFuture<'a, ()>;
     /// The decoded body; `begin` as in [`Client::body_with`].
     fn body<'a>(&'a self, id: &'a str, begin: Option<u64>) -> ArticleFuture<'a, Bytes>;
+    /// Original NZB and generation captured with the metadata or NZB being read.
+    fn repair_source(&self) -> Option<(infinidysk_core::BlobId, i64)> {
+        None
+    }
+
+    /// Verified local bytes only; unsupported access never falls back to an empty ID.
+    fn omitted<'a>(
+        &'a self,
+        _key: &'a infinidysk_core::repair::Omitted,
+    ) -> ArticleFuture<'a, Bytes> {
+        Box::pin(async { Err(Error::NotFound) })
+    }
+
+    /// A metadata segment, including an omitted article with a trusted posted identity.
+    fn read<'a>(
+        &'a self,
+        segment: &'a infinidysk_core::Segment,
+        begin: Option<u64>,
+        proof: Option<&'a infinidysk_core::Par2Proof>,
+    ) -> ArticleFuture<'a, Bytes> {
+        Box::pin(async move {
+            if !segment.id.is_empty() {
+                return self.body(&segment.id, begin).await;
+            }
+            let key = infinidysk_core::repair::Omitted::for_segment(
+                self.repair_source(),
+                segment,
+                begin,
+                proof,
+            )
+            .map_err(|_| Error::Repair("invalid omitted article layout"))?
+            .ok_or(Error::NotFound)?;
+            if key.range.len() > MAX_DECODED_LEN as u64 {
+                return Err(Error::Repair(
+                    "omitted article exceeds the decoded size limit",
+                ));
+            }
+            let bytes = self.omitted(&key).await?;
+            if bytes.len() as u64 != u64::from(segment.size) {
+                return Err(Error::Repair("omitted article size differs from layout"));
+            }
+            Ok(bytes)
+        })
+    }
 }
 
 impl Error {

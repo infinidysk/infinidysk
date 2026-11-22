@@ -75,6 +75,37 @@ async fn exercise(db: &Db) {
         db.blob(meta).await.expect("query").as_deref(),
         Some(&b"meta2"[..])
     );
+    let (generation, _) = db
+        .blob_with_generation(meta)
+        .await
+        .expect("query")
+        .expect("stored");
+    let epoch = db.blob_epoch();
+    assert!(
+        !db.update_blob_if(meta, generation - 1, b"stale")
+            .await
+            .expect("update"),
+        "a write read before a newer one is refused"
+    );
+    assert_eq!(
+        db.blob(meta).await.expect("query").as_deref(),
+        Some(&b"meta2"[..])
+    );
+    assert_eq!(db.blob_epoch(), epoch, "a refused write changes nothing");
+    assert!(
+        db.update_blob_if(meta, generation, b"meta3")
+            .await
+            .expect("update")
+    );
+    assert_eq!(
+        db.blob(meta).await.expect("query").as_deref(),
+        Some(&b"meta3"[..])
+    );
+    assert_eq!(
+        db.blob_epoch(),
+        epoch + 1,
+        "one write advances the epoch once"
+    );
 
     let dup = Item {
         id: ItemId::new(),
@@ -236,6 +267,39 @@ async fn exercise(db: &Db) {
     };
     assert_eq!(due(true).await, [file.id], "only files with metadata");
     assert_eq!(due(false).await, [] as [ItemId; 0], "routine checks off");
+    let delayed = HealthStatus {
+        state: HealthState::Degraded,
+        next_check: Some(101),
+        ..HealthStatus::default()
+    };
+    db.set_health_recheck(file.id, &delayed, Recheck::None, Recheck::Deferred)
+        .await
+        .expect("schedule deferred repair");
+    assert_eq!(due(false).await, [] as [ItemId; 0]);
+    assert_eq!(
+        db.due_health_work(101, false, 10)
+            .await
+            .expect("due repair")[0]
+            .0
+            .id,
+        file.id
+    );
+    let suspect = HealthStatus {
+        state: HealthState::Suspect,
+        next_check: Some(100),
+        ..HealthStatus::default()
+    };
+    db.set_health_recheck(file.id, &suspect, Recheck::Deferred, Recheck::None)
+        .await
+        .expect("first miss");
+    assert_eq!(
+        due(false).await,
+        [file.id],
+        "a confirming re-check runs with routine off"
+    );
+    db.set_health_recheck(file.id, &delayed, Recheck::None, Recheck::Deferred)
+        .await
+        .expect("restore deferred repair");
     db.request_recheck(file.id, Recheck::Playback)
         .await
         .expect("recheck");

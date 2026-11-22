@@ -351,42 +351,99 @@ fn select(
     recovery: &[Recovery<'_>],
     cancelled: &impl Fn() -> bool,
 ) -> Result<Vec<usize>, Error> {
-    let count = missing.len();
-    let mut selected = reserved(count)?;
-    if count == 0 {
+    let mut selected = reserved(missing.len())?;
+    if missing.is_empty() {
         return Ok(selected);
     }
-    let mut basis = filled(count * count, 0)?;
-    let mut scratch = filled(count, 0)?;
-    let mut pivots: Vec<usize> = reserved(count)?;
+    let mut rank = Rank::new(missing)?;
     for (index, recovery) in recovery.iter().enumerate() {
         check_cancel(cancelled)?;
-        for (entry, &input) in scratch.iter_mut().zip(missing) {
-            *entry = FIELD.pow(FIELD.constants[input], recovery.exponent);
-        }
-        for (row, &pivot) in pivots.iter().enumerate() {
-            check_cancel(cancelled)?;
-            let coefficient = scratch[pivot];
-            for column in pivot..count {
-                scratch[column] ^= FIELD.mul(coefficient, basis[row * count + column]);
+        if rank.add_exponent(recovery.exponent, cancelled)? {
+            selected.push(index);
+            if rank.full() {
+                return Ok(selected);
             }
-        }
-        let Some(pivot) = scratch.iter().position(|&value| value != 0) else {
-            continue;
-        };
-        let inverse = FIELD.inverse(scratch[pivot]);
-        for entry in &mut scratch {
-            *entry = FIELD.mul(*entry, inverse);
-        }
-        let start = selected.len() * count;
-        basis[start..start + count].copy_from_slice(&scratch);
-        pivots.push(pivot);
-        selected.push(index);
-        if selected.len() == count {
-            return Ok(selected);
         }
     }
     Err(Error::InsufficientRecovery)
+}
+
+/// The independent recovery rows seen so far, over the `missing` inputs.
+pub struct Rank<'a> {
+    missing: &'a [usize],
+    basis: Vec<u16>,
+    scratch: Vec<u16>,
+    pivots: Vec<usize>,
+}
+
+impl<'a> Rank<'a> {
+    /// `missing` must be sorted, unique input indices.
+    pub fn new(missing: &'a [usize]) -> Result<Self, Error> {
+        let count = missing.len();
+        if missing.windows(2).any(|w| w[0] >= w[1])
+            || missing.last().is_some_and(|&i| i >= FIELD.constants.len())
+        {
+            return Err(Error::Invalid("missing indices"));
+        }
+        Ok(Self {
+            missing,
+            basis: filled(count.checked_mul(count).ok_or(Error::Allocation)?, 0)?,
+            scratch: filled(count, 0)?,
+            pivots: reserved(count)?,
+        })
+    }
+
+    /// Heap bytes [`Self::new`] allocates for `count` missing inputs.
+    pub fn bytes(count: usize) -> Option<usize> {
+        count
+            .checked_mul(count)?
+            .checked_add(count)?
+            .checked_mul(size_of::<u16>())?
+            .checked_add(count.checked_mul(size_of::<usize>())?)
+    }
+
+    /// Whether the rows seen so far can rebuild every missing input.
+    pub fn full(&self) -> bool {
+        self.pivots.len() == self.missing.len()
+    }
+
+    /// `true` when `row` is independent of the rows seen so far.
+    pub fn add(&mut self, row: &Recovery<'_>) -> bool {
+        self.add_exponent(row.exponent, &|| false)
+            .expect("an uncancellable rank update cannot fail")
+    }
+
+    pub(crate) fn add_exponent(
+        &mut self,
+        exponent: u32,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<bool, Error> {
+        let count = self.missing.len();
+        if self.full() {
+            return Ok(false);
+        }
+        for (entry, &input) in self.scratch.iter_mut().zip(self.missing) {
+            *entry = FIELD.pow(FIELD.constants[input], exponent);
+        }
+        for (row, &pivot) in self.pivots.iter().enumerate() {
+            check_cancel(cancelled)?;
+            let coefficient = self.scratch[pivot];
+            for column in pivot..count {
+                self.scratch[column] ^= FIELD.mul(coefficient, self.basis[row * count + column]);
+            }
+        }
+        let Some(pivot) = self.scratch.iter().position(|&value| value != 0) else {
+            return Ok(false);
+        };
+        let inverse = FIELD.inverse(self.scratch[pivot]);
+        for entry in &mut self.scratch {
+            *entry = FIELD.mul(*entry, inverse);
+        }
+        let start = self.pivots.len() * count;
+        self.basis[start..start + count].copy_from_slice(&self.scratch);
+        self.pivots.push(pivot);
+        Ok(true)
+    }
 }
 
 fn invert(
@@ -435,4 +492,28 @@ fn invert(
             .copy_from_slice(&matrix[row * width + count..(row + 1) * width]);
     }
     Ok(inverse)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Rank;
+
+    #[test]
+    fn rank_ignores_distinct_but_dependent_exponents() {
+        // Constants 0 and 5 are 2^1 and 2^11; multiples of 13107 raise both to one value.
+        let missing = [0, 5];
+        let mut rank = Rank::new(&missing).expect("missing indices are sorted and in range");
+        let never = || false;
+        let added: Vec<bool> = [0, 13_107, 26_214, 39_321]
+            .into_iter()
+            .map(|exponent| {
+                rank.add_exponent(exponent, &never)
+                    .expect("never cancelled")
+            })
+            .collect();
+        assert_eq!(added, [true, false, false, false]);
+        assert!(!rank.full());
+        assert!(rank.add_exponent(1, &never).expect("never cancelled"));
+        assert!(rank.full());
+    }
 }

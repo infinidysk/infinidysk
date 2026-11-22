@@ -24,7 +24,7 @@ use infinidysk_nntp::{
 use infinidysk_queue::Queue;
 use infinidysk_queue::import::{self, Output, Verifier};
 use infinidysk_stream::{Budget, Cache, CacheConfig, DiskConfig, Fault};
-use infinidysk_vfs::{Tracing, Vfs};
+use infinidysk_vfs::{ReadVersion, Tracing, Vfs};
 use infinidysk_webdav::{Access, Auth as DavAuth, WebDav};
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, RwLock, mpsc, watch};
@@ -375,7 +375,8 @@ pub async fn serve(
 
     let (arr_tx, arr_rx) = watch::channel(arr_instances(&settings.arr_instances));
     let (health_tx, health_rx) = watch::channel(health_settings(&settings.health));
-    let (fault_tx, mut fault_rx) = mpsc::unbounded_channel::<(ItemId, usize, Fault)>();
+    let (fault_tx, mut fault_rx) =
+        mpsc::unbounded_channel::<(ItemId, Option<ReadVersion>, usize, Fault)>();
     let vfs = Arc::new(
         Vfs::new(
             db.clone(),
@@ -387,9 +388,9 @@ pub async fn serve(
             &settings.mount.dir,
         )
         .with_cache(Arc::clone(&cache))
-        .with_report(Arc::new(move |id, index, fault| {
+        .with_report(Arc::new(move |id, version, index, fault| {
             // Fails only at shutdown, when nobody records damage anymore.
-            let _ = fault_tx.send((id, index, fault));
+            let _ = fault_tx.send((id, version, index, fault));
         })),
     );
     vfs.set_gap_tolerance(settings.health.degraded_tolerance);
@@ -450,19 +451,48 @@ pub async fn serve(
     // Playback damage, batched per file so a broken stretch costs one blob rewrite.
     tokio::spawn({
         let health = Arc::clone(&health);
+        let db = db.clone();
         async move {
             while let Some(first) = fault_rx.recv().await {
-                let mut files: HashMap<ItemId, (Vec<usize>, Vec<usize>)> = HashMap::new();
+                let current =
+                    |v: &Option<ReadVersion>| v.as_ref().is_none_or(ReadVersion::is_current);
+                let mut files = HashMap::new();
                 let mut next = Some(first);
-                while let Some((id, index, fault)) = next {
-                    let (missing, corrupt) = files.entry(id).or_default();
-                    match fault {
-                        Fault::Missing => missing.push(index),
-                        Fault::Corrupt => corrupt.push(index),
+                while let Some((id, version, index, fault)) = next {
+                    if current(&version) {
+                        let entry = files
+                            .entry(id)
+                            .or_insert_with(|| (version.clone(), Vec::new(), Vec::new()));
+                        if !current(&entry.0) {
+                            *entry = (version, Vec::new(), Vec::new());
+                        }
+                        match fault {
+                            Fault::Missing => entry.1.push(index),
+                            Fault::Corrupt => entry.2.push(index),
+                        }
                     }
                     next = fault_rx.try_recv().ok();
                 }
-                for (id, (missing, corrupt)) in files {
+                for (id, (version, missing, corrupt)) in files {
+                    // Publication pauses background work before taking item writers, so
+                    // the lease is awaited without the permit and taken under it without
+                    // waiting; a waiting pause never sits behind an item writer.
+                    let admitted = match &version {
+                        None => Some(None),
+                        Some(version) => loop {
+                            let Some(waited) = version.read().await else {
+                                break None;
+                            };
+                            drop(waited);
+                            let writing = db.write_permit().await;
+                            if let Some(lease) = version.try_read() {
+                                break Some(Some((writing, lease)));
+                            }
+                        },
+                    };
+                    let Some(_admitted) = admitted else {
+                        continue;
+                    };
                     if let Err(error) = health.report(id, &missing, &corrupt).await {
                         warn!(item = %id, reason = %error, "could not record playback damage");
                     }
@@ -489,9 +519,12 @@ pub async fn serve(
     #[cfg(not(target_os = "linux"))]
     drop(mount_tx);
     #[cfg(target_os = "linux")]
+    let invalidator = Arc::new(infinidysk_mount::Invalidator::default());
+    #[cfg(target_os = "linux")]
     let mount = fuse.then(|| {
         tokio::spawn(infinidysk_mount::run(
             Arc::clone(&vfs),
+            Arc::clone(&invalidator),
             infinidysk_mount::Config {
                 mount_dir: settings.mount.dir.clone().into(),
                 uid: boot.uid,

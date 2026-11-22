@@ -19,12 +19,14 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 axum = { workspace = true, features = ["http1", "json", "query", "tokio"] }
+infinidysk-par2.workspace = true
 infinidysk-queue.workspace = true
 infinidysk-testkit.workspace = true
 jiff.workspace = true

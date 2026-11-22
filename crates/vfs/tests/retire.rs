@@ -1,0 +1,387 @@
+//! Open readers must drop ciphertext, plaintext and prefetched data after retirement.
+#![allow(clippy::unwrap_used)] // Assertions and setup for deterministic tests.
+
+use std::io::SeekFrom;
+use std::sync::{Arc, RwLock};
+
+use infinidysk_core::crypt::{Cipher, Crypt, Key};
+use infinidysk_core::{
+    BlobId, ByteRange, FileMeta, FilePart, ItemId, ItemKind, MultipartFile, NzbFile, Segment,
+    Segments, blob,
+};
+use infinidysk_db::{Db, Item};
+use infinidysk_nntp::{Body, Client};
+use infinidysk_stream::Budget;
+use infinidysk_vfs::{Delivery, Node, Origin, Vfs};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+#[tokio::test]
+async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let before = vec![17; 8192];
+    // Non-repeating over the asserted ranges, so a wrong cursor reads different bytes.
+    let after: Vec<u8> = (0..8192_u16)
+        .map(|i| u8::try_from(i % 251).unwrap())
+        .collect();
+    let body = Arc::new(RwLock::new(("article@test".to_owned(), before.clone())));
+    let client = Client::new([]);
+    client.set_repairs(Box::new({
+        let body = Arc::clone(&body);
+        move |key| {
+            let infinidysk_nntp::RepairKey::Article(id) = key else {
+                return None;
+            };
+            let (expected, data) = body.read().unwrap().clone();
+            if id != expected {
+                return None;
+            }
+            Some(Box::pin(async move {
+                Ok(Some(Body {
+                    data: data.into(),
+                    offset: 0,
+                    file_size: 8192,
+                    part: None,
+                    total: None,
+                }))
+            }))
+        }
+    }));
+    let client = Arc::new(client);
+    let vfs =
+        Vfs::new(db.clone(), client, Budget::new(1 << 20), 1 << 20, "/mnt").with_repair_publisher();
+    let segments = Segments {
+        items: vec![Segment {
+            id: "article@test".into(),
+            size: 8192,
+            fallbacks: vec![],
+        }],
+        sizes_trusted: true,
+        ..Segments::default()
+    };
+    let crypt = Crypt {
+        key: Key::Aes256([9; 32]),
+        iv: uuid::Uuid::new_v4().into_bytes(),
+        size: 8185,
+    };
+    for mode in 0..6 {
+        *body.write().unwrap() = ("article@test".to_owned(), before.clone());
+        let mut meta = if mode % 3 == 0 {
+            FileMeta::Nzb(NzbFile {
+                segments: segments.clone(),
+                proof: None,
+            })
+        } else {
+            FileMeta::Multipart(MultipartFile {
+                parts: vec![FilePart {
+                    segments: segments.clone(),
+                    offset: 0,
+                    data: ByteRange {
+                        start: 0,
+                        end: 8192,
+                    },
+                    split_after: false,
+                    proof: None,
+                }],
+                crypt: (mode % 3 == 2).then(|| crypt.clone()),
+            })
+        };
+        let kind = if mode % 3 == 0 {
+            ItemKind::NzbFile
+        } else {
+            ItemKind::Multipart
+        };
+        let mut item = Item::child(&parent, &format!("file-{mode}.bin"), kind).unwrap();
+        let metadata = BlobId::new();
+        item.meta_blob = Some(metadata);
+        item.size = Some(meta.size());
+        db.insert(
+            std::slice::from_ref(&item),
+            &[(metadata, &blob::encode_meta(&meta).unwrap())],
+        )
+        .await
+        .unwrap();
+        let mut reader = vfs
+            .open(
+                &Node::Item(item.clone()),
+                Origin {
+                    delivery: Delivery::WebDav,
+                    client: "test".into(),
+                    player: None,
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        reader.set_end(4000);
+        let mut analysis = vfs.open_analysis(&item).await.unwrap();
+        let mut first = [0; 17];
+        reader.read_exact(&mut first).await.unwrap();
+        analysis.read_exact(&mut first).await.unwrap();
+        let fence = vfs.read_fence(item.id);
+        let mut publication = fence.write().await;
+        if mode >= 3 {
+            let segments = match &mut meta {
+                FileMeta::Nzb(file) => &mut file.segments,
+                FileMeta::Multipart(file) => &mut file.parts[0].segments,
+            };
+            segments.items[0].id = "replacement@test".into();
+            db.update_blob(metadata, &blob::encode_meta(&meta).unwrap())
+                .await
+                .unwrap();
+            *body.write().unwrap() = ("replacement@test".to_owned(), after.clone());
+        } else {
+            body.write().unwrap().1 = after.clone();
+        }
+        publication
+            .retire()
+            .unwrap()
+            .acknowledge_after(async { Ok(()) })
+            .await
+            .unwrap();
+        drop(publication);
+        let mut expected = after.clone();
+        if mode % 3 == 2 {
+            Cipher::new(&crypt.key).decrypt(&mut crypt.iv.clone(), &mut expected);
+        }
+        let mut next = [0; 31];
+        reader.read_exact(&mut next).await.unwrap();
+        assert_eq!(next, expected[17..48], "reader mode {mode}");
+        analysis.read_exact(&mut next).await.unwrap();
+        assert_eq!(next, expected[17..48], "analysis mode {mode}");
+        reader.seek(SeekFrom::Start(20)).await.unwrap();
+        reader.read_exact(&mut next).await.unwrap();
+        assert_eq!(next, expected[20..51]);
+        if mode == 2 {
+            let mut publication = fence.write().await;
+            db.update_blob(metadata, b"invalid metadata").await.unwrap();
+            publication
+                .retire()
+                .unwrap()
+                .acknowledge_after(async { Ok(()) })
+                .await
+                .unwrap();
+            drop(publication);
+            assert!(reader.read_exact(&mut next).await.is_err());
+            let mut publication = fence.write().await;
+            db.update_blob(metadata, &blob::encode_meta(&meta).unwrap())
+                .await
+                .unwrap();
+            publication
+                .retire()
+                .unwrap()
+                .acknowledge_after(async { Ok(()) })
+                .await
+                .unwrap();
+            drop(publication);
+            reader.read_exact(&mut next).await.unwrap();
+            assert_eq!(next, expected[51..82]);
+        }
+    }
+}
+
+/// One NZB-linked file of 4096 repaired bytes, in a VFS with or without a repair publisher.
+async fn linked_file(publisher: bool) -> (Vfs, Item, BlobId, Vec<u8>) {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let data: Vec<u8> = (0..4096_u16)
+        .map(|i| u8::try_from(i % 251).unwrap())
+        .collect();
+    let client = Client::new([]);
+    client.set_repairs(Box::new({
+        let data = data.clone();
+        move |key| {
+            let infinidysk_nntp::RepairKey::Article(id) = key else {
+                return None;
+            };
+            if id != "article@test" {
+                return None;
+            }
+            let data = data.clone();
+            Some(Box::pin(async move {
+                Ok(Some(Body {
+                    data: data.into(),
+                    offset: 0,
+                    file_size: 4096,
+                    part: None,
+                    total: None,
+                }))
+            }))
+        }
+    }));
+    let vfs = Vfs::new(
+        db.clone(),
+        Arc::new(client),
+        Budget::new(1 << 20),
+        1 << 20,
+        "/mnt",
+    );
+    let vfs = if publisher {
+        vfs.with_repair_publisher()
+    } else {
+        vfs
+    };
+    let meta = FileMeta::Nzb(NzbFile {
+        segments: Segments {
+            items: vec![Segment {
+                id: "article@test".into(),
+                size: 4096,
+                fallbacks: vec![],
+            }],
+            sizes_trusted: true,
+            ..Segments::default()
+        },
+        proof: None,
+    });
+    let nzb = BlobId::new();
+    let metadata = BlobId::new();
+    let mut item = Item::child(&parent, "file.bin", ItemKind::NzbFile).unwrap();
+    item.meta_blob = Some(metadata);
+    item.nzb_blob = Some(nzb);
+    item.size = Some(meta.size());
+    db.insert(
+        std::slice::from_ref(&item),
+        &[
+            (nzb, b"nzb".as_slice()),
+            (metadata, &blob::encode_meta(&meta).unwrap()),
+        ],
+    )
+    .await
+    .unwrap();
+    (vfs, item, nzb, data)
+}
+
+#[tokio::test]
+async fn without_a_publisher_or_stored_repairs_reads_skip_publication_admission() {
+    let (vfs, item, _, data) = linked_file(false).await;
+    assert!(vfs.coordinated_fence(item.id).is_none());
+    assert!(vfs.begin_publication(BlobId::new(), &[]).is_err());
+    // A held writer would stop every coordinated open and read.
+    let _writer = vfs.read_fence(item.id).write().await;
+    let wait = std::time::Duration::from_secs(1);
+    let origin = Origin {
+        delivery: Delivery::Fuse,
+        client: "test".into(),
+        player: None,
+    };
+    let mut reader = tokio::time::timeout(wait, vfs.open(&Node::Item(item.clone()), origin))
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let mut bytes = vec![0; data.len()];
+    tokio::time::timeout(wait, reader.read_exact(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(bytes, data);
+    let mut analysis = tokio::time::timeout(wait, vfs.open_analysis(&item))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(wait, analysis.read_exact(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
+    let (vfs, item, nzb, data) = linked_file(true).await;
+    let mut analysis = vfs.open_analysis(&item).await.unwrap();
+    let mut first = [0; 17];
+    analysis.read_exact(&mut first).await.unwrap();
+    let publication = vfs.begin_publication(nzb, &[]).unwrap();
+    let mut writers = publication.writers().await;
+    let armed = infinidysk_vfs::WriteLease::arm(&mut writers);
+    let mut next = [0; 31];
+    let mut reading = Box::pin(analysis.read_exact(&mut next));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(15), &mut reading)
+            .await
+            .is_err(),
+        "the read waits while publication is unfinished"
+    );
+    armed
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(writers);
+    drop(publication);
+    reading.await.unwrap();
+    assert_eq!(next, data[17..48]);
+}
+
+#[tokio::test]
+async fn an_analysis_read_waits_for_a_publication_that_arms_after_the_awaited_one() {
+    let (vfs, item, nzb, data) = linked_file(true).await;
+    let mut analysis = vfs.open_analysis(&item).await.unwrap();
+    let mut first = [0; 17];
+    analysis.read_exact(&mut first).await.unwrap();
+    let unfinished = vfs.begin_publication(nzb, &[]).unwrap();
+    let mut writers = unfinished.writers().await;
+    drop(infinidysk_vfs::WriteLease::arm(&mut writers));
+    let mut next = [0; 31];
+    let mut reading = Box::pin(analysis.read_exact(&mut next));
+    let wait = std::time::Duration::from_millis(15);
+    assert!(tokio::time::timeout(wait, &mut reading).await.is_err());
+    drop(writers);
+    drop(unfinished);
+    let reconciling = vfs.begin_publication(nzb, &[]).unwrap();
+    let mut writers = reconciling.writers().await;
+    let armed = infinidysk_vfs::WriteLease::arm(&mut writers);
+    assert!(
+        tokio::time::timeout(wait, &mut reading).await.is_err(),
+        "the read waits for the publication that is still active"
+    );
+    armed
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(writers);
+    drop(reconciling);
+    reading.await.unwrap();
+    assert_eq!(next, data[17..48]);
+}
+
+#[tokio::test]
+async fn a_reader_opened_from_a_node_without_its_nzb_link_survives_retirement() {
+    let (vfs, item, _, data) = linked_file(true).await;
+    let retained = Item {
+        nzb_blob: None,
+        ..item.clone()
+    };
+    let mut reader = vfs
+        .open(
+            &Node::Item(retained.clone()),
+            Origin {
+                delivery: Delivery::WebDav,
+                client: "test".into(),
+                player: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let mut analysis = vfs.open_analysis(&retained).await.unwrap();
+    let mut first = [0; 17];
+    reader.read_exact(&mut first).await.unwrap();
+    analysis.read_exact(&mut first).await.unwrap();
+    let mut publication = vfs.read_fence(item.id).write().await;
+    publication
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(publication);
+    let mut next = [0; 31];
+    reader.read_exact(&mut next).await.unwrap();
+    assert_eq!(next, data[17..48], "reader");
+    analysis.read_exact(&mut next).await.unwrap();
+    assert_eq!(next, data[17..48], "analysis");
+}
