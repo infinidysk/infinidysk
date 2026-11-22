@@ -247,14 +247,14 @@ pub(super) fn read(reader: &Reader, set: Id, verify: bool) -> Result<RepairSet<'
     })
 }
 
-/// Adds the exponents of `set`'s recovery packets found from packet `from` on to
-/// `exponents`; returns where the next call continues.
-pub(super) fn recovery_exponents(
+/// Adds the rows of `set`'s recovery packets found from packet `from` on to `rank`;
+/// returns where the next call continues.
+pub(super) fn recovery_rank(
     reader: &Reader,
     set: Id,
     slice_size: usize,
     from: usize,
-    exponents: &mut std::collections::HashSet<u32>,
+    rank: &mut crate::Rank<'_>,
 ) -> Result<usize, Error> {
     if slice_size == 0 || !slice_size.is_multiple_of(4) {
         return Err(Error::Invalid(
@@ -276,8 +276,7 @@ pub(super) fn recovery_exponents(
             set,
             slice_size,
         )?;
-        exponents.try_reserve(1).map_err(|_| Error::Allocation)?;
-        exponents.insert(row.exponent % 65_535);
+        rank.add(&row);
     }
     Ok(found.len())
 }

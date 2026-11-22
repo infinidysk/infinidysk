@@ -56,7 +56,7 @@ async fn read_parity(
     client: &Client,
     nzb: &nzb::Nzb,
     budget: &mut Budget,
-    recovery: Option<(Id, usize, usize)>,
+    mut recovery: Option<(Id, usize, &mut infinidysk_par2::Rank<'_>)>,
 ) -> Result<infinidysk_par2::Reader, Error> {
     let mut reader = infinidysk_par2::Reader::default();
     let reader_limit = budget.limits.memory_bytes / 3;
@@ -69,8 +69,8 @@ async fn read_parity(
     }
     order.sort_by_key(|(file, name)| (volume_stem(name).is_some(), file.segments.len()));
     let mut indexes = HashSet::new();
-    // Recovery rows counted so far: the next packet to inspect and the distinct exponents.
-    let (mut counted, mut exponents) = (0, HashSet::new());
+    // Next packet whose recovery rows have not been added to the rank.
+    let mut counted = 0;
     for (file, name) in order {
         if recovery.is_none() && volume_stem(&name).is_some_and(|stem| indexes.contains(stem)) {
             continue;
@@ -110,9 +110,9 @@ async fn read_parity(
                 if !reader.push_bounded(&body.data, reader_limit) {
                     return Err(Error::Limit("PAR2 metadata"));
                 }
-                if let Some((set, size, count)) = recovery {
-                    counted = reader.recovery_exponents(set, size, counted, &mut exponents)?;
-                    if exponents.len() >= count + 2 {
+                if let Some((set, size, rank)) = &mut recovery {
+                    counted = reader.recovery_rank(*set, *size, counted, rank)?;
+                    if rank.full() {
                         return Ok(reader);
                     }
                 } else if reader.reached_recovery()

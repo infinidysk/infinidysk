@@ -266,12 +266,23 @@ async fn run(
     } else {
         let supplemental;
         let rows;
-        let recovery = if set.recovery().len() < missing.len() {
+        // Buffered rows may be fewer than the missing slices, or enough in number but
+        // dependent over them; either way read the remaining PAR2 volumes.
+        let rank_bytes =
+            infinidysk_par2::Rank::bytes(missing.len()).ok_or(Error::Limit("PAR2 rank"))?;
+        budget.metadata(rank_bytes)?;
+        let mut rank = infinidysk_par2::Rank::new(&missing)?;
+        for row in set.recovery() {
+            rank.add(row);
+        }
+        let recovery = if rank.full() {
+            set.recovery()
+        } else {
             supplemental = read_parity(
                 client,
                 nzb,
                 &mut budget,
-                Some((id, set.slice_size(), missing.len())),
+                Some((id, set.slice_size(), &mut rank)),
             )
             .await?;
             // Keep the rows already buffered: the provider may no longer serve them.
@@ -283,9 +294,9 @@ async fn run(
                 .chain(supplemental.recovery_slices(id, set.slice_size())?)
                 .collect::<Vec<_>>();
             rows.as_slice()
-        } else {
-            set.recovery()
         };
+        drop(rank);
+        budget.limits.memory_bytes += rank_bytes;
         let mut solver = Repair::new(
             set.slice_size(),
             inputs,

@@ -15,7 +15,7 @@ mod repair;
 mod verify;
 
 pub use plan::{RepairSet, Source};
-pub use repair::{Error, Input, Recovered, Recovery, Repair};
+pub use repair::{Error, Input, Rank, Recovered, Recovery, Repair};
 pub use verify::{Verified, Verifier};
 
 const MAGIC: &[u8; 8] = b"PAR2\0PKT";
@@ -337,17 +337,16 @@ impl Reader {
         plan::recovery(self, set, slice_size)
     }
 
-    /// Adds the distinct recovery exponents of `set` in packets found since packet
-    /// `from` to `exponents`, so a growing read is counted without rescanning; returns
-    /// the `from` of the next call.
-    pub fn recovery_exponents(
+    /// Adds `set`'s recovery rows in packets found since packet `from` to `rank`, so a
+    /// growing read is counted without rescanning; returns the `from` of the next call.
+    pub fn recovery_rank(
         &self,
         set: Id,
         slice_size: usize,
         from: usize,
-        exponents: &mut std::collections::HashSet<u32>,
+        rank: &mut Rank<'_>,
     ) -> Result<usize, Error> {
-        plan::recovery_exponents(self, set, slice_size, from, exponents)
+        plan::recovery_rank(self, set, slice_size, from, rank)
     }
 }
 
