@@ -758,13 +758,6 @@ async fn run(
         budget.metadata(budget.legacy_bytes - legacy)?;
         match result {
             Ok(Some((source, articles, verified, checked))) => {
-                budget.metadata(checked.len())?;
-                budget.metadata(
-                    articles
-                        .len()
-                        .checked_mul(size_of::<Article>())
-                        .ok_or(Error::Limit("metadata"))?,
-                )?;
                 // A posting that passed the whole-file hash wins over one that matched
                 // only by prefix; two of the same standing stay ambiguous.
                 match &resolved[source] {
@@ -774,8 +767,20 @@ async fn run(
                             "multiple posted files match one protected source",
                         ));
                     }
-                    _ => {}
+                    // The replaced layout's charge was admitted, so it cannot overflow.
+                    Some(previous) => {
+                        budget.limits.memory_bytes +=
+                            previous.articles.len() * size_of::<Article>() + previous.checked.len();
+                    }
+                    None => {}
                 }
+                budget.metadata(
+                    articles
+                        .len()
+                        .checked_mul(size_of::<Article>())
+                        .and_then(|bytes| bytes.checked_add(checked.len()))
+                        .ok_or(Error::Limit("metadata"))?,
+                )?;
                 resolved[source] = Some(Layout {
                     source,
                     file,
