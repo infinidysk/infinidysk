@@ -120,6 +120,21 @@ pub struct VerifiedSource {
 }
 
 impl VerifiedSource {
+    /// Heap bytes `new` allocates for this layout: segment records, message IDs and the
+    /// per-slice checksum vectors.
+    pub(super) fn heap_bytes(set: &RepairSet<'_>, layout: &Layout) -> Option<usize> {
+        let slices = set.sources()[layout.source()]
+            .file
+            .slices
+            .len()
+            .checked_mul(size_of::<[u8; 16]>() + size_of::<u32>())?;
+        layout.articles().iter().try_fold(slices, |total, article| {
+            total
+                .checked_add(size_of::<Segment>())?
+                .checked_add(article.id.as_ref().map_or(0, String::len))
+        })
+    }
+
     pub(super) fn new(set: &RepairSet<'_>, layout: &Layout) -> Result<Self, Error> {
         let file = &set.sources()[layout.source()].file;
         let proof = Par2Proof {

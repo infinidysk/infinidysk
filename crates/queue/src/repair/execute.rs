@@ -419,6 +419,11 @@ async fn run(
             .checked_mul(24)
             .ok_or(Error::Limit("proof output"))?,
     )?;
+    for layout in &layouts {
+        budget.metadata(
+            VerifiedSource::heap_bytes(&set, layout).ok_or(Error::Limit("proof output"))?,
+        )?;
+    }
     let sources = layouts
         .iter()
         .map(|layout| VerifiedSource::new(&set, layout))
