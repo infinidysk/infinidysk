@@ -14,11 +14,11 @@ use std::time::Duration;
 
 use infinidysk_arr::{self as arr, Arr, Profile, SabClient};
 use infinidysk_core::media::{self, Kind};
-use infinidysk_db::{Change, Db, Item, now_ms};
+use infinidysk_db::{Change, Db, Item, ListingChange, now_ms};
 use infinidysk_queue::Queue;
 use serde::Serialize;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use tokio::sync::{Notify, OnceCell, RwLock, watch};
+use tokio::sync::{Notify, OnceCell, RwLock, broadcast, watch};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -27,6 +27,7 @@ pub use reconcile::{HeldFile, HeldReconcile};
 pub use webhook::router;
 
 use crate::config::ConfigStore;
+use crate::rclone_rc::{Batch, RcClient};
 use crate::sab;
 
 const EVERY: Duration = Duration::from_hours(1);
@@ -450,6 +451,108 @@ impl Discovery {
         }
     }
 
+    /// [`Self::notify`] for an installation with an external rclone mount: before an Arr
+    /// hears of finished jobs, the mount forgets the directory listings that changed, so
+    /// the Arr's import finds them. A failed forget never holds the Arr back.
+    pub(crate) async fn notify_remote(
+        &self,
+        rc: RcClient,
+        mut listings: broadcast::Receiver<ListingChange>,
+    ) {
+        use tokio::time::{Instant as Clock, MissedTickBehavior};
+        let db = self.queue.db();
+        let mut changes = db.subscribe();
+        let mut tick = tokio::time::interval_at(Clock::now() + COALESCE, COALESCE);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        // Changes before start, or while the RC server was unreachable, are unknown.
+        let (mut startup, mut missed, mut need_arr) = (true, false, true);
+        let (mut next_arr, mut retry) = (Clock::now(), Duration::ZERO);
+        loop {
+            tick.tick().await;
+            for index in 0..256 {
+                match changes.try_recv() {
+                    Ok(Change::History) | Err(TryRecvError::Lagged(_)) => need_arr = true,
+                    Ok(_) => {}
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Closed) => return,
+                }
+                if index == 255 {
+                    need_arr = true;
+                }
+            }
+            let due = need_arr && Clock::now() >= next_arr;
+            // Read before the forget: generations committed later wait for the next one.
+            let mut snapshot = None;
+            if due {
+                match db.pending_refreshes().await {
+                    Ok(pending) => snapshot = Some(pending),
+                    Err(error) => {
+                        tracing::warn!(reason = %error, "reading pending Arr refreshes failed");
+                    }
+                }
+            }
+            let mut batch = Batch::default();
+            for index in 0..32 {
+                match listings.try_recv() {
+                    Ok(event) => batch.record(event),
+                    Err(TryRecvError::Lagged(_)) => batch.all(),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Closed) => return,
+                }
+                if index == 31 {
+                    batch.all();
+                }
+            }
+            let known: Vec<Known> = if snapshot.as_ref().is_some_and(|p| !p.is_empty()) {
+                self.lock().values().cloned().collect()
+            } else {
+                Vec::new()
+            };
+            if !known.is_empty() {
+                // A committed job may not have announced its paths yet.
+                let by_category = owners(&known);
+                if snapshot
+                    .as_ref()
+                    .is_some_and(|p| p.iter().any(|(c, _)| by_category.contains_key(c)))
+                {
+                    batch.tree();
+                }
+            }
+            if std::mem::take(&mut startup) || (missed && !batch.dirs().is_empty()) {
+                batch.all();
+            }
+            if !batch.dirs().is_empty() {
+                match rc.deliver(batch.dirs()).await {
+                    Ok(()) => missed = false,
+                    Err(reason) => {
+                        if !missed {
+                            tracing::warn!(
+                                %reason,
+                                "rclone mount may show stale entries until its directory cache expires"
+                            );
+                        }
+                        missed = true;
+                    }
+                }
+            }
+            if due {
+                let done = if let Some(pending) = snapshot {
+                    let _writing = db.write_permit().await;
+                    self.send_pending(db, pending, known).await
+                } else {
+                    false
+                };
+                need_arr = !done;
+                retry = if done {
+                    Duration::ZERO
+                } else {
+                    (retry * 2).clamp(RETRY_MIN, RETRY_MAX)
+                };
+                next_arr = Clock::now() + retry;
+            }
+        }
+    }
+
     /// One refresh round; `true` when nothing is left pending.
     async fn refresh(&self, db: &infinidysk_db::Db) -> bool {
         let _writing = db.write_permit().await;
@@ -464,6 +567,14 @@ impl Discovery {
             return true;
         }
         let known: Vec<Known> = self.lock().values().cloned().collect();
+        self.send_pending(db, pending, known).await
+    }
+
+    /// Tells the owners of `pending` categories; `true` when none is left.
+    async fn send_pending(&self, db: &Db, pending: Vec<(String, i64)>, known: Vec<Known>) -> bool {
+        if pending.is_empty() {
+            return true;
+        }
         // Until every instance was checked, a category without owners may still get one.
         let settled = known.iter().all(|k| k.checked_at_ms.is_some());
         let owners = owners(&known);

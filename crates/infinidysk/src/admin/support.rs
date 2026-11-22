@@ -279,11 +279,7 @@ async fn build(
 
     let (redactor, settings) = {
         let store = admin.config.read().await;
-        let mut settings = store.settings().masked();
-        for p in &mut settings.providers {
-            mask(&mut p.username);
-        }
-        mask(&mut settings.webdav.user);
+        let settings = masked_copy(store.settings());
         let locked: Vec<String> = store.locked().collect();
         (
             Redactor::new(store.settings()),
@@ -391,6 +387,20 @@ async fn build(
             tracing::warn!(reason = %e, "writing a support pack failed");
             Fail::Internal
         })
+}
+
+/// Settings with secrets, usernames and the rclone RC destination masked.
+fn masked_copy(settings: &Settings) -> Settings {
+    let mut settings = settings.masked();
+    for p in &mut settings.providers {
+        mask(&mut p.username);
+    }
+    mask(&mut settings.webdav.user);
+    let rc = &mut settings.rclone_rc;
+    for value in [&mut rc.user, &mut rc.url, &mut rc.fs] {
+        mask(value);
+    }
+    settings
 }
 
 fn mask(value: &mut String) {
@@ -598,6 +608,7 @@ impl Redactor {
             &settings.auth.oidc.client_secret,
             &settings.webdav.password,
             &settings.webdav.download_key,
+            &settings.rclone_rc.password,
             &settings.imports.strm_key,
         ]
         .into_iter()
@@ -605,6 +616,7 @@ impl Redactor {
         .chain(settings.arr_instances.iter().map(|a| &a.api_key))
         .map(|s| s.0.clone())
         .chain(settings.providers.iter().map(|p| p.username.clone()))
+        .chain([settings.rclone_rc.user.clone()])
         .filter(|s| s.chars().count() >= 4)
         .flat_map(|s| {
             // As it appears inside JSON strings too.
@@ -681,7 +693,7 @@ const fn public_v6(ip: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Provider, Secret};
+    use crate::config::{MASK, Provider, RcloneRc, Secret};
 
     #[test]
     fn redacts_secrets_credentials_and_public_addresses() {
@@ -691,14 +703,32 @@ mod tests {
             password: Secret("pa\"ss-word".to_owned()),
             ..Provider::default()
         });
+        settings.rclone_rc = RcloneRc {
+            enabled: true,
+            url: "https://rc.example.invalid/rc".to_owned(),
+            fs: "library:".to_owned(),
+            user: "rc-login".to_owned(),
+            password: Secret("rc-secret".to_owned()),
+        };
+        let copy = masked_copy(&settings);
+        assert_eq!(
+            copy.rclone_rc,
+            RcloneRc {
+                enabled: true,
+                url: MASK.to_owned(),
+                fs: MASK.to_owned(),
+                user: MASK.to_owned(),
+                password: Secret(MASK.to_owned()),
+            }
+        );
         let mut r = Redactor::new(&settings);
         let out = r.redact(
-            r#"login provider-login pw {"p":"pa\"ss-word"} url http://u:p@h/x?apikey=abc123&a=1 Bearer abcdefghijkl from 8.8.8.8 and 8.8.8.8, 192.168.1.2, 2001:4860::8888, ::1 ua Chrome/120.0.0.0 at infinidysk::admin 12:03:04"#,
+            r#"login provider-login pw {"p":"pa\"ss-word"} rc rc-login rc-secret url http://u:p@h/x?apikey=abc123&a=1 Bearer abcdefghijkl from 8.8.8.8 and 8.8.8.8, 192.168.1.2, 2001:4860::8888, ::1 ua Chrome/120.0.0.0 at infinidysk::admin 12:03:04"#,
         );
         assert_eq!(
             out,
-            r#"login [REDACTED] pw {"p":"[REDACTED]"} url http://[REDACTED]@h/x?apikey=[REDACTED]&a=1 Bearer [REDACTED] from [IP-1] and [IP-1], 192.168.1.2, [IP-2], ::1 ua Chrome/120.0.0.0 at infinidysk::admin 12:03:04"#
+            r#"login [REDACTED] pw {"p":"[REDACTED]"} rc [REDACTED] [REDACTED] url http://[REDACTED]@h/x?apikey=[REDACTED]&a=1 Bearer [REDACTED] from [IP-1] and [IP-1], 192.168.1.2, [IP-2], ::1 ua Chrome/120.0.0.0 at infinidysk::admin 12:03:04"#
         );
-        assert_eq!((r.secrets_found, r.credentials_found), (2, 3));
+        assert_eq!((r.secrets_found, r.credentials_found), (4, 3));
     }
 }

@@ -22,6 +22,7 @@ mod probe;
 mod provider_status;
 mod provider_test;
 mod quota;
+mod rclone_rc;
 mod release_notes;
 pub mod sab;
 mod ui;

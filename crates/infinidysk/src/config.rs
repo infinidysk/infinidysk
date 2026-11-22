@@ -155,6 +155,7 @@ pub struct Settings {
     pub sab: Sab,
     pub auth: Auth,
     pub webdav: WebDav,
+    pub rclone_rc: RcloneRc,
     pub mount: Mount,
     pub performance: Performance,
     pub providers: Vec<Provider>,
@@ -765,6 +766,92 @@ impl Default for WebDav {
     }
 }
 
+/// The RC server of an external rclone mount of the `WebDAV` root, told to forget cached
+/// directory listings when they change. Applies after a restart.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct RcloneRc {
+    pub enabled: bool,
+    /// Base URL of the RC server: `https://`, or `http://` on loopback.
+    pub url: String,
+    /// The mounted VFS as rclone names it (e.g. `library:`); empty when it serves one.
+    pub fs: String,
+    pub user: String,
+    pub password: Secret,
+}
+
+impl RcloneRc {
+    /// The `vfs/forget` endpoint below [`Self::url`].
+    pub(crate) fn forget_url(&self) -> Result<reqwest::Url, Error> {
+        let bad = || {
+            invalid(
+                "rclone_rc.url",
+                "Enter the RC base URL: HTTPS, or HTTP on loopback, without credentials, \
+                 query, or fragment"
+                    .to_owned(),
+            )
+        };
+        let mut url = reqwest::Url::parse(&self.url).map_err(|_| bad())?;
+        let host = url.host_str().ok_or_else(bad)?;
+        if !crate::oidc::secure(url.scheme(), host)
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(bad());
+        }
+        url.path_segments_mut()
+            .map_err(|()| bad())?
+            .pop_if_empty()
+            .push("vfs")
+            .push("forget");
+        Ok(url)
+    }
+
+    fn validate(&mut self) -> Result<(), Error> {
+        for field in [&mut self.url, &mut self.fs, &mut self.user] {
+            *field = field.trim().to_owned();
+        }
+        if !self.url.is_empty() {
+            self.forget_url()?;
+        }
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.url.is_empty() {
+            self.forget_url()?;
+        }
+        if self.user.contains(':') {
+            return Err(invalid(
+                "rclone_rc.user",
+                "RC username must not contain a colon".to_owned(),
+            ));
+        }
+        if self.user.is_empty() != self.password.0.is_empty() {
+            let path = if self.user.is_empty() {
+                "rclone_rc.user"
+            } else {
+                "rclone_rc.password"
+            };
+            return Err(invalid(
+                path,
+                "Enter both an RC username and password, or neither".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Scheme, host and port of a parseable [`Self::url`].
+    fn origin(&self) -> Option<reqwest::Url> {
+        let mut url = reqwest::Url::parse(self.url.trim()).ok()?;
+        url.set_path("");
+        url.set_query(None);
+        url.set_fragment(None);
+        Some(url)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct Mount {
@@ -1101,6 +1188,7 @@ impl Settings {
         out.auth.oidc.client_secret = out.auth.oidc.client_secret.masked();
         out.webdav.password = out.webdav.password.masked();
         out.webdav.download_key = out.webdav.download_key.masked();
+        out.rclone_rc.password = out.rclone_rc.password.masked();
         out.imports.strm_key = out.imports.strm_key.masked();
         for p in &mut out.providers {
             p.password = p.password.masked();
@@ -1124,6 +1212,7 @@ impl Settings {
         self.webdav
             .download_key
             .restore(&current.webdav.download_key);
+        self.rclone_rc.password.restore(&current.rclone_rc.password);
         self.imports.strm_key.restore(&current.imports.strm_key);
         for p in &mut self.providers {
             if let Some(c) = current.providers.iter().find(|c| c.id == p.id) {
@@ -1263,6 +1352,7 @@ impl Settings {
                 "WebDAV user must not be empty".to_owned(),
             ));
         }
+        self.rclone_rc.validate()?;
         if self.sab.manual_category.trim().is_empty() {
             return Err(invalid(
                 "sab.manual_category",
@@ -1693,6 +1783,17 @@ impl ConfigStore {
 
     /// Validates and persists `new`. [`MASK`] secrets keep their current value.
     pub async fn save(&mut self, mut new: Settings) -> Result<(), Error> {
+        let (rc, current_rc) = (&new.rclone_rc, &self.settings.rclone_rc);
+        if rc.password.0 == MASK
+            && !current_rc.password.0.is_empty()
+            && !rc.url.trim().is_empty()
+            && rc.origin() != current_rc.origin()
+        {
+            return Err(invalid(
+                "rclone_rc.password",
+                "The RC URL points somewhere new: enter its password, or clear it".to_owned(),
+            ));
+        }
         new.restore_secrets(&self.settings);
         new.validate_in(&self.default_cache_dir)?;
         let mut tree = serde_json::to_value(&new)?;
