@@ -424,3 +424,37 @@ fn a_durable_receipt_pins_unpublished_bytes_until_publication_finishes() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn integrity_reads_keep_eviction_order_and_a_store_with_room_evicts_nothing() {
+    let root = std::env::temp_dir().join(format!("infinidysk-patch-{}", PatchId::new()));
+    fs::create_dir(&root).unwrap();
+    let path = root.join("repairs");
+    let data = b"a repaired article";
+    let patch = descriptor(data);
+    let store = Store::open(&path, 1_000_000).unwrap();
+    drop(store.write(&patch, data, || false).unwrap());
+    let file = path.join(format!("{}.patch", patch.id));
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    let age = |at| fs::File::open(&file).unwrap().set_modified(at).unwrap();
+    let modified = || fs::metadata(&file).unwrap().modified().unwrap();
+    age(old);
+    assert_eq!(store.read_untouched(&patch).unwrap().data.as_ref(), data);
+    assert_eq!(modified(), old, "a backup read keeps the eviction order");
+    assert_eq!(store.read(&patch).unwrap().data.as_ref(), data);
+    assert!(
+        modified() > old,
+        "a client read makes the file the most recent"
+    );
+    let evicted = store
+        .evict(
+            1_000,
+            |_| -> Result<Option<()>, Error> { panic!("a store with room evicts nothing") },
+            || false,
+        )
+        .unwrap();
+    assert_eq!(evicted, 0);
+    assert_eq!(store.read(&patch).unwrap().data.as_ref(), data);
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}

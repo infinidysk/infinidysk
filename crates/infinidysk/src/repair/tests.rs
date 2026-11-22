@@ -1896,3 +1896,33 @@ async fn rebuilt_articles_with_an_identical_published_repair_are_not_staged_agai
     drop(repairs);
     f.close().await;
 }
+
+#[tokio::test]
+async fn a_backup_keeps_an_embedded_payload_whose_local_file_is_missing() {
+    let f = Fixture::new().await;
+    f.publish().await;
+    // Startup could not move an embedded payload into the store, so SQLite still holds it.
+    f.db.set_repair_payload(&f.patch, Some(DATA)).await.unwrap();
+    std::fs::remove_file(f.root.join("repairs").join(format!("{}.patch", f.patch.id))).unwrap();
+    let client = Arc::new(Client::new([]));
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    let backup = f.root.join("backup.sqlite");
+    repairs
+        .backup_into(&backup, &tokio_util::sync::CancellationToken::new())
+        .await
+        .unwrap();
+    let snapshot = Db::connect(&crate::app::sqlite_url(&backup)).await.unwrap();
+    assert_eq!(
+        snapshot
+            .repair_payload(f.patch.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(DATA),
+        "the only recoverable bytes stay in the backup"
+    );
+    snapshot.close().await;
+    drop(repairs);
+    drop(client);
+    f.close().await;
+}

@@ -248,8 +248,12 @@ impl Db {
                 ));
             }
         }
+        // Backups embed payloads into a SQLite copy; a full disk there must read as one.
+        let sqlite = matches!(self.pool, Pool::Sqlite(_));
         on!(self, pool => sqlx::query("UPDATE repair_patches SET backup_payload = $2 WHERE id = $1 AND descriptor = $3")
-            .bind(patch.id.0).bind(data).bind(patch.encode()?).execute(pool).await?.rows_affected());
+            .bind(patch.id.0).bind(data).bind(patch.encode()?).execute(pool).await
+            .map_err(|error| if sqlite { crate::backup::sqlite_error(error) } else { error.into() })?
+            .rows_affected());
         Ok(())
     }
 

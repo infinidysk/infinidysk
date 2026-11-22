@@ -36,24 +36,40 @@ impl Repairs {
                     anyhow::ensure!(!cancel.is_cancelled(), "backup cancelled");
                     after = Some(patch.id);
                     let repairs = Arc::clone(self);
+                    // A backup is not a client read, so it keeps the eviction order.
                     let (patch, data) = tokio::task::spawn_blocking(move || -> Result<_> {
-                        let data = repairs.store(u64::MAX)?.read(&patch).map(|body| body.data);
+                        let data = repairs
+                            .store(u64::MAX)?
+                            .read_untouched(&patch)
+                            .map(|body| body.data);
                         Ok((patch, data))
                     })
                     .await??;
-                    match data {
-                        Ok(data) => snapshot.set_repair_payload(&patch, Some(&data)).await?,
-                        // A restore has no live store, so the backup drops the reference
-                        // as eviction would, and its files are checked again after restore.
-                        Err(error) => {
-                            tracing::warn!(
-                                patch = %patch.id,
-                                reason = %error,
-                                "a stored repair cannot be read and is left out of the backup"
-                            );
-                            snapshot.evict_patch(patch.id).await?;
+                    let error = match data {
+                        Ok(data) => {
+                            snapshot.set_repair_payload(&patch, Some(&data)).await?;
+                            continue;
                         }
+                        Err(error) => error,
+                    };
+                    // Startup keeps an embedded payload it could not move into the live store,
+                    // so the copied catalog may still hold it. Keep it only if its bytes match.
+                    if let Some(data) = snapshot.repair_payload(patch.id).await?
+                        && snapshot
+                            .set_repair_payload(&patch, Some(&data))
+                            .await
+                            .is_ok()
+                    {
+                        continue;
                     }
+                    // A restore has no live store, so the backup drops the reference
+                    // as eviction would, and its files are checked again after restore.
+                    tracing::warn!(
+                        patch = %patch.id,
+                        reason = %error,
+                        "a stored repair cannot be read and is left out of the backup"
+                    );
+                    snapshot.evict_patch(patch.id).await?;
                 }
             }
             Ok::<_, anyhow::Error>(())
@@ -102,7 +118,7 @@ impl Repairs {
                     if let Some(data) = data {
                         store.restore(&patch, &data, || false)?;
                     }
-                    store.read(&patch)?;
+                    store.read_untouched(&patch)?;
                     Ok(patch)
                 })
                 .await?;

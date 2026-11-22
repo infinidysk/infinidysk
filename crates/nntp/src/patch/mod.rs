@@ -317,7 +317,17 @@ impl Store {
 
     /// Verify identity, exact size and SHA-256 before returning any bytes. The expected
     /// descriptor must come from a trusted reference, not directory enumeration.
+    /// A successful read makes the file the most recently read for eviction.
     pub fn read(&self, patch: &Patch) -> Result<Body, Error> {
+        self.load(patch, true)
+    }
+
+    /// [`Self::read`] for backups and integrity checks: eviction order stays as clients left it.
+    pub fn read_untouched(&self, patch: &Patch) -> Result<Body, Error> {
+        self.load(patch, false)
+    }
+
+    fn load(&self, patch: &Patch, touch: bool) -> Result<Body, Error> {
         descriptor(patch)?;
         let mut file = open_file(
             &self.0.dir,
@@ -328,8 +338,10 @@ impl Store {
         data.try_reserve_exact(usize::try_from(patch.source.range.len()).expect("bounded article"))
             .map_err(|_| Error::Allocation)?;
         validate_file(&mut file, patch, Some(&mut data))?;
-        // Eviction order only; a failed touch must not fail playback.
-        let _ = file.set_modified(std::time::SystemTime::now());
+        if touch {
+            // Eviction order only; a failed touch must not fail playback.
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
         Ok(Body {
             data: data.into(),
             offset: patch.source.range.start,
