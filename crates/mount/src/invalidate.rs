@@ -85,8 +85,12 @@ impl Invalidator {
 
 impl Invalidation<'_> {
     /// Arm before SQL. Failed or cancelled finalization leaves delivery closed.
-    pub fn block(&mut self) {
+    /// Also drops every alias's cached pages while the fence is closed, so a warm handle
+    /// cannot serve old bytes from the kernel if the publication never finishes. On an
+    /// error, do not commit; call `abort`.
+    pub async fn block(&mut self) -> io::Result<()> {
         self.writers.block();
+        invalidate(self.registry, &self.mounted, &self.aliases).await
     }
 
     /// Release admission only when SQL did not commit and delivery bytes did not change.
@@ -105,30 +109,36 @@ impl Invalidation<'_> {
         } = self;
         writers
             .retire()?
-            .acknowledge_after(async {
-                for inode in aliases {
-                    Self::current(registry, &mounted)?;
-                    // An evicted inode has no kernel pages left to invalidate.
-                    if let Err(error) = (mounted.send)(inode).await
-                        && error.raw_os_error() != Some(nix::libc::ENOENT)
-                    {
-                        return Err(error);
-                    }
-                }
-                Self::current(registry, &mounted)
-            })
+            .acknowledge_after(invalidate(registry, &mounted, &aliases))
             .await
     }
+}
 
-    fn current(registry: &Invalidator, mounted: &Arc<Mounted>) -> io::Result<()> {
-        let active = lock(&registry.mounted)
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, mounted));
-        if mounted.stopping.is_cancelled() || !active {
-            return Err(unavailable());
+async fn invalidate(
+    registry: &Invalidator,
+    mounted: &Arc<Mounted>,
+    aliases: &BTreeSet<Inode>,
+) -> io::Result<()> {
+    for &inode in aliases {
+        current(registry, mounted)?;
+        // An evicted inode has no kernel pages left to invalidate.
+        if let Err(error) = (mounted.send)(inode).await
+            && error.raw_os_error() != Some(nix::libc::ENOENT)
+        {
+            return Err(error);
         }
-        Ok(())
     }
+    current(registry, mounted)
+}
+
+fn current(registry: &Invalidator, mounted: &Arc<Mounted>) -> io::Result<()> {
+    let active = lock(&registry.mounted)
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, mounted));
+    if mounted.stopping.is_cancelled() || !active {
+        return Err(unavailable());
+    }
+    Ok(())
 }
 
 impl Mounted {
@@ -242,6 +252,35 @@ mod tests {
                 "unfinished publication must survive loss of handles and writers"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn blocking_drops_every_alias_cache_before_an_unfinished_publication() {
+        let vfs = vfs().await;
+        let item = ItemId::new();
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&sent);
+        let mount = mounted(
+            Box::new(move |inode| {
+                lock(&log).push(inode);
+                Box::pin(async { Ok(()) })
+            }),
+            item,
+            &vfs,
+        );
+        let invalidator = Invalidator {
+            mounted: Mutex::new(Some(mount)),
+        };
+        let mut writers = vec![vfs.read_fence(item).write().await];
+        let mut publication = invalidator.prepare(&mut writers).unwrap();
+        publication.block().await.unwrap();
+        assert_eq!(*lock(&sent), [11, 22], "both warm aliases lose their pages");
+        drop(publication);
+        drop(writers);
+        assert!(
+            vfs.read_fence(item).read().await.is_err(),
+            "refills after the unfinished publication must reach the closed fence"
+        );
     }
 
     #[tokio::test]
