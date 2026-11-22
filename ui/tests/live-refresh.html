@@ -222,7 +222,26 @@
     h.close();
   }
 
+  async function health_events_refresh_open_file_details_but_not_file_lists() {
+    const h = harness();
+    const details = h.watch(["file", "repaired"]);
+    const list = h.watch(["files", { path: "/content" }]);
+    h.refresh.change("health");
+    await h.advance(0);
+    check(details.started === 1, "a published repair refreshes open file details");
+    check(list.started === 0, "file lists wait for a resync");
+    await details.finish();
+    h.refresh.change("resync");
+    await h.advance(0);
+    check(list.started === 1, "resync refreshes file lists");
+    await list.finish();
+    await h.advance(10 * GAP);
+    check(details.started === 2 && list.started === 1, "no extra fetches");
+    h.close();
+  }
+
   const tests = [
+    health_events_refresh_open_file_details_but_not_file_lists,
     a_burst_during_a_fetch_gives_one_follow_up_with_the_latest_value,
     one_event_during_a_pre_existing_fetch_gives_one_follow_up,
     history_and_health_events_fetch_the_summary_once,
