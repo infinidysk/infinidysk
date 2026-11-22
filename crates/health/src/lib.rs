@@ -1022,6 +1022,10 @@ impl Health {
             next.repair_attempts += 1;
             if next.repair_attempts >= REPAIR_BUDGET {
                 if self.par2 {
+                    // Kept in history; the PAR2 fallback may replace the current reason.
+                    tracing::warn!(path = %item.path, reason = %message, "repair request failed; trying PAR2");
+                    self.record(item, HealthResult::Missing, Repair::None, message)
+                        .await?;
                     next.next_check = Some(now);
                     self.db.set_health(item.id, &next, status.recheck).await?;
                     return Ok(());

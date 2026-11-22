@@ -2201,8 +2201,8 @@ impl Db {
 
     /// Up to `limit` items with health work due at `now`, most urgent first: playback
     /// reports, due repairs and hidden follow-ups, never checked, user rechecks, then by
-    /// schedule (newest release on ties). Without `routine` only rechecks and pending
-    /// repairs are returned.
+    /// schedule (newest release on ties). Without `routine` only rechecks, confirming
+    /// re-checks of `suspect` files and pending repairs are returned.
     pub async fn due_health_work(
         &self,
         now: i64,
@@ -2232,12 +2232,13 @@ impl Db {
         routine: bool,
         limit: i64,
     ) -> Result<Vec<(Item, HealthStatus)>, Error> {
-        // 4 = repairing, 5 = hidden, 7 = ignored.
+        // 3 = suspect, 4 = repairing, 5 = hidden, 7 = ignored. A suspect file's
+        // confirming re-check is repair work, so it runs with routine checks off.
         let sql = select_health!(
             "WHERE kind <> $1 AND meta_blob IS NOT NULL AND ( \
                 (recheck_requested > 0 AND health_state NOT IN (4, 5)) \
                 OR (COALESCE(next_health_check, 0) <= $2 \
-                    AND (recheck_requested = -1 OR health_state IN (4, 5) OR ($3 AND health_state <> 7)))) \
+                    AND (recheck_requested = -1 OR health_state IN (3, 4, 5) OR ($3 AND health_state <> 7)))) \
              ORDER BY CASE WHEN COALESCE(next_health_check, 0) > $5 \
                     AND (recheck_requested <= 0 OR health_state IN (4, 5)) THEN 5 \
                 WHEN recheck_requested = 2 THEN 0 WHEN health_state IN (4, 5) THEN 1 \

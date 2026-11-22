@@ -284,6 +284,22 @@ async fn exercise(db: &Db) {
             .id,
         file.id
     );
+    let suspect = HealthStatus {
+        state: HealthState::Suspect,
+        next_check: Some(100),
+        ..HealthStatus::default()
+    };
+    db.set_health_recheck(file.id, &suspect, Recheck::Deferred, Recheck::None)
+        .await
+        .expect("first miss");
+    assert_eq!(
+        due(false).await,
+        [file.id],
+        "a confirming re-check runs with routine off"
+    );
+    db.set_health_recheck(file.id, &delayed, Recheck::None, Recheck::Deferred)
+        .await
+        .expect("restore deferred repair");
     db.request_recheck(file.id, Recheck::Playback)
         .await
         .expect("recheck");
