@@ -707,16 +707,28 @@ async fn missing_reads_report_progress_while_another_reply_waits() {
             .await
         }
     });
-    let observed = tokio::time::timeout(Duration::from_secs(2), async {
-        while progress.requests().1 == 0 {
+    let started = tokio::time::timeout(Duration::from_secs(10), async {
+        while server.body_commands() == 0 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await;
+    let observed = started.is_ok()
+        && tokio::time::timeout(Duration::from_secs(2), async {
+            while progress.requests().1 == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok();
     cancel.cancel();
     assert!(matches!(task.await.unwrap(), Err(Error::Cancelled)));
     assert!(
-        observed.is_ok(),
+        started.is_ok(),
+        "repair never issued its first BODY command"
+    );
+    assert!(
+        observed,
         "missing results must be visible before the batch finishes"
     );
     let (completed, missing) = progress.requests();

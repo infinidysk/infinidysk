@@ -303,7 +303,10 @@ async fn seek_read(
     while total < SEEK_BYTES {
         let n = reader.read(&mut buf).await?;
         if n == 0 {
-            break;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "seek ended before the timing sample was complete",
+            ));
         }
         first.get_or_insert_with(|| start.elapsed());
         total += n as u64;
