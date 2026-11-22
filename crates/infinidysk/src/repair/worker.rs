@@ -340,9 +340,6 @@ impl Repairs {
         let claim = job.claim();
         loop {
             let saved = async {
-                if finish.yielded {
-                    self.db.yield_par2_attempt(claim, job.attempts).await?;
-                }
                 let (completed, missing) = progress.requests(job);
                 self.db
                     .update_par2_requests(claim, completed, missing)
@@ -353,6 +350,20 @@ impl Repairs {
                     .update_availability_progress(claim, checked, total)
                     .await?;
                 let (transferred, stored) = progress.counters(job);
+                if finish.yielded {
+                    // One statement, so a failed save cannot defer without the refund.
+                    return self
+                        .db
+                        .yield_par2(
+                            claim,
+                            job.attempts,
+                            &finish.reason,
+                            transferred,
+                            stored,
+                            now_ms(),
+                        )
+                        .await;
+                }
                 self.db
                     .finish_par2(
                         claim,

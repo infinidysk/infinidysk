@@ -248,12 +248,11 @@ async fn lane_contract(db: &Db) {
     assert_eq!(manual.id, scan.id);
     assert_eq!(manual.scan_at, None);
     assert_eq!(manual.checked_articles, 0);
-    db.yield_par2_attempt(manual.claim(), manual.attempts)
-        .await
-        .unwrap();
-    db.yield_par2_attempt(manual.claim(), manual.attempts)
-        .await
-        .unwrap();
+    for _ in 0..2 {
+        db.yield_par2(manual.claim(), manual.attempts, "waiting", 0, 0, 1003)
+            .await
+            .unwrap();
+    }
     let yielded = db
         .par2_jobs()
         .await
@@ -265,6 +264,17 @@ async fn lane_contract(db: &Db) {
         yielded.attempts, 0,
         "playback must not consume a repair retry"
     );
+    assert_eq!(
+        (yielded.state, yielded.next_at),
+        (4, 1003),
+        "the refund and the deferral are saved together"
+    );
+    let manual = db
+        .claim_par2_lane(1003, true, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((manual.id, manual.attempts), (yielded.id, 1));
     let before = db
         .par2_counts()
         .await
@@ -755,7 +765,7 @@ async fn stale_claims(db: &Db) {
     let current = db.claim_par2_lane(12, false, false).await.unwrap().unwrap();
     assert_eq!(old.attempts, current.attempts);
     assert!(current.claim_generation > old.claim_generation);
-    db.yield_par2_attempt(old.claim(), old.attempts)
+    db.yield_par2(old.claim(), old.attempts, "stale", 999, 99, 13)
         .await
         .unwrap();
     db.update_par2_progress(old.claim(), "stale", 999, 99, 13)

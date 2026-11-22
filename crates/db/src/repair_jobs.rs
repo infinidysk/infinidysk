@@ -90,15 +90,29 @@ impl Db {
         Ok(())
     }
 
-    /// Playback preemption does not consume a provider/storage retry.
-    pub async fn yield_par2_attempt(
+    /// Playback preemption or shutdown: defer the job to `now` and return the claimed
+    /// attempt in the same statement, so neither is saved without the other.
+    pub async fn yield_par2(
         &self,
         claim: Claim,
         claimed_attempt: i32,
+        reason: &str,
+        transferred: i64,
+        stored: i64,
+        now: i64,
     ) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE repair_jobs SET attempts = attempts - 1 WHERE id = $1 AND claim_generation = $3 AND state = 1 AND attempts = $2 AND attempts > 0")
-            .bind(claim.id).bind(claimed_attempt).bind(claim.generation).execute(pool).await?.rows_affected());
-        Ok(())
+        self.settle_par2(
+            claim,
+            4,
+            reason,
+            transferred,
+            stored,
+            now,
+            Some(now),
+            0,
+            claimed_attempt,
+        )
+        .await
     }
 
     /// Release the availability slot and queue its repair in the same commit, even at capacity.
@@ -421,6 +435,34 @@ impl Db {
         retry: Option<i64>,
         outcome: i16,
     ) -> Result<(), Error> {
+        self.settle_par2(
+            claim,
+            state,
+            reason,
+            transferred,
+            stored,
+            now,
+            retry,
+            outcome,
+            -1,
+        )
+        .await
+    }
+
+    /// `refund` is the claimed attempt to return; -1, which no job has, returns none.
+    #[allow(clippy::too_many_arguments)] // One persisted result, including its measured byte counters.
+    async fn settle_par2(
+        &self,
+        claim: Claim,
+        state: i16,
+        reason: &str,
+        transferred: i64,
+        stored: i64,
+        now: i64,
+        retry: Option<i64>,
+        outcome: i16,
+        refund: i32,
+    ) -> Result<(), Error> {
         if !(2..=6).contains(&state)
             || (state == 4) != retry.is_some()
             || !(0..=EXHAUSTED).contains(&outcome)
@@ -432,9 +474,9 @@ impl Db {
         }
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
-            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, outcome = CASE WHEN state = 6 THEN outcome ELSE $9 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL)) RETURNING state, nzb_blob")
+            let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET attempts = CASE WHEN state = 1 AND attempts = $10 AND attempts > 0 THEN attempts - 1 ELSE attempts END, state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, outcome = CASE WHEN state = 6 THEN outcome ELSE $9 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL)) RETURNING state, nzb_blob")
                 .bind(claim.id).bind(state).bind(reason).bind(transferred).bind(stored).bind(now).bind(retry.unwrap_or(now))
-                .bind(claim.generation).bind(outcome).fetch_optional(&mut *tx).await?;
+                .bind(claim.generation).bind(outcome).bind(refund).fetch_optional(&mut *tx).await?;
             if let Some((state, Some(source))) = result && state != 4 { release_nzb!(self, tx, source); }
             tx.commit().await?;
         });
