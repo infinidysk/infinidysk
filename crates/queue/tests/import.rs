@@ -594,7 +594,14 @@ async fn missing_import(complete_during_import: bool) {
         db.history_entry(id).await.unwrap().is_none(),
         "repair must be requested before failure"
     );
-    assert_eq!(db.queue().await.unwrap().len(), 1);
+    let queued = db.queue().await.unwrap();
+    assert_eq!(queued.len(), 1);
+    if complete_during_import {
+        assert_eq!(
+            queued[0].last_error.as_deref(),
+            Some("PAR2 completed during the import.")
+        );
+    }
     let repair = db
         .par2_result(infinidysk_db::repair::Owner::Queue(id), false)
         .await
