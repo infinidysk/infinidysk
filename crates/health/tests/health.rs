@@ -167,6 +167,54 @@ async fn a_check_discards_observations_when_repairs_change_during_provider_reads
 }
 
 #[tokio::test]
+async fn a_check_keeps_its_result_when_another_blob_changes_during_provider_reads() {
+    let (articles, len) = mkv("unrelated-write");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, _) = import(&server, &articles, len).await;
+    let queued = Queue::new(db.clone(), client(&server));
+    let job = Submission {
+        file_name: "other.nzb",
+        category: "tv",
+        priority: 0,
+        post_processing: 0,
+    };
+    queued
+        .enqueue(&job, &nzb(&articles, len, "other.mkv"))
+        .await
+        .unwrap();
+    let other = db
+        .blob_ids()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|id| Some(*id) != item.meta_blob && Some(*id) != item.nzb_blob)
+        .unwrap();
+    let (_arr_tx, arr) = watch::channel(Vec::new());
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings).unwrap();
+    let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+    status.state = HealthState::Unchecked;
+    status.last_check = None;
+    status.next_check = Some(0);
+    db.set_health(item.id, &status, Recheck::None)
+        .await
+        .unwrap();
+    let (arrived, release) = server.hold_article(&articles[0].message_id);
+    let checking = tokio::spawn(async move { health.step().await.unwrap() });
+    tokio::time::timeout(Duration::from_secs(2), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    let raw = db.blob(other).await.unwrap().unwrap();
+    db.update_blob(other, &raw).await.unwrap();
+    release.send(()).unwrap();
+    assert!(checking.await.unwrap());
+    let (_, result) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(result.state, HealthState::Healthy);
+    assert!(result.last_check.is_some());
+}
+
+#[tokio::test]
 async fn a_degraded_item_queues_par2_without_asking_arr_to_replace_it() {
     let (mut articles, len) = mkv("degraded-repair");
     let full = LoopbackServer::start(articles.clone()).await.unwrap();

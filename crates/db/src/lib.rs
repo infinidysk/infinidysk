@@ -2089,6 +2089,16 @@ impl Db {
         )
     }
 
+    /// The metadata blob `item` links to now, with its generation.
+    pub async fn item_meta_generation(&self, item: ItemId) -> Result<Option<(BlobId, i64)>, Error> {
+        let row: Option<(Uuid, i64)> = on!(self, pool => sqlx::query_as(
+            "SELECT b.id, b.generation FROM items i JOIN blobs b ON b.id = i.meta_blob WHERE i.id = $1")
+            .bind(item.0)
+            .fetch_optional(pool)
+            .await?);
+        Ok(row.map(|(id, generation)| (BlobId(id), generation)))
+    }
+
     /// Replaces a blob's bytes, e.g. after health checks record missing segments.
     pub async fn update_blob(&self, id: BlobId, data: &[u8]) -> Result<(), Error> {
         on!(self, pool => {

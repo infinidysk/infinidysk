@@ -573,7 +573,6 @@ impl Health {
         settings: &Settings,
         writing: &mut Writing,
     ) -> Result<(), Error> {
-        let observed = self.db.blob_epoch();
         let Some((blob_id, generation, mut meta)) = self.meta_generation(item).await? else {
             tracing::warn!(item = %item.id, path = %item.path, reason = "its stored metadata is gone", "cannot check a file; retrying tomorrow");
             self.db.postpone_health(item.id, now_ms() + DAY_MS).await?;
@@ -603,7 +602,10 @@ impl Health {
         let (outcome, changed, head) = self
             .released(writing, check::run(&client, &mut meta, &item.name, &opts))
             .await;
-        if self.db.blob_epoch() != observed || self.db.repair_epoch() != repair_epoch {
+        // Only this item's metadata and published repairs change what the check read.
+        if self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
+            || self.db.repair_epoch() != repair_epoch
+        {
             return Ok(());
         }
         if let Some((source, original)) = original {
@@ -619,7 +621,7 @@ impl Health {
         // The check's own hole write is part of its observation; any other write is not.
         // It applies only to the bytes this check read, so a newer write is left in place
         // and the next step checks again.
-        let observed = if changed {
+        let generation = if changed {
             if !self
                 .db
                 .update_blob_if(blob_id, generation, &blob::encode_meta(&meta)?)
@@ -627,9 +629,9 @@ impl Health {
             {
                 return Ok(());
             }
-            observed + 1
+            generation + 1
         } else {
-            observed
+            generation
         };
         let probe = self.db.media_probe(item.id).await?;
         let mut pending = Recheck::None;
@@ -710,7 +712,9 @@ impl Health {
                 let found = self
                     .released(writing, structure::walk(&client, &meta, &item.name, head))
                     .await;
-                if self.db.blob_epoch() != observed || self.db.repair_epoch() != repair_epoch {
+                if self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
+                    || self.db.repair_epoch() != repair_epoch
+                {
                     return Ok(());
                 }
                 let source = structure::source(&meta);
