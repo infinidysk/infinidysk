@@ -604,8 +604,10 @@ impl Health {
             .released(writing, check::run(&client, &mut meta, &item.name, &opts))
             .await;
         // Only this item's metadata and published repairs change what the check read.
-        if self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
-            || self.db.repair_epoch() != repair_epoch
+        // Without PAR2 nothing publishes, and the hole write below stays conditional.
+        if self.par2
+            && (self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
+                || self.db.repair_epoch() != repair_epoch)
         {
             return Ok(());
         }
@@ -713,8 +715,9 @@ impl Health {
                 let found = self
                     .released(writing, structure::walk(&client, &meta, &item.name, head))
                     .await;
-                if self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
-                    || self.db.repair_epoch() != repair_epoch
+                if self.par2
+                    && (self.db.item_meta_generation(item.id).await? != Some((blob_id, generation))
+                        || self.db.repair_epoch() != repair_epoch)
                 {
                     return Ok(());
                 }

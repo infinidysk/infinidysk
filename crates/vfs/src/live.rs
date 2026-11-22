@@ -33,8 +33,6 @@ pub(crate) struct Opened {
     pub report: Option<FaultReport>,
     pub gaps: Option<(GapEntries, bool)>,
     pub watch: Option<Arc<Watch>>,
-    /// Without repair coordination the plain reader serves, with no access hook.
-    pub coordinated: bool,
 }
 
 impl Opened {
@@ -42,13 +40,13 @@ impl Opened {
         &self,
         meta: &Arc<FileMeta>,
         source: Option<(BlobId, i64)>,
-        version: &ReadVersion,
+        version: Option<&ReadVersion>,
     ) -> Result<Reader, Error> {
         let report = self.report.as_ref().map(|report| {
             let (report, id) = (Arc::clone(report), self.item.id);
-            let version = version.clone();
+            let version = version.cloned();
             Arc::new(move |index, fault| {
-                if version.is_current() {
+                if version.as_ref().is_none_or(ReadVersion::is_current) {
                     report(id, version.clone(), index, fault);
                 }
             }) as Report
@@ -63,7 +61,7 @@ impl Opened {
             self.trace.as_ref(),
             report.as_ref(),
         )?;
-        let reader = if self.coordinated {
+        let reader = if let Some(version) = version {
             let scope = Arc::new((version.clone(), Arc::clone(meta)));
             let access: Access = Arc::new(move |id| {
                 let scope = Arc::clone(&scope);
@@ -85,16 +83,17 @@ impl Opened {
         })
     }
 
+    /// A plain reader without `version`; with it, one that follows repair publications.
     pub(crate) fn reader(
         self,
         meta: &Arc<FileMeta>,
         source: Option<(BlobId, i64)>,
-        version: ReadVersion,
+        version: Option<ReadVersion>,
     ) -> Result<Reader, Error> {
-        let reader = self.build(meta, source, &version)?;
-        if !self.coordinated {
+        let reader = self.build(meta, source, version.as_ref())?;
+        let Some(version) = version else {
             return Ok(reader);
-        }
+        };
         let size = meta.size();
         let opened = Arc::new(self);
         let reload: Reload = Arc::new(move |version| {
@@ -148,7 +147,7 @@ impl Opened {
                             }
                             continue;
                         }
-                        return opened.build(&meta, fresh_source, &version);
+                        return opened.build(&meta, fresh_source, Some(&version));
                     }
                 }
                 .await;
@@ -165,20 +164,25 @@ fn gaps(
     entries: &GapEntries,
     item: &Item,
     meta: &FileMeta,
-    version: &ReadVersion,
+    version: Option<&ReadVersion>,
     tolerance: bool,
 ) -> Arc<Gaps> {
     let mut all = entries.lock().unwrap_or_else(PoisonError::into_inner);
-    if !version.is_current() {
+    if !version.is_none_or(ReadVersion::is_current) {
         return Arc::default();
     }
     all.retain(|_, (_, gaps)| Arc::strong_count(gaps) > 1 || !gaps.stale());
     let (saved, gaps) = all
         .entry(item.id)
-        .or_insert_with(|| (version.clone(), Arc::default()));
-    if !saved.same(version) {
+        .or_insert_with(|| (version.cloned(), Arc::default()));
+    let same = match (&*saved, version) {
+        (None, None) => true,
+        (Some(saved), Some(version)) => saved.same(version),
+        _ => false,
+    };
+    if !same {
         // Detached CRC checks may still write to the previous revision's holes.
-        *saved = version.clone();
+        *saved = version.cloned();
         *gaps = Arc::default();
     }
     let gaps = Arc::clone(gaps);

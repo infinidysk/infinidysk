@@ -209,17 +209,18 @@ impl Deleted {
 }
 
 /// Told which segment (flat index across parts) of which file playback zero-filled.
-pub type FaultReport = Arc<dyn Fn(ItemId, ReadVersion, usize, Fault) + Send + Sync>;
-type GapEntries = Arc<Mutex<HashMap<ItemId, (ReadVersion, Arc<Gaps>)>>>;
+/// The version is `None` for a read no repair publication coordinates.
+pub type FaultReport = Arc<dyn Fn(ItemId, Option<ReadVersion>, usize, Fault) + Send + Sync>;
+type GapEntries = Arc<Mutex<HashMap<ItemId, (Option<ReadVersion>, Arc<Gaps>)>>>;
 
 struct Opening {
     /// The item the repair context came from, refreshed when the node had no NZB link.
     item: Item,
     meta: Arc<FileMeta>,
     source: Option<(BlobId, i64)>,
-    version: ReadVersion,
+    /// `None` when no repair can publish or be served.
+    version: Option<ReadVersion>,
     _lease: Option<ReadLease>,
-    coordinated: bool,
 }
 
 pub struct Vfs {
@@ -649,7 +650,6 @@ impl Vfs {
                     source,
                     version,
                     _lease,
-                    coordinated,
                 } = self.opening(item).await?;
                 let session =
                     self.sessions
@@ -668,7 +668,6 @@ impl Vfs {
                         self.gap_tolerance.load(Ordering::Relaxed),
                     )),
                     watch: Some(session.watch()),
-                    coordinated,
                 }
                 .reader(&meta, source, version)?;
                 Ok(Some(Handle::new(reader, Some(session))))
@@ -686,7 +685,6 @@ impl Vfs {
             source,
             version,
             _lease,
-            coordinated,
         } = self.opening(item).await?;
         let mut reader = live::Opened {
             db: self.db.clone(),
@@ -699,7 +697,6 @@ impl Vfs {
             report: None,
             gaps: None,
             watch: None,
-            coordinated,
         }
         .reader(&meta, source, version)?;
         if let Reader::Live(live) = &mut reader {
@@ -715,9 +712,8 @@ impl Vfs {
                 item: item.clone(),
                 meta,
                 source: None,
-                version: self.fences.get(item.id).version(),
+                version: None,
                 _lease: None,
-                coordinated: false,
             });
         }
         // A retained node may predate a restored NZB link; without it the repair
@@ -760,9 +756,8 @@ impl Vfs {
                         item: item.clone(),
                         meta,
                         source,
-                        version: fence.version(),
+                        version: Some(fence.version()),
                         _lease: Some(lease),
-                        coordinated: true,
                     });
                 }
             }

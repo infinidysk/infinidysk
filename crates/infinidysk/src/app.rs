@@ -375,7 +375,8 @@ pub async fn serve(
 
     let (arr_tx, arr_rx) = watch::channel(arr_instances(&settings.arr_instances));
     let (health_tx, health_rx) = watch::channel(health_settings(&settings.health));
-    let (fault_tx, mut fault_rx) = mpsc::unbounded_channel::<(ItemId, ReadVersion, usize, Fault)>();
+    let (fault_tx, mut fault_rx) =
+        mpsc::unbounded_channel::<(ItemId, Option<ReadVersion>, usize, Fault)>();
     let vfs = Arc::new(
         Vfs::new(
             db.clone(),
@@ -453,15 +454,16 @@ pub async fn serve(
         let db = db.clone();
         async move {
             while let Some(first) = fault_rx.recv().await {
-                let mut files: HashMap<ItemId, (ReadVersion, Vec<usize>, Vec<usize>)> =
-                    HashMap::new();
+                let current =
+                    |v: &Option<ReadVersion>| v.as_ref().is_none_or(ReadVersion::is_current);
+                let mut files = HashMap::new();
                 let mut next = Some(first);
                 while let Some((id, version, index, fault)) = next {
-                    if version.is_current() {
+                    if current(&version) {
                         let entry = files
                             .entry(id)
                             .or_insert_with(|| (version.clone(), Vec::new(), Vec::new()));
-                        if !entry.0.is_current() {
+                        if !current(&entry.0) {
                             *entry = (version, Vec::new(), Vec::new());
                         }
                         match fault {
@@ -475,15 +477,18 @@ pub async fn serve(
                     // Publication pauses background work before taking item writers, so
                     // the lease is awaited without the permit and taken under it without
                     // waiting; a waiting pause never sits behind an item writer.
-                    let admitted = loop {
-                        let Some(waited) = version.read().await else {
-                            break None;
-                        };
-                        drop(waited);
-                        let writing = db.write_permit().await;
-                        if let Some(lease) = version.try_read() {
-                            break Some((writing, lease));
-                        }
+                    let admitted = match &version {
+                        None => Some(None),
+                        Some(version) => loop {
+                            let Some(waited) = version.read().await else {
+                                break None;
+                            };
+                            drop(waited);
+                            let writing = db.write_permit().await;
+                            if let Some(lease) = version.try_read() {
+                                break Some(Some((writing, lease)));
+                            }
+                        },
                     };
                     let Some(_admitted) = admitted else {
                         continue;
