@@ -438,14 +438,15 @@ impl Budget {
                     .max(1),
             );
             let chunk = &ids[at..at + width];
-            // Concurrent reads split what the parent's scratch leaves, not the whole allowance.
-            let share = self.limits.memory_bytes.saturating_sub(self.scratch) / width;
+            // A read only charges candidate IDs, which the parent charges again once when
+            // merging, so a concurrent read may check them against all of it as a lone read would.
+            let available = self.limits.memory_bytes.saturating_sub(self.scratch);
             let results = stream::iter(chunk.iter().map(|id| {
                 let mut read = Self {
                     limits: Limits {
                         requests: self.limits.requests.min(1),
                         decoded_bytes: self.limits.decoded_bytes.min(MAX_DECODED_LEN as u64),
-                        memory_bytes: share,
+                        memory_bytes: available,
                         ..self.limits
                     },
                     scratch: 0,
@@ -869,11 +870,60 @@ async fn observe(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use infinidysk_nntp::{Body, Client, RepairKey, RepairLookup};
+    use tokio_util::sync::CancellationToken;
+
+    use super::{Budget, Limits};
+
     #[test]
     fn a_cancelled_par2_computation_is_a_cancellation() {
         assert!(matches!(
             super::Error::from(infinidysk_par2::Error::Cancelled),
             super::Error::Cancelled
         ));
+    }
+
+    #[tokio::test]
+    async fn concurrent_candidate_reads_fit_where_serial_reads_fit() {
+        let lookup: RepairLookup = Box::new(|key| {
+            matches!(key, RepairKey::Article(_)).then(|| {
+                Box::pin(async {
+                    Ok(Some(Body {
+                        data: bytes::Bytes::from_static(b"x"),
+                        offset: 0,
+                        file_size: 1,
+                        part: None,
+                        total: None,
+                    }))
+                }) as _
+            })
+        });
+        let ids = ["a@test", "bb@test"];
+        // Both candidate charges fit, but half of the allowance does not hold the longer one.
+        let memory = ids.iter().map(|id| id.len() + 128).sum();
+        let mut budget = Budget {
+            limits: Limits {
+                requests: 2,
+                decoded_bytes: 2 * infinidysk_nntp::MAX_DECODED_LEN as u64,
+                memory_bytes: memory,
+                comparisons: 0,
+                retained_bytes: 0,
+            },
+            scratch: 0,
+            cancel: CancellationToken::new(),
+            network_bytes: 0,
+            source: None,
+            candidates: Some(Arc::new(lookup)),
+            probe: None,
+            progress: None,
+            legacy_ids: std::collections::BTreeSet::new(),
+            legacy_bytes: 0,
+        };
+        let reads = budget.bodies(&Client::new([]), &ids).await.unwrap();
+        assert!(reads.iter().all(Result::is_ok), "{reads:?}");
+        assert_eq!(budget.limits.memory_bytes, 0);
+        assert_eq!(budget.legacy_ids.len(), 2);
     }
 }
