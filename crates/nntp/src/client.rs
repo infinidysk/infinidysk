@@ -496,10 +496,15 @@ impl Client {
         probe: Option<&Probe>,
         begin: Option<u64>,
     ) -> Result<Body, Error> {
-        if let Some(body) = self.repaired(message_id, begin).await? {
-            return Ok(body);
-        }
-        self.provider_hedge(message_id, probe, begin).await
+        let local = match self.repaired(message_id, begin).await {
+            Ok(Some(body)) => return Ok(body),
+            Ok(None) => None,
+            Err(error) => Some(error),
+        };
+        // A damaged local repair must not hide a provider's copy; report it if none has one.
+        self.provider_hedge(message_id, probe, begin)
+            .await
+            .map_err(|error| local.unwrap_or(error))
     }
 
     /// Race a provider read after the caller has checked and validated repairs.
@@ -519,10 +524,15 @@ impl Client {
     }
 
     async fn body_tagged(&self, message_id: &str, tag: Tag) -> Result<Body, Error> {
-        if let Some(body) = self.repaired(message_id, tag.begin).await? {
-            return Ok(body);
-        }
-        self.provider_body_tagged(message_id, tag).await
+        let local = match self.repaired(message_id, tag.begin).await {
+            Ok(Some(body)) => return Ok(body),
+            Ok(None) => None,
+            Err(error) => Some(error),
+        };
+        // A damaged local repair must not hide a provider's copy; report it if none has one.
+        self.provider_body_tagged(message_id, tag)
+            .await
+            .map_err(|error| local.unwrap_or(error))
     }
 
     async fn provider_body_tagged(&self, message_id: &str, tag: Tag) -> Result<Body, Error> {

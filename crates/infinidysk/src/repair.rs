@@ -190,7 +190,9 @@ impl Repairs {
         if current.iter().any(|patch| !same_body(patch, &selected)) {
             return Err(Error::Repair("committed article identities changed"));
         }
-        Ok(current.contains(&selected).then_some(body))
+        // Every current copy has the selected body, so a replaced copy still serves it.
+        // Revocation of every copy still reports a miss.
+        Ok((!current.is_empty()).then_some(body))
     }
 }
 
