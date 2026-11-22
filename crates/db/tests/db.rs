@@ -977,6 +977,33 @@ async fn listing_changes_follow_committed_writes(db: &Db) {
     assert_eq!(db.delete_history(&[job.id]).await.expect("delete"), 0);
     assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
 
+    // Visibility follows the stored state, whatever state the writer read before.
+    let health = |state| HealthStatus {
+        state,
+        ..HealthStatus::default()
+    };
+    let shown = Some((file.path.clone(), Some(file.id)));
+    for (state, announced) in [
+        (HealthState::Suspect, false),
+        (HealthState::Hidden, true),
+        (HealthState::Hidden, false),
+        (HealthState::Suspect, true),
+    ] {
+        db.set_health(file.id, &health(state), Recheck::None)
+            .await
+            .expect("set health");
+        let sent = match listings.try_recv() {
+            Ok(ListingChange::Items(items)) => items.first().cloned(),
+            _ => None,
+        };
+        assert_eq!(
+            sent,
+            if announced { shown.clone() } else { None },
+            "{state:?}"
+        );
+    }
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+
     db.delete_item(dir.id).await.expect("delete");
     assert!(matches!(listings.try_recv(), Ok(ListingChange::Tree)));
     assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));

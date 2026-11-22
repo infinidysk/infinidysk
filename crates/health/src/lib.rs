@@ -374,34 +374,6 @@ impl Health {
         }
     }
 
-    /// Stores `next` for `item` and announces a listing change when it enters or leaves
-    /// [`HealthState::Hidden`], which listings filter.
-    async fn store_item_health(
-        &self,
-        item: &Item,
-        next: &HealthStatus,
-        handled: Recheck,
-    ) -> Result<(), infinidysk_db::Error> {
-        self.store_item_health_recheck(item, next, handled, Recheck::None)
-            .await
-    }
-
-    async fn store_item_health_recheck(
-        &self,
-        item: &Item,
-        next: &HealthStatus,
-        handled: Recheck,
-        pending: Recheck,
-    ) -> Result<(), infinidysk_db::Error> {
-        self.db
-            .set_health_recheck(item.id, next, handled, pending)
-            .await?;
-        if (item.health_state == HealthState::Hidden) != (next.state == HealthState::Hidden) {
-            self.db.items_changed(std::slice::from_ref(item));
-        }
-        Ok(())
-    }
-
     /// Does the most urgent due piece of health work; `false` when none is due or an
     /// import is running, which gets the connections first.
     pub async fn step(&self) -> Result<bool, Error> {
@@ -437,7 +409,8 @@ impl Health {
                         ..status
                     };
                     Ok(self
-                        .store_item_health(&item, &ignored, status.recheck)
+                        .db
+                        .set_health(item.id, &ignored, status.recheck)
                         .await?)
                 }
                 _ => self.check(&item, status, &settings, &mut writing).await,
@@ -575,8 +548,7 @@ impl Health {
         ) {
             status.state = HealthState::Suspect;
             status.suspect_since = Some(now_ms());
-            self.store_item_health(&item, &status, Recheck::None)
-                .await?;
+            self.db.set_health(id, &status, Recheck::None).await?;
         }
         if status.state == HealthState::Suspect {
             // A file suspect only for its container now has its first article miss.
@@ -586,8 +558,7 @@ impl Health {
                     .set_structural(id, probe.defect.as_ref(), false)
                     .await?;
                 status.suspect_since = Some(now_ms());
-                self.store_item_health(&item, &status, Recheck::None)
-                    .await?;
+                self.db.set_health(id, &status, Recheck::None).await?;
             }
             self.db.request_recheck(id, Recheck::Playback).await?;
             self.wake.notify_one();
@@ -766,7 +737,7 @@ impl Health {
                     .structural(item, status, &mut next, verdict, now)
                     .await?
                 {
-                    self.store_item_health(item, &next, status.recheck).await?;
+                    self.db.set_health(item.id, &next, status.recheck).await?;
                     return Ok(());
                 }
                 self.count(HEALTHY);
@@ -807,7 +778,8 @@ impl Health {
                 }
             }
         }
-        self.store_item_health_recheck(item, &next, status.recheck, pending)
+        self.db
+            .set_health_recheck(item.id, &next, status.recheck, pending)
             .await?;
         Ok(())
     }
@@ -900,7 +872,7 @@ impl Health {
                 next_check: Some(now + SUSPECT_RECHECK_MS),
                 ..status
             };
-            self.store_item_health(item, &next, status.recheck).await?;
+            self.db.set_health(item.id, &next, status.recheck).await?;
             return Ok(());
         }
         if self.db.item_remap_pending(item.id).await? {
@@ -990,7 +962,7 @@ impl Health {
                 next_check: Some(now + SEARCH_WAIT_MS),
                 ..status
             };
-            self.store_item_health(item, &next, status.recheck).await?;
+            self.db.set_health(item.id, &next, status.recheck).await?;
             return Ok(());
         }
         let job_id = job.map(|j| j.to_string());
@@ -1036,7 +1008,7 @@ impl Health {
                     hidden_until: Some(now + HIDDEN_WAIT_MS),
                     ..status
                 };
-                self.store_item_health(item, &next, status.recheck).await?;
+                self.db.set_health(item.id, &next, status.recheck).await?;
                 self.searching
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
@@ -1085,7 +1057,7 @@ impl Health {
                 .await?;
             next.next_check = Some(now + backoff);
         }
-        self.store_item_health(item, &next, status.recheck).await?;
+        self.db.set_health(item.id, &next, status.recheck).await?;
         Ok(())
     }
 
@@ -1099,7 +1071,7 @@ impl Health {
             hidden_until: None,
             ..status
         };
-        self.store_item_health(item, &next, status.recheck).await?;
+        self.db.set_health(item.id, &next, status.recheck).await?;
         self.searching
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -1174,7 +1146,7 @@ impl Health {
             _ => {}
         }
         // Rechecks wait until the file is visible again.
-        self.store_item_health(item, &next, Recheck::None).await?;
+        self.db.set_health(item.id, &next, Recheck::None).await?;
         Ok(())
     }
 
@@ -1237,7 +1209,7 @@ impl Health {
             hidden_until: Some(now + HIDDEN_WAIT_MS),
             ..status
         };
-        self.store_item_health(item, &next, Recheck::None).await?;
+        self.db.set_health(item.id, &next, Recheck::None).await?;
         Ok(true)
     }
 

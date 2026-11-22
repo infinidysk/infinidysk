@@ -2393,6 +2393,8 @@ impl Db {
         handled: Recheck,
         pending: Recheck,
     ) -> Result<(), Error> {
+        const STORED: &str = "SELECT path, health_state FROM items WHERE id = $1";
+        const STORED_LOCKED: &str = "SELECT path, health_state FROM items WHERE id = $1 FOR UPDATE";
         let sql = "UPDATE items SET health_state = $2, last_health_check = $3, \
                    next_health_check = $4, repair_attempts = $5, hidden_until = $6, \
                    recheck_requested = CASE WHEN recheck_requested = $7 THEN $9 \
@@ -2400,19 +2402,38 @@ impl Db {
         let suspect_since = status
             .suspect_since
             .filter(|_| status.state == HealthState::Suspect);
-        on!(self, pool => sqlx::query(sql)
-            .bind(id.0)
-            .bind(status.state as i16)
-            .bind(status.last_check)
-            .bind(status.next_check)
-            .bind(status.repair_attempts)
-            .bind(status.hidden_until)
-            .bind(handled as i16)
-            .bind(suspect_since)
-            .bind(pending as i16)
-            .execute(pool)
-            .await?
-            .rows_affected());
+        let stored = if matches!(self.pool, Pool::Postgres(_)) {
+            STORED_LOCKED
+        } else {
+            STORED
+        };
+        let before: Option<(String, i16)> = on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let before: Option<(String, i16)> = sqlx::query_as(stored)
+                .bind(id.0)
+                .fetch_optional(&mut *tx)
+                .await?;
+            sqlx::query(sql)
+                .bind(id.0)
+                .bind(status.state as i16)
+                .bind(status.last_check)
+                .bind(status.next_check)
+                .bind(status.repair_attempts)
+                .bind(status.hidden_until)
+                .bind(handled as i16)
+                .bind(suspect_since)
+                .bind(pending as i16)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            before
+        });
+        // Listings filter hidden files, so a change of visibility changes them.
+        if let Some((path, state)) = before
+            && (state == HealthState::Hidden as i16) != (status.state == HealthState::Hidden)
+        {
+            self.listing_changed(|| ListingChange::Items(vec![(path, Some(id))].into()));
+        }
         self.notify(Change::Health);
         Ok(())
     }
