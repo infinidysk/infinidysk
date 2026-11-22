@@ -72,20 +72,34 @@ async fn read_parity(
     // Next packet whose recovery rows have not been added to the rank.
     let mut counted = 0;
     for (file, name) in order {
-        if recovery.is_none() && volume_stem(&name).is_some_and(|stem| indexes.contains(stem)) {
-            continue;
-        }
-        let mut parity = name.contains(".par2");
+        // A filename stem is not proof of the volume's set. Probe its first article,
+        // and stop at a work limit because the named index already completed.
+        let mut probe =
+            recovery.is_none() && volume_stem(&name).is_some_and(|stem| indexes.contains(stem));
+        let mut parity = std::path::Path::new(&name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("par2"));
         let mut classified = false;
+        // Leading bytes while they are still a prefix of the packet magic.
+        let mut head = Vec::new();
+        let mut previous = None;
         // The set this file's packets belong to; another set's metadata must not
         // end its read or stand in for its index.
         let start = reader.buffered();
         for segment in &file.segments {
+            // A part missing from the NZB is a gap: packets must not span it.
+            if previous.is_some_and(|number: i64| segment.number != number.saturating_add(1)) {
+                reader.end_volume();
+                classified |= !head.is_empty();
+                head.clear();
+            }
+            previous = Some(segment.number);
             if classified && !parity {
                 break;
             }
             let body = match budget.body(client, &segment.id).await {
                 Ok(body) => body,
+                Err(Error::Limit(_)) if probe => return Ok(reader),
                 Err(Error::Source(
                     infinidysk_nntp::Error::NotFound
                     | infinidysk_nntp::Error::Yenc(_)
@@ -93,12 +107,36 @@ async fn read_parity(
                     | infinidysk_nntp::Error::CrcMismatch { .. },
                 )) => {
                     reader.end_volume();
+                    classified |= !head.is_empty();
+                    head.clear();
                     continue;
                 }
                 Err(error) => return Err(error),
             };
+            let data = body.data.as_ref();
+            if !parity && !classified {
+                // The magic may split across consecutive articles; `head` stays shorter than it.
+                let needed = MAGIC.len() - head.len();
+                let take = data.len().min(needed);
+                if !head
+                    .iter()
+                    .chain(&data[..take])
+                    .eq(&MAGIC[..head.len() + take])
+                {
+                    classified = true;
+                    continue;
+                }
+                if take < needed {
+                    head.extend_from_slice(data);
+                    continue;
+                }
+                parity = true;
+                if !reader.push_bounded(&head, reader_limit) {
+                    return Err(Error::Limit("PAR2 metadata"));
+                }
+                head.clear();
+            }
             classified = true;
-            parity |= body.data.starts_with(b"PAR2\0PKT");
             if parity {
                 // Vec capacity growth and scanner packet records have separate headroom.
                 budget.metadata(
@@ -109,6 +147,15 @@ async fn read_parity(
                 )?;
                 if !reader.push_bounded(&body.data, reader_limit) {
                     return Err(Error::Limit("PAR2 metadata"));
+                }
+                if std::mem::take(&mut probe)
+                    && data.starts_with(MAGIC)
+                    && let Some(set) = data.get(32..48).and_then(|set| Id::try_from(set).ok())
+                    && reader.repair_set(set).is_ok()
+                {
+                    // The volume's first packet names the complete set; its
+                    // remaining packets add nothing to discovery.
+                    break;
                 }
                 if let Some((set, size, rank)) = &mut recovery {
                     counted = reader.recovery_rank(*set, *size, counted, rank)?;
@@ -154,6 +201,7 @@ use layout::Slots;
 
 static RESOLUTION: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(1)));
 const PREFIX: usize = 16_384;
+const MAGIC: &[u8; 8] = b"PAR2\0PKT";
 
 #[derive(Clone, Default)]
 pub struct Context {

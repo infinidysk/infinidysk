@@ -357,7 +357,8 @@ async fn discovery_uses_the_index_before_downloading_recovery_volumes() {
     )
     .await
     .unwrap();
-    assert_eq!(server.body_commands(), 1);
+    // The index, then one probe article proving the volume belongs to the complete set.
+    assert_eq!(server.body_commands(), 2);
     assert!(
         reader
             .repair_set(reader.sets()[0])
@@ -382,10 +383,11 @@ async fn one_complete_index_does_not_skip_another_sets_volumes() {
         include_bytes!("../../par2/tests/fixtures/set.vol0+3.par2"),
         2000,
     );
+    // `odd` is read first, so the reader already holds a complete set when `set` is missing.
     let nzb = document(&[
         ("set.vol0+3.par2", &volume),
-        ("set.par2", &index),
         ("odd.par2", &odd),
+        ("set.par2", &index),
     ]);
     // The `set` index is gone; only its recovery volume survives.
     let server = LoopbackServer::start(odd.into_iter().chain(volume))
@@ -401,6 +403,77 @@ async fn one_complete_index_does_not_skip_another_sets_volumes() {
     .unwrap();
     let set = infinidysk_par2::read(INDEX).set_id.unwrap();
     assert!(reader.sets().contains(&set), "the volume was read");
+}
+
+#[tokio::test]
+async fn a_volume_named_after_a_complete_index_is_still_read_for_its_own_set() {
+    let index = post("index", "set.par2", INDEX, 7000);
+    let odd = include_bytes!("../../par2/tests/fixtures/odd.vol5+3.par2");
+    // Another set's only metadata, posted under the complete index's stem.
+    let volume = post("volume", "set.vol5+3.par2", odd, 7000);
+    let nzb = document(&[("set.par2", &index), ("set.vol5+3.par2", &volume)]);
+    let server = LoopbackServer::start(index.into_iter().chain(volume))
+        .await
+        .unwrap();
+    let (reader, _, _) = infinidysk_queue::repair::discover(
+        &client(&server),
+        &nzb,
+        limits(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let other = infinidysk_par2::read(odd).set_id.unwrap();
+    assert!(reader.sets().contains(&other), "the volume was probed");
+}
+
+#[tokio::test]
+async fn par2_magic_split_across_the_first_two_articles_is_recognized() {
+    let mut articles = post("split-head", "obfuscated", &INDEX[..4], 4);
+    articles.extend(post("split-tail", "obfuscated", &INDEX[4..], INDEX.len()));
+    let nzb = document(&[("obfuscated", &articles)]);
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let (reader, _, _) = infinidysk_queue::repair::discover(
+        &client(&server),
+        &nzb,
+        limits(),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("the split magic is still a PAR2 posting");
+    assert_eq!(
+        reader.sets(),
+        vec![infinidysk_par2::read(INDEX).set_id.unwrap()]
+    );
+}
+
+#[tokio::test]
+async fn a_part_omitted_from_the_nzb_ends_the_current_packet() {
+    let first = usize::try_from(u64::from_le_bytes(INDEX[8..16].try_into().unwrap())).unwrap();
+    let half = first / 2;
+    let head = post("gap-head", "set.par2", &INDEX[..half], half);
+    let tail = post("gap-tail", "set.par2", &INDEX[first..], INDEX.len());
+    // Part 2, the rest of the first packet, is not listed.
+    let xml = format!(
+        "<nzb><file subject=\"set.par2\"><segments>\
+         <segment bytes=\"1\" number=\"1\">{}</segment>\
+         <segment bytes=\"1\" number=\"3\">{}</segment>\
+         </segments></file></nzb>",
+        head[0].message_id, tail[0].message_id
+    );
+    let nzb = nzb::parse(xml.as_bytes()).unwrap();
+    let server = LoopbackServer::start(head.into_iter().chain(tail))
+        .await
+        .unwrap();
+    let (reader, _, _) = infinidysk_queue::repair::discover(
+        &client(&server),
+        &nzb,
+        limits(),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("packets after the gap are scanned");
+    assert_eq!(reader.index().set_id, infinidysk_par2::read(INDEX).set_id);
 }
 
 #[tokio::test]
