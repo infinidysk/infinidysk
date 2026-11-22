@@ -173,6 +173,7 @@ pub fn refresh_metadata(
                 0,
                 end,
                 sources,
+                true,
             )]
         }
         FileMeta::Multipart(file) => file
@@ -186,6 +187,7 @@ pub fn refresh_metadata(
                     part.offset,
                     end,
                     sources,
+                    false,
                 )
             })
             .collect(),
@@ -202,17 +204,22 @@ pub fn refresh_metadata(
 }
 
 /// Takes the sizes of the one source that posted `segments` at `offset`, if they still
-/// reach `end`.
+/// reach `end`. A `whole` file must be the entire source; a multipart part may be a
+/// window of the volume its proof describes.
 fn refresh(
     segments: &mut Segments,
     proof: &mut Option<Par2Proof>,
     offset: u64,
     end: u64,
     sources: &[VerifiedSource],
+    whole: bool,
 ) -> bool {
     let matches = sources
         .iter()
         .filter_map(|source| {
+            if whole && source.segments.items.len() != segments.items.len() {
+                return None;
+            }
             let mut at = 0;
             let start = source.segments.items.iter().position(|segment| {
                 let found = at == offset;
