@@ -1619,10 +1619,13 @@ fn failed_attempts_retry_after_the_cooldown_then_stop() {
         .finish(1, now)
         .unwrap();
     assert_eq!((unavailable.state, unavailable.outcome), (5, 0));
-    for outcome in [Outcome::Yielded, Outcome::Interrupted] {
+    for outcome in [Outcome::Yielded, Outcome::Interrupted, Outcome::Restarted] {
         let resumed = outcome.finish(1, now).unwrap();
         assert_eq!((resumed.state, resumed.retry), (4, Some(now)));
-        assert!(resumed.yielded, "playback and shutdown do not use a retry");
+        assert!(
+            resumed.yielded,
+            "playback, shutdown and other repairs do not use a retry"
+        );
     }
     assert!(Outcome::Escalated.finish(1, now).is_none());
 }

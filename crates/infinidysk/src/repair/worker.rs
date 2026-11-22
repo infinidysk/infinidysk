@@ -66,6 +66,9 @@ pub(super) enum Outcome {
     Yielded,
     /// Shutdown stopped the attempt; it resumes at once and does not count.
     Interrupted,
+    /// Another repair changed stored articles during a check of an unchanged file.
+    /// The check runs again at once and does not count.
+    Restarted,
     Cancelled,
     Unavailable(String),
     /// Provider, storage or time-limit failure, retried after the cooldown.
@@ -84,7 +87,7 @@ pub(super) struct Finish {
 
 impl Outcome {
     pub(super) fn finish(self, attempts: i32, now: i64) -> Option<Finish> {
-        let yielded = matches!(self, Self::Yielded | Self::Interrupted);
+        let yielded = matches!(self, Self::Yielded | Self::Interrupted | Self::Restarted);
         let hashes = |hash_only| if hash_only { HASH_ONLY } else { "" }.to_owned();
         let (state, reason, retry, outcome) = match self {
             Self::Escalated => return None,
@@ -104,6 +107,12 @@ impl Outcome {
                 0,
             ),
             Self::Interrupted => (4, "interrupted; retrying".to_owned(), Some(now), 0),
+            Self::Restarted => (
+                4,
+                "Another repair changed saved articles; checking again.".to_owned(),
+                Some(now),
+                0,
+            ),
             Self::Cancelled => (6, "cancelled".to_owned(), None, 0),
             Self::Unavailable(reason) => (5, reason, None, 0),
             Self::Failed(reason) if attempts < ATTEMPTS => (4, reason, Some(now + COOLDOWN_MS), 0),
@@ -398,10 +407,7 @@ impl Repairs {
         let id = infinidysk_core::ItemId(job.item_id.context(unavailable("file is missing"))?);
         let owner = infinidysk_db::repair::Owner::Item(id);
         anyhow::ensure!(
-            self.db
-                .par2_result(owner, true)
-                .await?
-                .is_some_and(|current| current.id == job.id),
+            self.claimed(owner, job).await?,
             unavailable("availability source changed")
         );
         progress.phase("Checking article availability");
@@ -418,11 +424,27 @@ impl Repairs {
                 },
             )
             .await?;
+        // The scan validates against its own snapshot. Generations only grow, so a claim
+        // that still matches now also matched what the scan read.
+        let current = match result {
+            Availability::Available { .. }
+            | Availability::Damaged { .. }
+            | Availability::Changed => self.claimed(owner, job).await?,
+            _ => true,
+        };
         match result {
+            Availability::Available { .. } | Availability::Damaged { .. } if !current => {
+                Err(unavailable("availability source changed").into())
+            }
             Availability::Available { .. } => Ok(Outcome::Available),
             Availability::Damaged { .. } if job.repair_on_failure && job.nzb_blob.is_some() => {
                 progress.phase("Queuing repair");
                 progress.save(&self.db, job).await;
+                // A deadline or cancel during the save wins; once admitted, the handoff runs.
+                anyhow::ensure!(
+                    !cancel.is_cancelled(),
+                    "repair stopped before repair handoff"
+                );
                 anyhow::ensure!(
                     self.db.escalate_par2(job.claim(), now_ms()).await?,
                     unavailable("source changed before repair handoff")
@@ -432,10 +454,21 @@ impl Repairs {
             Availability::Damaged { .. } => Ok(Outcome::Damaged),
             Availability::Source(error) => Err(anyhow::Error::new(error)),
             Availability::Unavailable(reason) => Err(unavailable(reason.to_string()).into()),
+            // Repair epochs are global; only a change to this file's source ends the check.
+            Availability::Changed if current => Ok(Outcome::Restarted),
             Availability::Changed => Err(unavailable("availability source changed").into()),
             Availability::Cancelled => anyhow::bail!("repair cancelled"),
             Availability::Yielded => Ok(Outcome::Yielded),
         }
+    }
+
+    /// Whether `job` is still the current check for the item's metadata and NZB.
+    async fn claimed(&self, owner: infinidysk_db::repair::Owner, job: &Job) -> Result<bool> {
+        Ok(self
+            .db
+            .par2_result(owner, true)
+            .await?
+            .is_some_and(|current| current.id == job.id))
     }
 
     pub(super) async fn perform(
