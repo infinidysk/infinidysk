@@ -308,6 +308,22 @@ impl Db {
             Ok(())
         })
     }
+    /// Queues a verified or repaired job again only while it still holds the result
+    /// `claim` observed; `false` when the job moved on since.
+    pub async fn retry_par2(&self, claim: Claim, now: i64) -> Result<bool, Error> {
+        let _serial = self.searches.lock().await;
+        on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repair_jobs WHERE state IN (0, 1, 4)")
+                .fetch_one(&mut *tx).await?;
+            if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
+            let retried = sqlx::query("UPDATE repair_jobs SET state = 0, claim_generation = claim_generation + 1, attempts = 0, reason = '', next_at = $2, updated_at = $2, verified_bytes = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, started_at = NULL, scan_at = NULL, repair_on_failure = FALSE, checked_articles = 0, total_articles = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1 AND claim_generation = $3 AND state IN (2, 3)")
+                .bind(claim.id).bind(now).bind(claim.generation).execute(&mut *tx).await?.rows_affected() == 1;
+            tx.commit().await?;
+            Ok(retried)
+        })
+    }
+
     /// Recheck availability through committed repairs and retry parked imports.
     pub async fn wake_par2(&self, nzb: BlobId, now: i64) -> Result<(), Error> {
         on!(self, pool => {

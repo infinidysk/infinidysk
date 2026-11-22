@@ -754,7 +754,7 @@ impl Health {
                     let owner = infinidysk_db::repair::Owner::Item(item.id);
                     let requested = match self.db.par2_result(owner, false).await? {
                         Some(job) if matches!(job.state, 2 | 3) && job.updated_at < started => {
-                            self.db.restart_par2(job.id, now).await
+                            self.db.retry_par2(job.claim(), now).await.map(drop)
                         }
                         Some(_) => Ok(()),
                         None => self.db.request_par2(owner, false, now).await.map(drop),
@@ -905,8 +905,8 @@ impl Health {
                 }
                 // A loss confirmed after a success is new damage; failures and cancels stand.
                 Some(job) if matches!(job.state, 2 | 3) => {
-                    match self.db.restart_par2(job.id, now).await {
-                        Ok(()) | Err(infinidysk_db::Error::RepairQueueFull) => true,
+                    match self.db.retry_par2(job.claim(), now).await {
+                        Ok(_) | Err(infinidysk_db::Error::RepairQueueFull) => true,
                         Err(error) => return Err(error.into()),
                     }
                 }
