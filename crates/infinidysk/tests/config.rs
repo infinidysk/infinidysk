@@ -307,6 +307,61 @@ async fn rclone_rc_env_url_never_carries_a_password_to_another_server() {
 }
 
 #[tokio::test]
+async fn rclone_rc_env_overrides_never_rebind_what_is_saved() {
+    let path =
+        std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let env = |key: &str, value: &str| (format!("INFINIDYSK__RCLONE_RC__{key}"), value.to_owned());
+    let saved = RcloneRc {
+        enabled: true,
+        url: "http://127.0.0.1:5572/rc/".into(),
+        fs: String::new(),
+        user: "rc".into(),
+        password: Secret("rc-secret".into()),
+    };
+    let mut store = ConfigStore::load(db.clone(), []).await.expect("load");
+    let mut settings = store.settings().clone();
+    settings.rclone_rc = saved.clone();
+    store.save(settings).await.expect("save");
+
+    // Env blanks the credentials; a new URL would leave the saved password beside it.
+    let mut store = ConfigStore::load(db.clone(), [env("USER", ""), env("PASSWORD", "")])
+        .await
+        .expect("blanked credentials");
+    let mut moved = store.settings().masked();
+    assert_eq!(moved.rclone_rc.password, Secret::default());
+    moved.rclone_rc.url = "https://rc.example/rc/".into();
+    let error = store
+        .save(moved)
+        .await
+        .expect_err("saved password, new URL");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    assert!(!error.to_string().contains("rc-secret"));
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(reloaded.settings().rclone_rc, saved);
+
+    // An unrelated save under a passwordless env URL stores nothing of it.
+    db.write_config(&[], &["rclone_rc"]).await.expect("reset");
+    let env_on = [env("ENABLED", "true"), env("URL", "https://rc.example/rc/")];
+    let mut store = ConfigStore::load(db.clone(), env_on.clone())
+        .await
+        .expect("env URL");
+    let mut other = store.settings().masked();
+    other.sab.manual_category = "manual".into();
+    store.save(other).await.expect("unrelated save");
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(reloaded.settings().rclone_rc, RcloneRc::default());
+    assert_eq!(reloaded.settings().sab.manual_category, "manual");
+
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
 async fn import_sample_percent_defaults_independently_and_rejects_invalid_values() {
     let path =
         std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));

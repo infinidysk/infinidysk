@@ -1213,6 +1213,13 @@ export function Settings() {
                         locked={locked("rclone_rc.password")}
                         noAutofill
                         error={invalid("rclone_rc.password")}
+                        action={
+                          draft.rclone_rc.password === MASK && (
+                            <Button type="button" variant="outline" onClick={() => patch("rclone_rc", { password: "" })}>
+                              Clear saved password
+                            </Button>
+                          )
+                        }
                         onChange={(password) => patch("rclone_rc", { password })}
                       />
                     </>

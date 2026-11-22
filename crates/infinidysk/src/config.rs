@@ -1785,11 +1785,47 @@ impl ConfigStore {
         env_sets(&self.env, path)
     }
 
+    /// The RC password about to be stored stays with the server it was stored for, also
+    /// when environment variables hide either of them.
+    fn check_stored_rc(&self, tree: &Value, password_entered: bool) -> Result<(), Error> {
+        let stored = Value::Object(self.stored.clone());
+        let text = |tree: &Value, path: [&str; 2]| {
+            let path = path.map(str::to_owned);
+            lookup(tree, &path)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let password = text(tree, RC_PASSWORD);
+        let replaced = password_entered && !self.env_sets(RC_PASSWORD);
+        if password.is_empty()
+            || replaced
+            || password != text(&stored, RC_PASSWORD)
+            || RcloneRc::origin(&text(tree, RC_URL)) == RcloneRc::origin(&text(&stored, RC_URL))
+        {
+            return Ok(());
+        }
+        Err(if self.env_sets(RC_PASSWORD) {
+            invalid(
+                "rclone_rc.url",
+                "INFINIDYSK__RCLONE_RC__PASSWORD hides a saved RC password that belongs to \
+                 the saved RC URL. Keep that URL, or remove the variable and clear the \
+                 saved password first"
+                    .to_owned(),
+            )
+        } else {
+            invalid(
+                "rclone_rc.password",
+                "The RC URL points somewhere new: enter its password, or clear it".to_owned(),
+            )
+        })
+    }
+
     /// Validates and persists `new`. [`MASK`] secrets keep their current value.
     pub async fn save(&mut self, mut new: Settings) -> Result<(), Error> {
         let (rc, current_rc) = (&new.rclone_rc, &self.settings.rclone_rc);
-        let rc_password_entered = rc.password.0 != MASK;
-        if !rc_password_entered
+        let rc_password_entered = rc.password.0 != MASK && !rc.password.0.is_empty();
+        if rc.password.0 == MASK
             && !current_rc.password.0.is_empty()
             && !rc.url.trim().is_empty()
             && RcloneRc::origin(&rc.url) != RcloneRc::origin(&current_rc.url)
@@ -1829,6 +1865,7 @@ impl ConfigStore {
             let path = RC_URL.map(str::to_owned);
             set(&mut tree, &path, Value::String(new.rclone_rc.url.clone()));
         }
+        self.check_stored_rc(&tree, rc_password_entered)?;
 
         let defaults = serde_json::to_value(Settings::default())?;
         let mut next = Map::new();
