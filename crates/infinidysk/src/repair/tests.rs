@@ -1637,6 +1637,14 @@ async fn unrelated_articles_skip_reader_admission_once_the_catalog_is_known() {
     let client = Client::new([]);
     let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
     assert!(!repairs.stored("unrelated@loopback").await.unwrap());
+    // The catalog set is rebuilt in the background, off the read path.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while repairs.cached("repair@loopback").is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the catalog set is rebuilt");
     assert_eq!(repairs.cached("repair@loopback"), Some(true));
     let busy = Arc::clone(&repairs.readers)
         .acquire_many_owned(u32::try_from(READERS).unwrap())

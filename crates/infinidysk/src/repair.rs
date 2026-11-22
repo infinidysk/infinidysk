@@ -27,7 +27,7 @@ pub struct Repairs {
     readers: Arc<Semaphore>,
     lifecycle: Arc<tokio::sync::Mutex<()>>,
     known: Mutex<Known>,
-    refresh: tokio::sync::Mutex<()>,
+    refresh: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Install once per client; publishers must retain this same service/store owner.
@@ -39,7 +39,7 @@ pub fn install(client: &Client, db: Db, path: PathBuf) -> Arc<Repairs> {
         readers: Arc::new(Semaphore::new(READERS)),
         lifecycle: Arc::new(tokio::sync::Mutex::new(())),
         known: Mutex::new(None),
-        refresh: tokio::sync::Mutex::new(()),
+        refresh: Arc::new(tokio::sync::Mutex::new(())),
     });
     client.set_repairs(Box::new({
         let repairs = Arc::clone(&repairs);
@@ -100,27 +100,43 @@ impl Repairs {
         (epoch == self.db.repair_epoch()).then(|| ids.contains(id))
     }
 
-    /// A missing article must not wait for a reader permit or a catalog query.
-    async fn stored(&self, id: &str) -> Result<bool, Error> {
+    /// A missing article must not wait for a reader permit or a full catalog read.
+    async fn stored(self: &Arc<Self>, id: &str) -> Result<bool, Error> {
         if let Some(stored) = self.cached(id) {
             return Ok(stored);
         }
-        let _refresh = self.refresh.lock().await;
-        if let Some(stored) = self.cached(id) {
-            return Ok(stored);
+        // One background task rebuilds the set; this read asks for its own ID only.
+        if let Ok(refresh) = Arc::clone(&self.refresh).try_lock_owned() {
+            let repairs = Arc::clone(self);
+            tokio::spawn(async move {
+                let _refresh = refresh;
+                repairs.refresh_known().await;
+            });
         }
+        Ok(!self.candidates(RepairKey::Article(id)).await?.is_empty())
+    }
+
+    async fn refresh_known(&self) {
         // Read the epoch first: a later publication or eviction makes this set stale.
         let epoch = self.db.repair_epoch();
-        let ids: HashSet<String> = self
-            .db
-            .repair_message_ids()
-            .await
-            .map_err(|_| Error::Repair("repair catalog cannot be read"))?
-            .into_iter()
-            .collect();
-        let stored = ids.contains(id);
-        *self.known.lock().unwrap_or_else(PoisonError::into_inner) = Some((epoch, Arc::new(ids)));
-        Ok(stored)
+        let current = self
+            .known
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|(known, _)| *known == epoch);
+        if current {
+            return;
+        }
+        match self.db.repair_message_ids().await {
+            Ok(ids) => {
+                let ids: HashSet<String> = ids.into_iter().collect();
+                *self.known.lock().unwrap_or_else(PoisonError::into_inner) =
+                    Some((epoch, Arc::new(ids)));
+            }
+            // Reads keep asking per ID until a later refresh succeeds.
+            Err(error) => tracing::debug!(reason = %error, "repair catalog could not be cached"),
+        }
     }
 
     async fn candidates(&self, key: RepairKey<'_>) -> Result<Vec<Patch>, Error> {
