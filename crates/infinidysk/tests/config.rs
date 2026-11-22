@@ -342,6 +342,21 @@ async fn rclone_rc_env_overrides_never_rebind_what_is_saved() {
     let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
     assert_eq!(reloaded.settings().rclone_rc, saved);
 
+    // Entering the env password does not bind the hidden saved one to a new URL.
+    let mut store = ConfigStore::load(db.clone(), [env("PASSWORD", "rc-env-secret")])
+        .await
+        .expect("env password");
+    let mut moved = store.settings().masked();
+    moved.rclone_rc.url = "https://rc.example/rc/".into();
+    moved.rclone_rc.password = Secret("rc-env-secret".into());
+    let error = store
+        .save(moved)
+        .await
+        .expect_err("hidden saved password, new URL");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(reloaded.settings().rclone_rc, saved);
+
     // An unrelated save under a passwordless env URL stores nothing of it.
     db.write_config(&[], &["rclone_rc"]).await.expect("reset");
     let env_on = [env("ENABLED", "true"), env("URL", "https://rc.example/rc/")];
