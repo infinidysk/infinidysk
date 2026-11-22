@@ -182,9 +182,10 @@ async fn availability_checks_all_articles_without_a_proof_or_a_full_download() {
 #[tokio::test]
 async fn availability_reads_the_body_of_a_recorded_corrupt_article() {
     let (data, _) = content();
-    let server = LoopbackServer::start(post("verify", "a.bin", &data, ARTICLE))
-        .await
-        .unwrap();
+    let articles = post("verify", "a.bin", &data, ARTICLE);
+    let corrupt = articles[2].message_id.clone();
+    let server = LoopbackServer::start(articles).await.unwrap();
+    let (arrived, release) = server.hold_article(&corrupt);
     let (_scratch, db, item, health) = stored(&server, &data, None).await;
     let blob_id = item.meta_blob.expect("stored item has metadata");
     let raw = db.blob(blob_id).await.unwrap().expect("metadata is stored");
@@ -195,23 +196,26 @@ async fn availability_reads_the_body_of_a_recorded_corrupt_article() {
     db.update_blob(blob_id, &blob::encode_meta(&FileMeta::Nzb(file)).unwrap())
         .await
         .unwrap();
-    let result = health
-        .check_availability(
-            item.id,
-            &CancellationToken::new(),
-            AvailabilityOptions::default(),
-        )
+    let running = tokio::spawn(async move {
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default(),
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), arrived)
         .await
+        .expect("STAT cannot clear a corrupt article: index 2 needs a BODY")
         .unwrap();
+    let _ = release.send(());
+    let result = running.await.unwrap().unwrap();
     assert!(
         matches!(result, Availability::Available { .. }),
         "{result:?}"
     );
-    assert_eq!(
-        server.body_commands(),
-        4,
-        "STAT cannot clear a corrupt article"
-    );
+    assert_eq!(server.body_commands(), 4);
 }
 
 #[tokio::test]
@@ -889,23 +893,32 @@ async fn missing_articles_cannot_verify_even_when_expected_content_is_zero() {
     let data = vec![0; 4096];
     proof.file_length = data.len() as u64;
     proof.file_md5 = infinidysk_par2::hash_16k(&data);
+    proof.md5_16k = infinidysk_par2::hash_16k(&data);
     proof.slice_md5.clear();
     proof.slice_crc32.clear();
     proof.slice_size = 0;
     let server = LoopbackServer::start([]).await.unwrap();
     let (_scratch, db, item, health) = stored(&server, &data, Some(proof)).await;
     let before = db.health(item.id).await.unwrap();
-    assert!(matches!(
-        health
-            .check_availability(
-                item.id,
-                &CancellationToken::new(),
-                AvailabilityOptions::default()
-            )
-            .await
-            .unwrap(),
-        Availability::Damaged { .. }
-    ));
+    let result = health
+        .check_availability(
+            item.id,
+            &CancellationToken::new(),
+            AvailabilityOptions::default(),
+        )
+        .await
+        .unwrap();
+    // Zeros that match both hashes still cannot stand in for the missing article.
+    assert!(
+        matches!(
+            result,
+            Availability::Damaged {
+                missing: 1,
+                corrupt: 0
+            }
+        ),
+        "{result:?}"
+    );
     assert!(server.body_commands() > 0);
     assert_eq!(db.health(item.id).await.unwrap(), before);
 }

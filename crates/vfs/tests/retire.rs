@@ -20,7 +20,10 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
     let before = vec![17; 8192];
-    let after = vec![29; 8192];
+    // Non-repeating over the asserted ranges, so a wrong cursor reads different bytes.
+    let after: Vec<u8> = (0..8192_u16)
+        .map(|i| u8::try_from(i % 251).unwrap())
+        .collect();
     let body = Arc::new(RwLock::new(("article@test".to_owned(), before.clone())));
     let client = Client::new([]);
     client.set_repairs(Box::new({

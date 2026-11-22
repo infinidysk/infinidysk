@@ -151,6 +151,14 @@ async fn a_check_discards_observations_when_repairs_change_during_provider_reads
             "an old observation must not become a current check"
         );
         assert_eq!(result.state, HealthState::Unchecked);
+        // A discarded result stays due; the error path would postpone it.
+        assert!(
+            result
+                .next_check
+                .is_none_or(|due| due <= infinidysk_db::now_ms()),
+            "{:?}",
+            result.next_check
+        );
         assert_eq!(
             blob::decode_meta(&db.blob(meta_id).await.unwrap().unwrap()).unwrap(),
             metadata
