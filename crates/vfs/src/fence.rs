@@ -118,14 +118,14 @@ impl Fences {
             if Arc::strong_count(&inner) == 2 && cached_gap(inner.item) {
                 continue;
             }
-            nzbs.extend(
-                inner
-                    .scopes
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .iter()
-                    .filter_map(|scope| scope.nzb),
-            );
+            let scopes = inner.scopes.lock().unwrap_or_else(PoisonError::into_inner);
+            nzbs.extend(scopes.iter().filter_map(|scope| scope.nzb));
+            // A reader may still fetch any article of its layout, so a named repair of
+            // one it has not read yet stays too.
+            for scope in scopes.iter() {
+                scope.layout_ids(&mut articles);
+            }
+            drop(scopes);
             articles.extend(
                 inner
                     .accessed
@@ -576,6 +576,32 @@ impl Drop for Inner {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    fn one_segment(id: &str) -> Arc<FileMeta> {
+        use infinidysk_core::{NzbFile, Segment, Segments};
+        Arc::new(FileMeta::Nzb(NzbFile {
+            segments: Segments {
+                items: vec![Segment {
+                    id: id.into(),
+                    size: 1,
+                    fallbacks: vec![],
+                }],
+                ..Segments::default()
+            },
+            proof: None,
+        }))
+    }
+
+    #[tokio::test]
+    async fn active_readers_pin_their_layout_before_reading_it() {
+        let registry = Fences::default();
+        let meta = one_segment("later@test");
+        let fence = registry.get(ItemId::new());
+        let admitted = registry.admit(registry.stamp(), fence.item(), Scope::new(None, &meta));
+        assert!(matches!(admitted, Admission::Ready(_)));
+        let (_, articles) = registry.repair_pins(|_| false);
+        assert!(articles.contains("later@test"));
+    }
 
     #[tokio::test]
     async fn reconciliation_selects_an_unread_alias_after_its_metadata_expires() {

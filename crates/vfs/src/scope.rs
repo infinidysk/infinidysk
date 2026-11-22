@@ -21,6 +21,30 @@ impl Scope {
             meta: Arc::downgrade(meta),
         }
     }
+
+    /// Adds the article IDs of the layout this scope still holds.
+    pub(crate) fn layout_ids(&self, ids: &mut BTreeSet<String>) {
+        let Some(meta) = self.meta.upgrade() else {
+            return;
+        };
+        let mut add = |segments: &infinidysk_core::Segments| {
+            ids.extend(
+                segments
+                    .items
+                    .iter()
+                    .filter(|segment| !segment.id.is_empty())
+                    .map(|segment| segment.id.clone()),
+            );
+        };
+        match meta.as_ref() {
+            FileMeta::Nzb(file) => add(&file.segments),
+            FileMeta::Multipart(file) => {
+                for part in &file.parts {
+                    add(&part.segments);
+                }
+            }
+        }
+    }
 }
 
 impl Effects {
