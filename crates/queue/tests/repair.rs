@@ -1264,6 +1264,39 @@ async fn distinct_postings_of_the_same_content_are_ambiguous() {
 }
 
 #[tokio::test]
+async fn a_fully_verified_posting_wins_over_a_prefix_only_match() {
+    let mut altered = data(100_000);
+    altered[90_000] ^= 0xff;
+    for real_first in [false, true] {
+        let a = post("a", "obfuscated", &data(100_000), 7000);
+        let fake = post("fake", "obfuscated", &altered, 7000);
+        let b = post("b", "obfuscated", &data(8192), 3000);
+        let files: [(&str, &[Article]); 3] = if real_first {
+            [("one", &a), ("fake", &fake), ("other", &b)]
+        } else {
+            [("fake", &fake), ("one", &a), ("other", &b)]
+        };
+        let nzb = document(&files);
+        let server = LoopbackServer::start(a.iter().chain(&fake).chain(&b).cloned())
+            .await
+            .unwrap();
+        let reader = metadata();
+        let set = reader
+            .repair_set(infinidysk_par2::read(INDEX).set_id.unwrap())
+            .unwrap();
+        let resolved = resolve(
+            &client(&server),
+            &nzb,
+            &set,
+            limits(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(resolved.is_ok(), "real first: {real_first}");
+    }
+}
+
+#[tokio::test]
 async fn source_resolution_honors_all_work_limits() {
     let a = post("a", "obfuscated", &data(100_000), 7000);
     let b = post("b", "obfuscated", &data(8192), 3000);

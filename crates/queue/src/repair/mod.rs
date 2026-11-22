@@ -755,10 +755,16 @@ async fn run(
                         .checked_mul(size_of::<Article>())
                         .ok_or(Error::Limit("metadata"))?,
                 )?;
-                if resolved[source].is_some() {
-                    return Err(Error::Ambiguous(
-                        "multiple posted files match one protected source",
-                    ));
+                // A posting that passed the whole-file hash wins over one that matched
+                // only by prefix; two of the same standing stay ambiguous.
+                match &resolved[source] {
+                    Some(previous) if previous.verified && !verified => continue,
+                    Some(previous) if previous.verified || !verified => {
+                        return Err(Error::Ambiguous(
+                            "multiple posted files match one protected source",
+                        ));
+                    }
+                    _ => {}
                 }
                 resolved[source] = Some(Layout {
                     source,
