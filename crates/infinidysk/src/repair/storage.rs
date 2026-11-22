@@ -21,7 +21,7 @@ impl Repairs {
         self.db
             .backup_into(path, move || stopped.is_cancelled())
             .await?;
-        let snapshot = Db::connect(&format!("sqlite:{}", path.display())).await?;
+        let snapshot = Db::connect(&crate::app::sqlite_url(path)).await?;
         let result = async {
             let mut after = None;
             loop {

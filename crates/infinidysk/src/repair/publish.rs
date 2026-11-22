@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
+use infinidysk_core::repair::Patch;
 use infinidysk_db::repair::{MAX_PATCHES, Source};
 use infinidysk_nntp::patch::Durable;
 use infinidysk_vfs::{Vfs, WriteLease};
@@ -47,16 +48,22 @@ impl Publisher {
         self
     }
 
+    /// Publish one job's repaired articles and refreshed metadata under one fence.
     /// Caller verifies complete protected sources with PAR2 before issuing receipts.
     /// Once accepted, cancellation of this caller does not cancel COMMIT/finalization.
-    pub async fn publish(&self, source: Source, receipts: Vec<Durable>) -> Result<bool> {
+    pub async fn publish(
+        &self,
+        source: Source,
+        receipts: Vec<Durable>,
+        metadata: Option<Vec<u8>>,
+    ) -> Result<bool> {
         anyhow::ensure!(
-            !receipts.is_empty() && receipts.len() <= MAX_PATCHES,
+            receipts.len() <= MAX_PATCHES && (!receipts.is_empty() || metadata.is_some()),
             "invalid repair batch size"
         );
         let publisher = self.clone();
         tokio::spawn(async move {
-            let result = publisher.complete(source, receipts, None).await;
+            let result = publisher.complete(source, receipts, metadata).await;
             if let Err(error) = &result {
                 tracing::warn!(reason = %error, "repair publication did not finish");
             }
@@ -64,14 +71,6 @@ impl Publisher {
         })
         .await
         .context("repair publication task stopped unexpectedly")?
-    }
-
-    /// Proof/layout upgrades retire old delivery buffers even when article bytes agree.
-    pub async fn metadata(&self, source: Source, data: Vec<u8>) -> Result<bool> {
-        let publisher = self.clone();
-        tokio::spawn(async move { publisher.complete(source, Vec::new(), Some(data)).await })
-            .await
-            .context("repair metadata publication stopped unexpectedly")?
     }
 
     #[allow(clippy::significant_drop_tightening)] // Native plans span COMMIT and are consumed by finalization.
@@ -84,7 +83,7 @@ impl Publisher {
         let _lifecycle = self.repairs.lifecycle.lock().await;
         let repairs = Arc::clone(&self.repairs);
         let permit = Arc::clone(&repairs.readers).acquire_owned().await?;
-        let (patches, _receipts) = tokio::task::spawn_blocking(move || {
+        let (patches, receipts) = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let store = repairs.store(u64::MAX)?;
             let mut patches = Vec::with_capacity(receipts.len());
@@ -102,68 +101,69 @@ impl Publisher {
         let publication = self.vfs.begin_publication(source.nzb(), &patches)?;
         let mut writers = publication.writers().await;
         #[cfg(target_os = "linux")]
-        let mut native = if let Some(mount) = &self.mount {
-            Some(mount.prepare(&mut writers)?)
-        } else {
-            for writer in &mut writers {
-                writer.block();
+        if let Some(mount) = &self.mount {
+            let mut native = mount.prepare(&mut writers)?;
+            if let Err(error) = native.block().await {
+                native.abort();
+                return Err(error).context("repair publication could not close delivery");
             }
-            None
-        };
-        #[cfg(target_os = "linux")]
-        if let Some(native) = &mut native {
-            native.block();
-        }
-        #[cfg(not(target_os = "linux"))]
-        for writer in &mut writers {
-            writer.block();
-        }
-
-        let committed = if let Some(metadata) = metadata {
-            self.repairs
-                .db
-                .publish_repair_metadata(&source, &metadata)
-                .await
-        } else {
-            self.repairs.db.publish_patches(&source, &patches).await
-        };
-        // An uncertain COMMIT may be visible. Reconcile delivery even on SQL errors.
-        #[cfg(target_os = "linux")]
-        match native {
-            Some(native) => {
-                let mut result = native.apply().await;
-                let mut warned = false;
-                while let Err(error) = result {
-                    if !warned {
-                        tracing::warn!(reason = %error, "repair publication is waiting for FUSE invalidation");
-                        warned = true;
-                    }
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    let mount = self.mount.as_ref().expect("native plan requires a mount");
-                    result = match mount.prepare(&mut writers) {
-                        Ok(plan) => plan.apply().await,
-                        Err(error) => Err(error),
-                    };
+            let committed = self
+                .commit(receipts, &source, &patches, metadata.as_deref())
+                .await;
+            // Writes resume once SQL settles; delivery stays fenced until invalidation.
+            drop(paused);
+            // An uncertain COMMIT may be visible. Reconcile delivery even on SQL errors.
+            let mut result = native.apply().await;
+            let mut warned = false;
+            while let Err(error) = result {
+                if !warned {
+                    tracing::warn!(reason = %error, "repair publication is waiting for FUSE invalidation");
+                    warned = true;
                 }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                result = match mount.prepare(&mut writers) {
+                    Ok(plan) => plan.apply().await,
+                    Err(error) => Err(error),
+                };
             }
-            None => acknowledge(&mut writers)?,
+            // Wake affected new opens only after every old delivery has retired.
+            drop(writers);
+            drop(publication);
+            return committed;
         }
-        #[cfg(not(target_os = "linux"))]
-        acknowledge(&mut writers)?;
-        // Wake affected new opens only after every old delivery has retired.
+        let armed = WriteLease::arm(&mut writers);
+        let committed = self
+            .commit(receipts, &source, &patches, metadata.as_deref())
+            .await;
+        drop(paused);
+        armed.retire()?.acknowledge_after(async { Ok(()) }).await?;
         drop(writers);
         drop(publication);
-        drop(paused);
-        committed.context("repair references could not be published")
+        committed
     }
-}
 
-fn acknowledge(writers: &mut [WriteLease]) -> Result<()> {
-    for writer in writers.iter_mut() {
-        writer.retire()?;
+    /// Receipts keep staged files from eviction until the patch rows commit.
+    async fn commit(
+        &self,
+        receipts: Vec<Durable>,
+        source: &Source,
+        patches: &[Patch],
+        metadata: Option<&[u8]>,
+    ) -> Result<bool> {
+        let db = &self.repairs.db;
+        let mut committed = true;
+        if !patches.is_empty() {
+            committed = db
+                .publish_patches(receipts, source, patches)
+                .await
+                .context("repair references could not be published")?;
+        }
+        if committed && let Some(metadata) = metadata {
+            committed = db
+                .publish_repair_metadata(source, metadata, None)
+                .await
+                .context("repaired file metadata could not be published")?;
+        }
+        Ok(committed)
     }
-    for writer in writers {
-        writer.acknowledge();
-    }
-    Ok(())
 }

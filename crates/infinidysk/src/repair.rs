@@ -2,13 +2,13 @@
 
 pub mod api;
 mod publish;
-mod scan;
 mod storage;
 mod worker;
 pub use publish::Publisher;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use infinidysk_core::repair::Patch;
 use infinidysk_db::Db;
@@ -17,13 +17,17 @@ use tokio::sync::Semaphore;
 
 const READERS: usize = 32;
 
+/// Message IDs with a stored repair, as of one repair epoch.
+type Known = Option<(u64, Arc<HashSet<String>>)>;
+
 pub struct Repairs {
     db: Db,
     path: PathBuf,
     store: Mutex<Option<Store>>,
     readers: Arc<Semaphore>,
     lifecycle: Arc<tokio::sync::Mutex<()>>,
-    evidence: Mutex<Option<(i64, Arc<infinidysk_health::Evidence>)>>,
+    known: Mutex<Known>,
+    refresh: tokio::sync::Mutex<()>,
 }
 
 /// Install once per client; publishers must retain this same service/store owner.
@@ -34,16 +38,19 @@ pub fn install(client: &Client, db: Db, path: PathBuf) -> Arc<Repairs> {
         store: Mutex::new(None),
         readers: Arc::new(Semaphore::new(READERS)),
         lifecycle: Arc::new(tokio::sync::Mutex::new(())),
-        evidence: Mutex::new(None),
+        known: Mutex::new(None),
+        refresh: tokio::sync::Mutex::new(()),
     });
     client.set_repairs(Box::new({
         let repairs = Arc::clone(&repairs);
-        move |id| {
-            if !repairs.db.may_have_repairs() {
+        move |key| {
+            if !repairs.db.may_have_repairs()
+                || matches!(key, RepairKey::Article(id) if repairs.cached(id) == Some(false))
+            {
                 return None;
             }
             let repairs = Arc::clone(&repairs);
-            Some(Box::pin(async move { repairs.read(id).await }))
+            Some(Box::pin(async move { repairs.read(key).await }))
         }
     }));
     repairs
@@ -83,6 +90,39 @@ impl Repairs {
         opened.as_ref().expect("opened above").limited(capacity)
     }
 
+    /// `Some(false)` is a known miss: no stored repair names `id` in the current epoch.
+    fn cached(&self, id: &str) -> Option<bool> {
+        let (epoch, ids) = self
+            .known
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()?;
+        (epoch == self.db.repair_epoch()).then(|| ids.contains(id))
+    }
+
+    /// A missing article must not wait for a reader permit or a catalog query.
+    async fn stored(&self, id: &str) -> Result<bool, Error> {
+        if let Some(stored) = self.cached(id) {
+            return Ok(stored);
+        }
+        let _refresh = self.refresh.lock().await;
+        if let Some(stored) = self.cached(id) {
+            return Ok(stored);
+        }
+        // Read the epoch first: a later publication or eviction makes this set stale.
+        let epoch = self.db.repair_epoch();
+        let ids: HashSet<String> = self
+            .db
+            .repair_message_ids()
+            .await
+            .map_err(|_| Error::Repair("repair catalog cannot be read"))?
+            .into_iter()
+            .collect();
+        let stored = ids.contains(id);
+        *self.known.lock().unwrap_or_else(PoisonError::into_inner) = Some((epoch, Arc::new(ids)));
+        Ok(stored)
+    }
+
     async fn candidates(&self, key: RepairKey<'_>) -> Result<Vec<Patch>, Error> {
         match key {
             RepairKey::Article(id) => self.db.article_repairs(id).await,
@@ -96,6 +136,11 @@ impl Repairs {
     }
 
     async fn read(self: &Arc<Self>, key: RepairKey<'_>) -> Result<Option<Body>, Error> {
+        if let RepairKey::Article(id) = key
+            && !self.stored(id).await?
+        {
+            return Ok(None);
+        }
         let permit = Arc::clone(&self.readers)
             .acquire_owned()
             .await

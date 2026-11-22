@@ -382,22 +382,26 @@ pub async fn serve(
     let (health_tx, health_rx) = watch::channel(health_settings(&settings.health));
     let (fault_tx, mut fault_rx) =
         mpsc::unbounded_channel::<(ItemId, Option<ReadVersion>, usize, Fault)>();
-    let vfs = Arc::new(
-        Vfs::new(
-            db.clone(),
-            Arc::clone(&client),
-            Budget::new(
-                usize::try_from(u64::from(tuning.read_ahead_memory_mb) * MB).unwrap_or(usize::MAX),
-            ),
-            u64::from(tuning.read_ahead_mb) * MB,
-            &settings.mount.dir,
-        )
-        .with_cache(Arc::clone(&cache))
-        .with_report(Arc::new(move |id, version, index, fault| {
-            // Fails only at shutdown, when nobody records damage anymore.
-            let _ = fault_tx.send((id, version, index, fault));
-        })),
-    );
+    let vfs = Vfs::new(
+        db.clone(),
+        Arc::clone(&client),
+        Budget::new(
+            usize::try_from(u64::from(tuning.read_ahead_memory_mb) * MB).unwrap_or(usize::MAX),
+        ),
+        u64::from(tuning.read_ahead_mb) * MB,
+        &settings.mount.dir,
+    )
+    .with_cache(Arc::clone(&cache))
+    .with_report(Arc::new(move |id, version, index, fault| {
+        // Fails only at shutdown, when nobody records damage anymore.
+        let _ = fault_tx.send((id, version, index, fault));
+    }));
+    // Repairs replace bytes under open readers, so every read must coordinate.
+    let vfs = Arc::new(if infinidysk_core::experiment("par2-repair") {
+        vfs.with_repair_publisher()
+    } else {
+        vfs
+    });
     vfs.set_gap_tolerance(settings.health.degraded_tolerance);
     let handoff = Arc::new(crate::handoff::Writer::new(
         Arc::clone(&vfs),
@@ -650,7 +654,6 @@ pub async fn serve(
             Arc::clone(&client),
             publisher,
             Arc::clone(&health),
-            Arc::clone(&config),
             cancel.clone(),
         )))
     } else {

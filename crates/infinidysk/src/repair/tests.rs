@@ -20,13 +20,16 @@ async fn ready_jobs_do_not_wait_for_the_idle_poll_between_attempts() {
     let f = Fixture::new().await;
     let client = Arc::new(infinidysk_nntp::Client::new([]));
     let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
-    let vfs = Arc::new(infinidysk_vfs::Vfs::new(
-        f.db.clone(),
-        Arc::clone(&client),
-        infinidysk_stream::Budget::new(1_000_000),
-        0,
-        "/mnt",
-    ));
+    let vfs = Arc::new(
+        infinidysk_vfs::Vfs::new(
+            f.db.clone(),
+            Arc::clone(&client),
+            infinidysk_stream::Budget::new(1_000_000),
+            0,
+            "/mnt",
+        )
+        .with_repair_publisher(),
+    );
     let publisher = Publisher::new(Arc::clone(&repairs), vfs).unwrap();
     let (_arr_tx, arr) = watch::channel(vec![]);
     let (_health_tx, settings) = watch::channel(infinidysk_health::Settings::default());
@@ -56,13 +59,8 @@ async fn ready_jobs_do_not_wait_for_the_idle_poll_between_attempts() {
             .await
             .unwrap();
     }
-    let config = Arc::new(tokio::sync::RwLock::new(
-        crate::config::ConfigStore::load(f.db.clone(), [])
-            .await
-            .unwrap(),
-    ));
     let stop = tokio_util::sync::CancellationToken::new();
-    let task = tokio::spawn(repairs.run(client, publisher, health, config, stop.clone()));
+    let task = tokio::spawn(repairs.run(client, publisher, health, stop.clone()));
     let drained = tokio::time::timeout(std::time::Duration::from_secs(1), async {
         while f.db.par2_pending().await.unwrap() != 0 {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -84,13 +82,16 @@ async fn shutdown_defers_a_claimed_check_without_consuming_a_retry() {
     let f = Fixture::new().await;
     let client = Arc::new(infinidysk_nntp::Client::new([]));
     let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
-    let vfs = Arc::new(infinidysk_vfs::Vfs::new(
-        f.db.clone(),
-        client.clone(),
-        infinidysk_stream::Budget::new(1_000_000),
-        0,
-        "/mnt",
-    ));
+    let vfs = Arc::new(
+        infinidysk_vfs::Vfs::new(
+            f.db.clone(),
+            client.clone(),
+            infinidysk_stream::Budget::new(1_000_000),
+            0,
+            "/mnt",
+        )
+        .with_repair_publisher(),
+    );
     let publisher = Publisher::new(repairs.clone(), vfs).unwrap();
     let (_arr_tx, arr) = watch::channel(vec![]);
     let (_health_tx, settings) = watch::channel(infinidysk_health::Settings::default());
@@ -112,14 +113,9 @@ async fn shutdown_defers_a_claimed_check_without_consuming_a_retry() {
             .await
             .unwrap()
             .unwrap();
-    let config = Arc::new(tokio::sync::RwLock::new(
-        crate::config::ConfigStore::load(f.db.clone(), [])
-            .await
-            .unwrap(),
-    ));
     let paused = f.db.pause_writes().await;
     let stop = tokio_util::sync::CancellationToken::new();
-    let task = tokio::spawn(repairs.run(client, publisher, health, config, stop.clone()));
+    let task = tokio::spawn(repairs.run(client, publisher, health, stop.clone()));
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while f
             .db
@@ -294,13 +290,16 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         backbone: None,
     }]));
     let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
-    let vfs = Arc::new(infinidysk_vfs::Vfs::new(
-        f.db.clone(),
-        Arc::clone(&client),
-        infinidysk_stream::Budget::new(1_000_000),
-        0,
-        "/mnt",
-    ));
+    let vfs = Arc::new(
+        infinidysk_vfs::Vfs::new(
+            f.db.clone(),
+            Arc::clone(&client),
+            infinidysk_stream::Budget::new(1_000_000),
+            0,
+            "/mnt",
+        )
+        .with_repair_publisher(),
+    );
     let publisher = Publisher::new(Arc::clone(&repairs), vfs).unwrap();
     let (_arr_tx, arr) = watch::channel(vec![]);
     let (_settings_tx, settings) = watch::channel(infinidysk_health::Settings::default());
@@ -332,10 +331,8 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         0
     );
     let repair_job = f.db.claim_par2(i64::MAX).await.unwrap().unwrap();
-    let limited = worker::Progress::new(crate::config::Repair {
-        memory_mb: 128,
-        ..crate::config::Repair::default()
-    });
+    let mut limited = worker::Progress::default();
+    limited.memory = 128_000_000;
     let error = repairs
         .perform(
             &client,
@@ -349,26 +346,29 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         .unwrap_err();
     assert!(error.to_string().contains("memory"), "{error}");
     assert_eq!(f.db.article_repairs(&missing_article).await.unwrap(), []);
-    let (state, reason) = repairs
-        .perform(
-            &client,
-            &publisher,
-            &health,
-            &repair_job,
-            &tokio_util::sync::CancellationToken::new(),
-            &worker::Progress::default(),
-        )
-        .await
-        .unwrap();
+    let (state, reason, retry, outcome) = settle(
+        repairs
+            .perform(
+                &client,
+                &publisher,
+                &health,
+                &repair_job,
+                &tokio_util::sync::CancellationToken::new(),
+                &worker::Progress::default(),
+            )
+            .await
+            .unwrap(),
+    );
     assert_eq!(state, 3);
     f.db.finish_par2(
-        repair_job.id,
+        repair_job.claim(),
         state,
-        reason,
+        &reason,
         0,
         0,
         infinidysk_db::now_ms(),
-        None,
+        retry,
+        outcome,
     )
     .await
     .unwrap();
@@ -396,17 +396,19 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     f.db.request_par2(Owner::Item(sibling.id), true, infinidysk_db::now_ms() - 1)
         .await
         .unwrap();
-    let (state, _) = repairs
-        .perform(
-            &client,
-            &publisher,
-            &health,
-            &job,
-            &tokio_util::sync::CancellationToken::new(),
-            &worker::Progress::default(),
-        )
-        .await
-        .unwrap();
+    let (state, reason, retry, outcome) = settle(
+        repairs
+            .perform(
+                &client,
+                &publisher,
+                &health,
+                &job,
+                &tokio_util::sync::CancellationToken::new(),
+                &worker::Progress::default(),
+            )
+            .await
+            .unwrap(),
+    );
     assert_eq!(state, 2);
     let FileMeta::Nzb(file) = blob::decode_meta(&f.db.blob(meta).await.unwrap().unwrap()).unwrap()
     else {
@@ -430,9 +432,18 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
             .as_ref(),
         &data(100_000)[21_000..28_000]
     );
-    f.db.finish_par2(job.id, state, "", 0, 0, infinidysk_db::now_ms(), None)
-        .await
-        .unwrap();
+    f.db.finish_par2(
+        job.claim(),
+        state,
+        &reason,
+        0,
+        0,
+        infinidysk_db::now_ms(),
+        retry,
+        outcome,
+    )
+    .await
+    .unwrap();
     let other_owner =
         f.db.par2_owner(BlobId(repair_job.nzb_blob.unwrap()))
             .await
@@ -450,25 +461,28 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
             .unwrap()
             .unwrap();
     assert_eq!(interleaved.id, other);
-    let (state, reason) = repairs
-        .perform(
-            &client,
-            &publisher,
-            &health,
-            &interleaved,
-            &tokio_util::sync::CancellationToken::new(),
-            &worker::Progress::default(),
-        )
-        .await
-        .unwrap();
+    let (state, reason, retry, outcome) = settle(
+        repairs
+            .perform(
+                &client,
+                &publisher,
+                &health,
+                &interleaved,
+                &tokio_util::sync::CancellationToken::new(),
+                &worker::Progress::default(),
+            )
+            .await
+            .unwrap(),
+    );
     f.db.finish_par2(
-        interleaved.id,
+        interleaved.claim(),
         state,
-        reason,
+        &reason,
         0,
         0,
         infinidysk_db::now_ms(),
-        None,
+        retry,
+        outcome,
     )
     .await
     .unwrap();
@@ -478,17 +492,19 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
             .unwrap()
             .unwrap();
     let before = server.body_commands();
-    let (state, reason) = repairs
-        .perform(
-            &client,
-            &publisher,
-            &health,
-            &alias_job,
-            &tokio_util::sync::CancellationToken::new(),
-            &worker::Progress::default(),
-        )
-        .await
-        .unwrap();
+    let (state, reason, retry, outcome) = settle(
+        repairs
+            .perform(
+                &client,
+                &publisher,
+                &health,
+                &alias_job,
+                &tokio_util::sync::CancellationToken::new(),
+                &worker::Progress::default(),
+            )
+            .await
+            .unwrap(),
+    );
     assert_eq!(state, 2);
     assert!(reason.contains("Articles are available"), "{reason}");
     assert!(
@@ -496,13 +512,14 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         "a manual availability check reads only spot checks"
     );
     f.db.finish_par2(
-        alias_job.id,
+        alias_job.claim(),
         state,
-        reason,
+        &reason,
         0,
         0,
         infinidysk_db::now_ms(),
-        None,
+        retry,
+        outcome,
     )
     .await
     .unwrap();
@@ -512,17 +529,11 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
             .await
             .unwrap()
             .unwrap();
-    let config = Arc::new(tokio::sync::RwLock::new(
-        crate::config::ConfigStore::load(f.db.clone(), [])
-            .await
-            .unwrap(),
-    ));
     let stop = tokio_util::sync::CancellationToken::new();
     let running = tokio::spawn(Arc::clone(&repairs).run(
         Arc::clone(&client),
         publisher,
         Arc::new(health),
-        Arc::clone(&config),
         stop.clone(),
     ));
     tokio::time::timeout(Duration::from_secs(8), async {
@@ -565,9 +576,6 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     })
     .await
     .expect("cancellation stops the active attempt");
-    let mut settings = config.read().await.settings().clone();
-    settings.repair.check_concurrency = 1;
-    config.write().await.save(settings).await.unwrap();
     f.db.restart_par2(verification, infinidysk_db::now_ms())
         .await
         .unwrap();
@@ -586,7 +594,7 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         }
     })
     .await
-    .expect("saved availability limits apply to the next attempt without restarting");
+    .expect("a restarted check runs again");
     stop.cancel();
     running.await.unwrap();
     drop(repairs);
@@ -608,12 +616,17 @@ async fn metadata_publication_retires_readers_and_rejects_a_stale_source() {
     let raw = f.db.blob(meta).await.unwrap().unwrap();
     assert!(
         publisher
-            .metadata(f.source.clone(), raw.clone())
+            .publish(f.source.clone(), Vec::new(), Some(raw.clone()))
             .await
             .unwrap()
     );
     f.db.update_blob(meta, &raw).await.unwrap();
-    assert!(!publisher.metadata(f.source.clone(), raw).await.unwrap());
+    assert!(
+        !publisher
+            .publish(f.source.clone(), Vec::new(), Some(raw))
+            .await
+            .unwrap()
+    );
     f.close().await;
 }
 
@@ -655,7 +668,10 @@ async fn database_backup_embeds_verified_patches_and_restores_without_the_origin
     f.publish().await;
     let client = Arc::new(Client::new([]));
     let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
-    let backup = f.root.join("backup.sqlite");
+    // URL metacharacters in the directory must not change which file is opened.
+    let dir = f.root.join("backup?dir%41");
+    std::fs::create_dir(&dir).unwrap();
+    let backup = dir.join("backup.sqlite");
     repairs
         .backup_into(&backup, &tokio_util::sync::CancellationToken::new())
         .await
@@ -669,7 +685,7 @@ async fn database_backup_embeds_verified_patches_and_restores_without_the_origin
     );
     let corrupt = f.root.join("corrupt.sqlite");
     std::fs::copy(&backup, &corrupt).unwrap();
-    let mut conn = sqlx::SqliteConnection::connect(&format!("sqlite:{}", corrupt.display()))
+    let mut conn = sqlx::SqliteConnection::connect(&crate::app::sqlite_url(&corrupt))
         .await
         .unwrap();
     sqlx::query("UPDATE repair_patches SET backup_payload = zeroblob(length(backup_payload))")
@@ -687,9 +703,7 @@ async fn database_backup_embeds_verified_patches_and_restores_without_the_origin
     drop(repairs);
     drop(client);
     std::fs::remove_dir_all(f.root.join("repairs")).unwrap();
-    let restored = Db::connect(&format!("sqlite:{}", backup.display()))
-        .await
-        .unwrap();
+    let restored = Db::connect(&crate::app::sqlite_url(&backup)).await.unwrap();
     let client = Arc::new(Client::new([]));
     let repairs = install(&client, restored.clone(), f.root.join("repairs"));
     repairs.restore_embedded().await.unwrap();
@@ -729,7 +743,7 @@ async fn moving_the_database_without_its_repair_directory_requests_a_recheck() {
     std::fs::create_dir(&moved).unwrap();
     let database = moved.join("data.sqlite");
     f.db.backup_into(&database, || false).await.unwrap();
-    let db = Db::connect(&format!("sqlite:{}", database.display()))
+    let db = Db::connect(&crate::app::sqlite_url(&database))
         .await
         .unwrap();
     let client = Client::new([]);
@@ -772,7 +786,7 @@ impl Fixture {
     async fn seed(omitted: bool) -> Self {
         let root = std::env::temp_dir().join(format!("infinidysk-repair-read-{}", ItemId::new()));
         std::fs::create_dir(&root).expect("parent");
-        let db = Db::connect(&format!("sqlite:{}", root.join("data.sqlite").display()))
+        let db = Db::connect(&crate::app::sqlite_url(&root.join("data.sqlite")))
             .await
             .expect("database");
         let parent = db
@@ -867,7 +881,7 @@ impl Fixture {
     async fn publish(&self) {
         assert!(
             self.db
-                .publish_patches(&self.source, std::slice::from_ref(&self.patch))
+                .publish_patches((), &self.source, std::slice::from_ref(&self.patch))
                 .await
                 .expect("publish")
         );
@@ -888,13 +902,16 @@ async fn delivery(
 ) {
     let client = Arc::new(Client::new([]));
     let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
-    let vfs = Arc::new(infinidysk_vfs::Vfs::new(
-        f.db.clone(),
-        client,
-        infinidysk_stream::Budget::new(1_000_000),
-        0,
-        "/mnt",
-    ));
+    let vfs = Arc::new(
+        infinidysk_vfs::Vfs::new(
+            f.db.clone(),
+            client,
+            infinidysk_stream::Budget::new(1_000_000),
+            0,
+            "/mnt",
+        )
+        .with_repair_publisher(),
+    );
     let item =
         f.db.item_by_path("/content/source.bin")
             .await
@@ -930,7 +947,7 @@ async fn publication_refreshes_an_open_reader_after_draining_observations() {
         .unwrap();
     let publisher = Publisher::new(repairs, vfs).unwrap();
     let observing = f.db.write_permit().await;
-    let mut publishing = Box::pin(publisher.publish(f.source.clone(), vec![receipt]));
+    let mut publishing = Box::pin(publisher.publish(f.source.clone(), vec![receipt], None));
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), &mut publishing)
             .await
@@ -987,7 +1004,7 @@ async fn publication_rejects_changed_sources_without_losing_durable_files() {
     let publisher = Publisher::new(Arc::clone(&repairs), vfs).unwrap();
     assert!(
         !publisher
-            .publish(f.source.clone(), vec![receipt])
+            .publish(f.source.clone(), vec![receipt], None)
             .await
             .unwrap()
     );
@@ -1018,19 +1035,22 @@ async fn publication_requires_valid_bytes_and_the_same_database_owner() {
         .write(&f.patch, DATA, || false)
         .unwrap();
     let other = Db::connect("sqlite::memory:").await.unwrap();
-    let different = Arc::new(infinidysk_vfs::Vfs::new(
-        other,
-        Arc::new(Client::new([])),
-        infinidysk_stream::Budget::new(1),
-        0,
-        "/mnt",
-    ));
+    let different = Arc::new(
+        infinidysk_vfs::Vfs::new(
+            other,
+            Arc::new(Client::new([])),
+            infinidysk_stream::Budget::new(1),
+            0,
+            "/mnt",
+        )
+        .with_repair_publisher(),
+    );
     assert!(Publisher::new(Arc::clone(&repairs), different).is_err());
     std::fs::remove_file(f.root.join("repairs").join(format!("{}.patch", f.patch.id))).unwrap();
     assert!(
         Publisher::new(repairs, vfs)
             .unwrap()
-            .publish(f.source.clone(), vec![receipt])
+            .publish(f.source.clone(), vec![receipt], None)
             .await
             .is_err()
     );
@@ -1054,7 +1074,7 @@ async fn unavailable_native_invalidation_rejects_before_sql_and_releases_admissi
         .with_mount(Arc::default());
     assert!(
         publisher
-            .publish(f.source.clone(), vec![receipt])
+            .publish(f.source.clone(), vec![receipt], None)
             .await
             .is_err()
     );
@@ -1094,7 +1114,7 @@ async fn durable_files_become_effective_only_after_commit_and_survive_restart() 
         .unwrap();
     drop(client);
     f.db.close().await;
-    f.db = Db::connect(&format!("sqlite:{}", f.root.join("data.sqlite").display()))
+    f.db = Db::connect(&crate::app::sqlite_url(&f.root.join("data.sqlite")))
         .await
         .unwrap();
     assert!(f.db.may_have_repairs());
@@ -1173,7 +1193,7 @@ async fn conflicting_current_owners_are_rejected_before_reading_any_bytes() {
     let mut patch = f.patch.clone();
     patch.id = PatchId::new();
     patch.sha256[0] ^= 1;
-    assert!(f.db.publish_patches(&source, &[patch]).await.unwrap());
+    assert!(f.db.publish_patches((), &source, &[patch]).await.unwrap());
     let client = f.client();
     assert!(matches!(
         client.body("repair@loopback", Workload::Stream, None).await,
@@ -1222,7 +1242,7 @@ async fn equivalent_owners_can_supply_another_verified_copy() {
     let store = Store::open(&f.root.join("repairs"), 1_000_000).unwrap();
     let durable = store.write(&patch, DATA, || false).unwrap();
     assert!(
-        f.db.publish_patches(&source, std::slice::from_ref(durable.patch()))
+        f.db.publish_patches((), &source, std::slice::from_ref(durable.patch()))
             .await
             .unwrap()
     );
@@ -1380,7 +1400,7 @@ async fn omitted_plain_file_reads_survive_restart_and_refuse_a_changed_nzb() {
     drop(store);
     f.publish().await;
     f.db.close().await;
-    f.db = Db::connect(&format!("sqlite:{}", f.root.join("data.sqlite").display()))
+    f.db = Db::connect(&crate::app::sqlite_url(&f.root.join("data.sqlite")))
         .await
         .unwrap();
     let client = Arc::new(f.client());
@@ -1435,7 +1455,7 @@ async fn cached_layouts_cannot_be_bound_to_different_persisted_metadata() {
     };
     parts.parts[0].proof.as_mut().unwrap().file_id = [9; 16];
     // Another DB owner does not advance this VFS owner's metadata-cache epoch.
-    let other = Db::connect(&format!("sqlite:{}", f.root.join("data.sqlite").display()))
+    let other = Db::connect(&crate::app::sqlite_url(&f.root.join("data.sqlite")))
         .await
         .unwrap();
     other
@@ -1467,13 +1487,16 @@ async fn check_delivery(omitted: bool) {
     let f = Fixture::seed(omitted).await;
     f.publish().await;
     let client = Arc::new(f.client());
-    let vfs = Arc::new(Vfs::new(
-        f.db.clone(),
-        Arc::clone(&client),
-        Budget::new(1_000_000),
-        1_000_000,
-        "/mnt",
-    ));
+    let vfs = Arc::new(
+        Vfs::new(
+            f.db.clone(),
+            Arc::clone(&client),
+            Budget::new(1_000_000),
+            1_000_000,
+            "/mnt",
+        )
+        .with_repair_publisher(),
+    );
     let app = router(Arc::new(WebDav {
         vfs: Arc::clone(&vfs),
         queue: Arc::new(infinidysk_queue::Queue::new(
@@ -1527,5 +1550,103 @@ async fn check_delivery(omitted: bool) {
     drop(analysis);
     drop(vfs);
     drop(client);
+    f.close().await;
+}
+
+/// Turns an attempt's outcome into the saved state, as the worker does.
+fn settle(outcome: worker::Outcome) -> (i16, String, Option<i64>, i16) {
+    let finish = outcome
+        .finish(1, infinidysk_db::now_ms())
+        .expect("tests settle attempts that finish");
+    (finish.state, finish.reason, finish.retry, finish.outcome)
+}
+
+#[test]
+fn failed_attempts_retry_after_the_cooldown_then_stop() {
+    use infinidysk_db::repair_jobs::{DAMAGED, EXHAUSTED};
+    use worker::Outcome;
+    let now = 1_000;
+    let cooldown = 6 * 3_600_000;
+    for attempts in [1, 2] {
+        let retry = Outcome::Failed("provider timed out".into())
+            .finish(attempts, now)
+            .unwrap();
+        assert_eq!(
+            (retry.state, retry.retry, retry.outcome, retry.yielded),
+            (4, Some(now + cooldown), 0, false)
+        );
+    }
+    let last = Outcome::Failed("provider timed out".into())
+        .finish(3, now)
+        .unwrap();
+    assert_eq!((last.state, last.retry, last.outcome), (5, None, EXHAUSTED));
+    assert_eq!(last.reason, "Retry limit reached: provider timed out");
+    let damaged = Outcome::Damaged.finish(1, now).unwrap();
+    assert_eq!((damaged.state, damaged.outcome), (5, DAMAGED));
+    let unavailable = Outcome::Unavailable("repair unavailable: no recovery data".into())
+        .finish(1, now)
+        .unwrap();
+    assert_eq!((unavailable.state, unavailable.outcome), (5, 0));
+    for outcome in [Outcome::Yielded, Outcome::Interrupted] {
+        let resumed = outcome.finish(1, now).unwrap();
+        assert_eq!((resumed.state, resumed.retry), (4, Some(now)));
+        assert!(resumed.yielded, "playback and shutdown do not use a retry");
+    }
+    assert!(Outcome::Escalated.finish(1, now).is_none());
+}
+
+#[tokio::test]
+async fn unrelated_articles_skip_reader_admission_once_the_catalog_is_known() {
+    let f = Fixture::new().await;
+    f.publish().await;
+    let client = Client::new([]);
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    assert!(!repairs.stored("unrelated@loopback").await.unwrap());
+    assert_eq!(repairs.cached("repair@loopback"), Some(true));
+    let busy = Arc::clone(&repairs.readers)
+        .acquire_many_owned(u32::try_from(READERS).unwrap())
+        .await
+        .unwrap();
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        repairs.read(infinidysk_nntp::RepairKey::Article("other@loopback")),
+    )
+    .await
+    .expect("a known miss needs no reader permit");
+    assert!(matches!(read, Ok(None)));
+    drop(busy);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn staging_evicts_the_least_recently_read_repair_to_make_room() {
+    let f = Fixture::new().await;
+    let client = Client::new([]);
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    drop(
+        repairs
+            .store(1_000_000)
+            .unwrap()
+            .write(&f.patch, DATA, || false)
+            .unwrap(),
+    );
+    f.publish().await;
+    let mut next = f.patch.clone();
+    next.id = PatchId::new();
+    // Room for exactly one article plus its header reserve.
+    let receipts = repairs
+        .stage(
+            vec![(next.clone(), DATA.to_vec())],
+            DATA.len() as u64 + 16_384,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(f.db.article_repairs("repair@loopback").await.unwrap(), []);
+    let store = repairs.store(u64::MAX).unwrap();
+    assert!(store.read(&f.patch).is_err(), "the evicted file is removed");
+    assert_eq!(store.read(&next).unwrap().data.as_ref(), DATA);
+    drop((receipts, store, repairs));
     f.close().await;
 }

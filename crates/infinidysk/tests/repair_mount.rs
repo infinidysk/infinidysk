@@ -11,9 +11,20 @@ use infinidysk_nntp::{Client, Downloads, Endpoint, Pool, PoolConfig, Provider, T
 use infinidysk_stream::Budget;
 use infinidysk_testkit::{LoopbackServer, post};
 use sha2::{Digest as _, Sha256};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+/// Removes the fixture directory last, after an assertion failure too.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // Best effort: a failed test may still hold the mount busy.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs /dev/fuse and permission to mount with allow_other"]
@@ -71,6 +82,7 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
     }]));
     let root = std::env::temp_dir().join(format!("infinidysk-repair-mount-{}", ItemId::new()));
     std::fs::create_dir(&root).unwrap();
+    let _scratch = Scratch(root.clone());
     let db = Db::connect(&format!("sqlite:{}", root.join("data.sqlite").display()))
         .await
         .unwrap();
@@ -112,13 +124,16 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
         .unwrap();
     let repairs = infinidysk::repair::install(&client, db.clone(), root.join("repairs"));
     let mount = root.join("mount");
-    let vfs = Arc::new(infinidysk_vfs::Vfs::new(
-        db.clone(),
-        client,
-        Budget::new(1_000_000),
-        1_000_000,
-        mount.to_str().unwrap(),
-    ));
+    let vfs = Arc::new(
+        infinidysk_vfs::Vfs::new(
+            db.clone(),
+            client,
+            Budget::new(1_000_000),
+            1_000_000,
+            mount.to_str().unwrap(),
+        )
+        .with_repair_publisher(),
+    );
     let native = Arc::new(infinidysk_mount::Invalidator::default());
     let publisher = infinidysk::repair::Publisher::new(Arc::clone(&repairs), Arc::clone(&vfs))
         .unwrap()
@@ -179,7 +194,7 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
         .unwrap()
         .write(&patch, &data[..ARTICLE], || false)
         .unwrap();
-    let published = publisher.publish(source, vec![receipt]).await;
+    let published = publisher.publish(source, vec![receipt], None).await;
     let checked = tokio::task::spawn_blocking(move || {
         let mut bytes = vec![0; data.len()];
         for file in [&first, &alias] {
@@ -197,5 +212,4 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
     assert!(published.unwrap());
     checked.unwrap();
     db.close().await;
-    std::fs::remove_dir_all(root).unwrap();
 }
