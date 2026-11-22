@@ -88,6 +88,13 @@ impl Profile {
             Self::Sonarr | Self::Radarr | Self::Lidarr | Self::Chaptarr | Self::Whisparr
         )
     }
+
+    /// It can be told to check its download clients now. Sportarr has no such command
+    /// and polls on its own.
+    #[must_use]
+    pub const fn refreshes_downloads(self) -> bool {
+        !matches!(self, Self::Sportarr)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -349,10 +356,10 @@ pub async fn probe(http: &reqwest::Client, arr: &Arr, id: i64, marker: &str) -> 
     Ok(())
 }
 
-/// Asks the Arr to check its download clients now rather than at its next poll. Sportarr
-/// has no such command and polls on its own.
+/// Asks the Arr to check its download clients now rather than at its next poll; a no-op
+/// unless [`Profile::refreshes_downloads`].
 pub async fn refresh_downloads(http: &reqwest::Client, arr: &Arr) -> Result<(), Error> {
-    if arr.profile == Profile::Sportarr {
+    if !arr.profile.refreshes_downloads() {
         return Ok(());
     }
     let s = Session::open(http, arr).await?;

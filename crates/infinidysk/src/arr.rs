@@ -509,11 +509,13 @@ impl Discovery {
                 Vec::new()
             };
             if !known.is_empty() {
-                // A committed job may not have announced its paths yet.
-                let by_category = owners(&known);
+                // A committed job may not have announced its paths yet; only an owner
+                // that gets a refresh will look for them now.
+                let refreshed =
+                    owners(known.iter().filter(|k| k.arr.profile.refreshes_downloads()));
                 if snapshot
                     .as_ref()
-                    .is_some_and(|p| p.iter().any(|(c, _)| by_category.contains_key(c)))
+                    .is_some_and(|p| p.iter().any(|(c, _)| refreshed.contains_key(c)))
                 {
                     batch.tree();
                 }
@@ -660,7 +662,9 @@ impl Discovery {
 }
 
 /// Lowercased categories of verified clients, with the media their Arrs import there.
-fn owners(known: &[Known]) -> BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> {
+fn owners<'a>(
+    known: impl IntoIterator<Item = &'a Known>,
+) -> BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> {
     let mut owners: BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> = BTreeMap::new();
     for k in known {
         for (client, _) in k.clients.iter().filter(|(_, b)| *b == ArrBinding::Verified) {
