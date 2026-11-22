@@ -22,6 +22,14 @@ impl Scope {
         }
     }
 
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        self.nzb == other.nzb && Weak::ptr_eq(&self.meta, &other.meta)
+    }
+
+    pub(crate) fn live(&self) -> bool {
+        self.meta.strong_count() > 0
+    }
+
     /// Adds the article IDs of the layout this scope still holds.
     pub(crate) fn layout_ids(&self, ids: &mut BTreeSet<String>) {
         let Some(meta) = self.meta.upgrade() else {

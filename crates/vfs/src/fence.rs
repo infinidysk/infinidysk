@@ -445,11 +445,19 @@ impl ReadVersion {
 impl Inner {
     fn remember(&self, scope: Scope) {
         let mut scopes = self.scopes.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(previous) = scopes.iter_mut().find(|old| old.nzb == scope.nzb) {
-            *previous = scope;
-        } else {
-            scopes.push(scope);
+        if scopes.iter().any(|old| old.same(&scope)) {
+            return;
         }
+        scopes.push(scope);
+        // An expired layout stays only as the last record of its NZB.
+        let mut kept: Vec<_> = scopes.iter().filter(|s| s.live()).map(|s| s.nzb).collect();
+        scopes.retain(|s| {
+            s.live()
+                || (!kept.contains(&s.nzb) && {
+                    kept.push(s.nzb);
+                    true
+                })
+        });
     }
 }
 
@@ -619,6 +627,27 @@ mod tests {
         assert!(matches!(admitted, Admission::Ready(_)));
         let (_, articles) = registry.repair_pins(|_| false);
         assert!(articles.contains("later@test"));
+    }
+
+    #[tokio::test]
+    async fn a_second_open_keeps_the_first_readers_layout_pinned() {
+        let registry = Fences::default();
+        let nzb = Some(BlobId::new());
+        let fence = registry.get(ItemId::new());
+        let first = one_segment("first@test");
+        let second = one_segment("second@test");
+        for meta in [&first, &second] {
+            let admitted = registry.admit(registry.stamp(), fence.item(), Scope::new(nzb, meta));
+            assert!(matches!(admitted, Admission::Ready(_)));
+        }
+        drop(second);
+        let (nzbs, articles) = registry.repair_pins(|_| false);
+        assert!(articles.contains("first@test"));
+        assert!(!articles.contains("second@test"));
+        assert_eq!(
+            nzbs.into_iter().collect::<Vec<_>>(),
+            nzb.into_iter().collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
