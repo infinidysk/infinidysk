@@ -52,6 +52,39 @@ impl Drop for Scratch {
     }
 }
 
+/// A sample task that an early error exit aborts instead of detaching.
+struct Task<T>(Option<tokio::task::JoinHandle<T>>);
+
+impl<T> Task<T> {
+    fn spawn(future: impl Future<Output = T> + Send + 'static) -> Self
+    where
+        T: Send + 'static,
+    {
+        Self(Some(tokio::spawn(future)))
+    }
+
+    fn is_finished(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(tokio::task::JoinHandle::is_finished)
+    }
+
+    async fn join(mut self) -> std::result::Result<T, tokio::task::JoinError> {
+        self.0
+            .take()
+            .expect("join consumes the guard, so the handle is present")
+            .await
+    }
+}
+
+impl<T> Drop for Task<T> {
+    fn drop(&mut self) {
+        if let Some(task) = &self.0 {
+            task.abort();
+        }
+    }
+}
+
 struct Fixture {
     bytes: Vec<u8>,
     index: Vec<u8>,
@@ -205,7 +238,7 @@ pub(super) fn run(
                     let playing = idle || mode.ends_with("-active");
                     let foreground = Arc::clone(&sessions);
                     let cpu = usage::cpu();
-                    let checking = (!idle).then(|| tokio::spawn(async move {
+                    let checking = (!idle).then(|| Task::spawn(async move {
                         let started = Instant::now();
                         let evidence = Arc::new(Evidence::default());
                         let mut preemptions = 0;
@@ -226,7 +259,7 @@ pub(super) fn run(
                     }
                     let playback_metrics = if playing {
                         sessions.store(true, Ordering::Relaxed);
-                        if checking.as_ref().is_some_and(tokio::task::JoinHandle::is_finished) {
+                        if checking.as_ref().is_some_and(Task::is_finished) {
                             return Err("availability check finished before playback started".into());
                         }
                         let (bytes, timing) = read(&scenario, Arc::clone(&client), Arc::clone(&layout), true, true, None).await?;
@@ -236,7 +269,7 @@ pub(super) fn run(
                             "timeTo8MbMs": timing.time_to_8mb_ms, "timeTo64MbMs": timing.time_to_64mb_ms })
                     } else { Value::Null };
                     let (elapsed, preemptions) = if let Some(checking) = checking {
-                        let (result, elapsed, preemptions) = checking.await?;
+                        let (result, elapsed, preemptions) = checking.join().await?;
                         assert!(matches!(result?, Availability::Available { articles: 64 }));
                         (elapsed, preemptions)
                     } else { (Duration::ZERO, 0) };
@@ -277,7 +310,7 @@ pub(super) fn run(
                     let nzb = Arc::clone(&nzb);
                     let stop = stop.clone();
                     let store = store.clone();
-                    tokio::spawn(async move {
+                    Task::spawn(async move {
                         let started = Instant::now();
                         let outcome = execute(client, nzb, &stop, false).await;
                         (outcome, started.elapsed(), store)
@@ -288,14 +321,15 @@ pub(super) fn run(
                         while server.body_commands() == 0 { time::sleep(Duration::from_millis(1)).await; }
                     }).await?;
                 }
-                let cancel = (mode == "par2-cancelled").then(|| tokio::spawn(async move {
+                let cancel = (mode == "par2-cancelled").then(|| Task::spawn(async move {
                     time::sleep(Duration::from_millis(50)).await;
                     stop.cancel();
                 }));
                 let trace = Arc::new(Trace::new(scenario.articles * 16 + 64));
                 let (bytes, timing) = read(&scenario, Arc::clone(&client), Arc::clone(&layout), true, true, Some(Arc::clone(&trace))).await?;
-                assert!(bytes == playback.data, "playback bytes differ from the fixture");
+                // Sampled before the buffer compare, which can outlast a finishing repair.
                 let overlap = repair.as_ref().is_some_and(|job| !job.is_finished());
+                assert!(bytes == playback.data, "playback bytes differ from the fixture");
                 // Whether repair ran across the seek, so overlapping and later seeks are not mixed; par2-idle is the control.
                 let active = || repair.as_ref().is_some_and(|job| !job.is_finished());
                 let seek_started = active();
@@ -306,9 +340,9 @@ pub(super) fn run(
                     (true, true, false) => "partial",
                     (true, false, _) => "after",
                 };
-                if let Some(cancel) = cancel { cancel.await?; }
+                if let Some(cancel) = cancel { cancel.join().await?; }
                 let (verified, stored, repair_ms) = if let Some(task) = repair {
-                    let (result, elapsed, store) = task.await?;
+                    let (result, elapsed, store) = task.join().await?;
                     match (mode, result) {
                         ("par2-active", Ok(result)) => {
                             assert_eq!(result.patches.len(), 1);
