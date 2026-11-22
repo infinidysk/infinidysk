@@ -123,8 +123,14 @@ impl Repairs {
     }
 
     pub async fn cleanup(self: &Arc<Self>, vfs: &Vfs, cancel: &CancellationToken) -> Result<u64> {
-        let _lifecycle = self.lifecycle.lock().await;
-        let _paused = self.db.pause_writes().await;
+        let _lifecycle = tokio::select! {
+            lifecycle = self.lifecycle.lock() => lifecycle,
+            () = cancel.cancelled() => anyhow::bail!("cleanup cancelled"),
+        };
+        let _paused = tokio::select! {
+            paused = self.db.pause_writes() => paused,
+            () = cancel.cancelled() => anyhow::bail!("cleanup cancelled"),
+        };
         // The retained SQLite database shares the repair directory after a cutover.
         if !self.path.try_exists()? || self.retains_old_database().await? {
             return Ok(0);
@@ -170,11 +176,13 @@ impl Repairs {
                             return Ok(None);
                         }
                         // A lookup may already hold a descriptor whose SQL owner was just deleted.
-                        Arc::clone(&repairs.readers)
-                            .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32"))
-                            .await
-                            .map(Some)
-                            .map_err(|_| Error::Recovery)
+                        // Shutdown must not wait for that reader; the file stays for a later pass.
+                        tokio::select! {
+                            readers = Arc::clone(&repairs.readers)
+                                .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32")) =>
+                                readers.map(Some).map_err(|_| Error::Recovery),
+                            () = stopped.cancelled() => Err(Error::Cancelled),
+                        }
                     })
                 },
                 || stopped.is_cancelled(),

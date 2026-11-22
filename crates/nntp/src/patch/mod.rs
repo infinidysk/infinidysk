@@ -173,6 +173,10 @@ impl Store {
         }
         let mut state = self.0.used.lock().map_err(|_| Error::Recovery)?;
         let used = state.ok_or(Error::Recovery)?;
+        // Listing the store costs more as repairs accumulate; skip it when the write fits.
+        if needed <= self.1.saturating_sub(used) {
+            return Ok(0);
+        }
         let result = files::evict(
             &self.0.dir,
             used,

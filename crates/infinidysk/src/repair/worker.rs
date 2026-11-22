@@ -720,7 +720,10 @@ impl Repairs {
         capacity: u64,
         cancel: &CancellationToken,
     ) -> Result<Vec<patch::Durable>> {
-        let staging = Arc::clone(&self.lifecycle).lock_owned().await;
+        let staging = tokio::select! {
+            staging = Arc::clone(&self.lifecycle).lock_owned() => staging,
+            () = cancel.cancelled() => anyhow::bail!("repair stopped before saving articles"),
+        };
         // A retained older database may still read any stored repair, so keep them all.
         let retained = self.retains_old_database().await?;
         let full = move || -> anyhow::Error {
@@ -770,13 +773,18 @@ impl Repairs {
         .await?
     }
 
-    /// Blocking: drop one stored repair's reference. Readers finish before its unlink.
+    /// Blocking: drop one stored repair's reference. Admitted readers finish before the
+    /// reference goes, so none loses it mid-read; later readers miss.
     fn evict(
         &self,
         runtime: &tokio::runtime::Handle,
         id: PatchId,
     ) -> Result<Option<OwnedSemaphorePermit>, patch::Error> {
         runtime.block_on(async {
+            let readers = Arc::clone(&self.readers)
+                .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32"))
+                .await
+                .map_err(|_| patch::Error::Recovery)?;
             let items = self
                 .db
                 .evict_patch(id)
@@ -785,11 +793,7 @@ impl Repairs {
             for (item, path) in items {
                 tracing::info!(item = %item.0, path, "evicted a stored repair to make room; the file will be checked again");
             }
-            Arc::clone(&self.readers)
-                .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32"))
-                .await
-                .map(Some)
-                .map_err(|_| patch::Error::Recovery)
+            Ok(Some(readers))
         })
     }
 }
