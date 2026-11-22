@@ -533,7 +533,7 @@ impl Inspector {
         let started = Instant::now();
         let limits = self.run.limits;
         let (progress, run) = (Arc::clone(&self.progress), Arc::clone(&self.run));
-        let job = &super::job(client, rules, password, progress, Some(run), None);
+        let job = &super::job(client, rules, password, progress, Some(run), None, false);
         let mut timings = Timings::default();
         self.files_read = self.files_read.saturating_add(nzb.files.len());
         let (planned, step) = if self.files_read > limits.files {
@@ -901,6 +901,7 @@ mod tests {
             Arc::clone(&inspector.progress),
             Some(Arc::clone(&inspector.run)),
             None,
+            false,
         );
         let output = Output {
             path: vec!["Readable Name.txt".to_owned()],

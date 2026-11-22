@@ -1495,6 +1495,50 @@ async fn repair_of_a_damaged_inner_nzb_keeps_the_inner_source_and_password() {
     );
 }
 
+#[tokio::test]
+async fn a_dropped_inner_nzb_file_waits_for_par2_instead_of_failing_empty() {
+    let missing = post("missing-obfuscated", "obfuscated", &[1; 1000], 1000);
+    let parity = fixture("par2/tests/fixtures/set.par2");
+    let index = post("surviving-index", "set.par2", &parity, 32 << 10);
+    let release = nzb(&[
+        ("obfuscated", &missing, 1000, 1000),
+        ("set.par2", &index, parity.len(), 32 << 10),
+    ]);
+    let mut articles = index;
+    let outer = wrap("missing-wrapper", &release, &mut articles);
+    let (_server, queue) = setup(articles).await;
+    queue.enable_par2();
+    let db = queue.db();
+    let id = queue
+        .enqueue(
+            &Submission {
+                file_name: "input.nzb",
+                category: "tv",
+                priority: 0,
+                post_processing: 0,
+            },
+            &outer,
+        )
+        .await
+        .unwrap();
+    assert!(queue.process_next().await);
+    assert!(
+        db.history_entry(id).await.unwrap().is_none(),
+        "repair must be requested before failure"
+    );
+    let pending = db.queue().await.unwrap();
+    assert_eq!(pending.len(), 1);
+    let stored = db.blob(pending[0].nzb_blob).await.unwrap().unwrap();
+    assert_eq!(blob::decode_nzb(&stored).unwrap(), release);
+    let repair = db
+        .par2_result(infinidysk_db::repair::Owner::Queue(id), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repair.nzb_blob, Some(pending[0].nzb_blob.0));
+    assert_eq!(repair.state, 0);
+}
+
 async fn names_in(db: &Db, path: &str) -> Vec<String> {
     let dir = db.item_by_path(path).await.unwrap().unwrap();
     let files = db.children(dir.id).await.unwrap();

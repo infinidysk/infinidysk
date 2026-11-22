@@ -879,6 +879,7 @@ impl Queue {
                         .as_ref()
                         .filter(|_| inner.is_none())
                         .map(|source| (source.nzb(), source.generation())),
+                    source.is_some(),
                 ) => imported,
                 () = self.stalled(progress) => return Ok(Outcome::Stuck),
             };

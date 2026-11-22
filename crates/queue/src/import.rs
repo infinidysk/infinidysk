@@ -325,6 +325,8 @@ struct Volume {
 struct Job {
     client: Arc<Client>,
     source: Option<(BlobId, i64)>,
+    /// A PAR2 repair may follow; an inner NZB has one but no `source`.
+    repair: bool,
     requests: Semaphore,
     progress: Arc<Progress>,
     /// Extra filename globs to drop.
@@ -458,10 +460,12 @@ fn job(
     progress: Arc<Progress>,
     inspection: Option<Arc<inspect::Run>>,
     source: Option<(BlobId, i64)>,
+    repair: bool,
 ) -> Arc<Job> {
     Arc::new(Job {
         client: Arc::clone(client),
         source,
+        repair,
         requests: Semaphore::new(CONCURRENCY),
         progress,
         blocklist: rules.blocklist.clone(),
@@ -631,7 +635,7 @@ async fn plan(
             {
                 tracing::warn!(file = %inputs[i].name, reason = %error, "dropping file");
                 // Only PAR2 routing needs its reason; without it SAB history is unchanged.
-                if job.source.is_some() {
+                if job.repair {
                     dropped_missing.get_or_insert(error);
                 }
             }
@@ -726,9 +730,10 @@ pub async fn import(
     progress: Arc<Progress>,
     verifier: Option<&dyn Verifier>,
     source: Option<(BlobId, i64)>,
+    repair: bool,
 ) -> Result<Imported, Error> {
     let started = Instant::now();
-    let job = &job(client, rules, password, progress, None, source);
+    let job = &job(client, rules, password, progress, None, source, repair);
     let mut at = Timings::default();
     let (outputs, dropped_missing) = plan(job, nzb, rules.check_percent, started, &mut at).await?;
     let [firsts_at, par2_at, layouts_at, sets_at] =
@@ -2399,6 +2404,7 @@ mod tests {
         let mut job = Arc::new(Job {
             client,
             source: Some((nzb, 0)),
+            repair: true,
             inspection: None,
             requests: Semaphore::new(CONCURRENCY),
             progress: Arc::new(Progress::default()),
@@ -2532,6 +2538,7 @@ mod tests {
         let job = Arc::new(Job {
             client: Arc::new(client),
             source: None,
+            repair: false,
             requests: Semaphore::new(CONCURRENCY),
             progress: Arc::new(Progress::default()),
             blocklist: Vec::new(),
@@ -2572,6 +2579,7 @@ mod tests {
         let job = Arc::new(Job {
             client: Arc::new(Client::new([])),
             source: None,
+            repair: false,
             requests: Semaphore::new(CONCURRENCY),
             progress: Arc::new(Progress::default()),
             blocklist: Vec::new(),
@@ -2615,6 +2623,7 @@ mod tests {
         let job = Arc::new(Job {
             client: Arc::new(Client::new([])),
             source: None,
+            repair: false,
             requests: Semaphore::new(CONCURRENCY),
             progress: Arc::new(Progress::default()),
             blocklist: Vec::new(),
