@@ -384,6 +384,17 @@ impl ReadVersion {
         self.fence.inner.blocked.load(Ordering::Acquire)
     }
 
+    /// The active publication that holds this item, if any.
+    pub(crate) fn publication(&self) -> Option<watch::Receiver<bool>> {
+        let registry = self.fence.inner.entries.upgrade()?;
+        let entries = registry.lock().unwrap_or_else(PoisonError::into_inner);
+        entries
+            .active
+            .as_ref()
+            .filter(|active| active.items.contains(&self.fence.item()))
+            .map(|active| active.done.subscribe())
+    }
+
     pub(crate) async fn track(&self, nzb: Option<BlobId>, meta: &Arc<FileMeta>) -> bool {
         let Some(registry) = self.fence.inner.entries.upgrade() else {
             return true;

@@ -178,3 +178,92 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
         }
     }
 }
+
+#[tokio::test]
+async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let data: Vec<u8> = (0..4096_u16)
+        .map(|i| u8::try_from(i % 251).unwrap())
+        .collect();
+    let client = Client::new([]);
+    client.set_repairs(Box::new({
+        let data = data.clone();
+        move |key| {
+            let infinidysk_nntp::RepairKey::Article(id) = key else {
+                return None;
+            };
+            if id != "article@test" {
+                return None;
+            }
+            let data = data.clone();
+            Some(Box::pin(async move {
+                Ok(Some(Body {
+                    data: data.into(),
+                    offset: 0,
+                    file_size: 4096,
+                    part: None,
+                    total: None,
+                }))
+            }))
+        }
+    }));
+    let vfs = Vfs::new(
+        db.clone(),
+        Arc::new(client),
+        Budget::new(1 << 20),
+        1 << 20,
+        "/mnt",
+    );
+    let meta = FileMeta::Nzb(NzbFile {
+        segments: Segments {
+            items: vec![Segment {
+                id: "article@test".into(),
+                size: 4096,
+                fallbacks: vec![],
+            }],
+            sizes_trusted: true,
+            ..Segments::default()
+        },
+        proof: None,
+    });
+    let nzb = BlobId::new();
+    let metadata = BlobId::new();
+    let mut item = Item::child(&parent, "file.bin", ItemKind::NzbFile).unwrap();
+    item.meta_blob = Some(metadata);
+    item.nzb_blob = Some(nzb);
+    item.size = Some(meta.size());
+    db.insert(
+        std::slice::from_ref(&item),
+        &[
+            (nzb, b"nzb".as_slice()),
+            (metadata, &blob::encode_meta(&meta).unwrap()),
+        ],
+    )
+    .await
+    .unwrap();
+    let mut analysis = vfs.open_analysis(&item).await.unwrap();
+    let mut first = [0; 17];
+    analysis.read_exact(&mut first).await.unwrap();
+    let publication = vfs.begin_publication(nzb, &[]).unwrap();
+    let mut writers = publication.writers().await;
+    let armed = infinidysk_vfs::WriteLease::arm(&mut writers);
+    let mut next = [0; 31];
+    let mut reading = Box::pin(analysis.read_exact(&mut next));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(15), &mut reading)
+            .await
+            .is_err(),
+        "the read waits while publication is unfinished"
+    );
+    armed
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(writers);
+    drop(publication);
+    reading.await.unwrap();
+    assert_eq!(next, data[17..48]);
+}

@@ -203,6 +203,9 @@ pub struct LiveReader {
     size: u64,
     positioned: bool,
     end: Option<u64>,
+    // Only for readers that hold no lease, so waiting cannot hold up a writer.
+    settle: bool,
+    settling: Option<Changed>,
 }
 
 impl LiveReader {
@@ -217,7 +220,15 @@ impl LiveReader {
             size,
             positioned: true,
             end: None,
+            settle: false,
+            settling: None,
         }
+    }
+
+    /// For readers that hold no read lease between reads: a blocked revision waits
+    /// for its active publication to end before failing.
+    pub(crate) fn settle_publications(&mut self) {
+        self.settle = true;
     }
 
     pub(crate) fn set_end(&mut self, end: u64) {
@@ -259,6 +270,19 @@ impl LiveReader {
     }
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.settle && self.version.blocked() {
+            if self.settling.is_none()
+                && let Some(mut done) = self.version.publication()
+            {
+                self.settling = Some(Box::pin(async move {
+                    let _ = done.wait_for(|done| *done).await;
+                }));
+            }
+            if let Some(settling) = &mut self.settling {
+                ready!(settling.as_mut().poll(cx));
+                self.settling = None;
+            }
+        }
         if self.version.blocked() {
             return Poll::Ready(Err(io::Error::other(
                 "repair publication needs reconciliation",

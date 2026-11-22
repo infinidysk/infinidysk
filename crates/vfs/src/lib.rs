@@ -654,7 +654,7 @@ impl Vfs {
             version,
             _lease,
         } = self.opening(item).await?;
-        live::Opened {
+        let mut reader = live::Opened {
             db: self.db.clone(),
             item: item.clone(),
             client: Arc::clone(&self.client),
@@ -666,7 +666,11 @@ impl Vfs {
             gaps: None,
             watch: None,
         }
-        .reader(&meta, source, version)
+        .reader(&meta, source, version)?;
+        if let Reader::Live(live) = &mut reader {
+            live.settle_publications();
+        }
+        Ok(reader)
     }
 
     async fn opening(&self, item: &Item) -> Result<Opening, Error> {
