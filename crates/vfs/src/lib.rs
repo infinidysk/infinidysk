@@ -213,6 +213,8 @@ pub type FaultReport = Arc<dyn Fn(ItemId, ReadVersion, usize, Fault) + Send + Sy
 type GapEntries = Arc<Mutex<HashMap<ItemId, (ReadVersion, Arc<Gaps>)>>>;
 
 struct Opening {
+    /// The item the repair context came from, refreshed when the node had no NZB link.
+    item: Item,
     meta: Arc<FileMeta>,
     source: Option<(BlobId, i64)>,
     version: ReadVersion,
@@ -615,6 +617,7 @@ impl Vfs {
             }
             Node::Item(item) | Node::IdFile(item) if item.kind != ItemKind::Directory => {
                 let Opening {
+                    item: current,
                     meta,
                     source,
                     version,
@@ -625,7 +628,7 @@ impl Vfs {
                         .start(item.id, item.path.clone(), item.size.unwrap_or(0), origin);
                 let reader = live::Opened {
                     db: self.db.clone(),
-                    item: item.clone(),
+                    item: current,
                     client: Arc::clone(&self.client),
                     budget: self.budget.clone(),
                     cache: self.cache.clone(),
@@ -649,6 +652,7 @@ impl Vfs {
     /// fault reports, and reads fail instead of zero-filling.
     pub async fn open_analysis(&self, item: &Item) -> Result<Reader, Error> {
         let Opening {
+            item,
             meta,
             source,
             version,
@@ -656,7 +660,7 @@ impl Vfs {
         } = self.opening(item).await?;
         let mut reader = live::Opened {
             db: self.db.clone(),
-            item: item.clone(),
+            item,
             client: Arc::clone(&self.client),
             budget: self.budget.clone(),
             cache: self.cache.clone(),
@@ -711,6 +715,7 @@ impl Vfs {
                         continue;
                     };
                     return Ok(Opening {
+                        item: item.clone(),
                         meta,
                         source,
                         version: fence.version(),

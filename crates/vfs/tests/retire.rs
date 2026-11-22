@@ -179,8 +179,8 @@ async fn retirement_replaces_buffered_bytes_at_the_open_cursor() {
     }
 }
 
-#[tokio::test]
-async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
+/// One NZB-linked file of 4096 repaired bytes.
+async fn linked_file() -> (Vfs, Item, BlobId, Vec<u8>) {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
     let data: Vec<u8> = (0..4096_u16)
@@ -242,6 +242,12 @@ async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
     )
     .await
     .unwrap();
+    (vfs, item, nzb, data)
+}
+
+#[tokio::test]
+async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
+    let (vfs, item, nzb, data) = linked_file().await;
     let mut analysis = vfs.open_analysis(&item).await.unwrap();
     let mut first = [0; 17];
     analysis.read_exact(&mut first).await.unwrap();
@@ -266,4 +272,76 @@ async fn an_analysis_read_waits_for_an_armed_publication_to_finish() {
     drop(publication);
     reading.await.unwrap();
     assert_eq!(next, data[17..48]);
+}
+
+#[tokio::test]
+async fn an_analysis_read_waits_for_a_publication_that_arms_after_the_awaited_one() {
+    let (vfs, item, nzb, data) = linked_file().await;
+    let mut analysis = vfs.open_analysis(&item).await.unwrap();
+    let mut first = [0; 17];
+    analysis.read_exact(&mut first).await.unwrap();
+    let unfinished = vfs.begin_publication(nzb, &[]).unwrap();
+    let mut writers = unfinished.writers().await;
+    drop(infinidysk_vfs::WriteLease::arm(&mut writers));
+    let mut next = [0; 31];
+    let mut reading = Box::pin(analysis.read_exact(&mut next));
+    let wait = std::time::Duration::from_millis(15);
+    assert!(tokio::time::timeout(wait, &mut reading).await.is_err());
+    drop(writers);
+    drop(unfinished);
+    let reconciling = vfs.begin_publication(nzb, &[]).unwrap();
+    let mut writers = reconciling.writers().await;
+    let armed = infinidysk_vfs::WriteLease::arm(&mut writers);
+    assert!(
+        tokio::time::timeout(wait, &mut reading).await.is_err(),
+        "the read waits for the publication that is still active"
+    );
+    armed
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(writers);
+    drop(reconciling);
+    reading.await.unwrap();
+    assert_eq!(next, data[17..48]);
+}
+
+#[tokio::test]
+async fn a_reader_opened_from_a_node_without_its_nzb_link_survives_retirement() {
+    let (vfs, item, _, data) = linked_file().await;
+    let retained = Item {
+        nzb_blob: None,
+        ..item.clone()
+    };
+    let mut reader = vfs
+        .open(
+            &Node::Item(retained.clone()),
+            Origin {
+                delivery: Delivery::WebDav,
+                client: "test".into(),
+                player: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let mut analysis = vfs.open_analysis(&retained).await.unwrap();
+    let mut first = [0; 17];
+    reader.read_exact(&mut first).await.unwrap();
+    analysis.read_exact(&mut first).await.unwrap();
+    let mut publication = vfs.read_fence(item.id).write().await;
+    publication
+        .retire()
+        .unwrap()
+        .acknowledge_after(async { Ok(()) })
+        .await
+        .unwrap();
+    drop(publication);
+    let mut next = [0; 31];
+    reader.read_exact(&mut next).await.unwrap();
+    assert_eq!(next, data[17..48], "reader");
+    analysis.read_exact(&mut next).await.unwrap();
+    assert_eq!(next, data[17..48], "analysis");
 }

@@ -270,10 +270,12 @@ impl LiveReader {
     }
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.settle && self.version.blocked() {
-            if self.settling.is_none()
-                && let Some(mut done) = self.version.publication()
-            {
+        // A later publication can arm the item as the awaited one ends; wait for it too.
+        while self.settle && self.version.blocked() {
+            if self.settling.is_none() {
+                let Some(mut done) = self.version.publication() else {
+                    break;
+                };
                 self.settling = Some(Box::pin(async move {
                     let _ = done.wait_for(|done| *done).await;
                 }));
