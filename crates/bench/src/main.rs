@@ -301,7 +301,10 @@ async fn seek_read(
     let start = Instant::now();
     let (mut buf, mut total, mut first) = (vec![0; READ_SIZE], 0, None);
     while total < SEEK_BYTES {
-        let n = reader.read(&mut buf).await?;
+        // Never past the target, so the timer stops at exactly SEEK_BYTES.
+        let want =
+            usize::try_from(SEEK_BYTES - total).map_or(buf.len(), |left| left.min(buf.len()));
+        let n = reader.read(&mut buf[..want]).await?;
         if n == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
