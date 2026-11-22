@@ -471,9 +471,17 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
         part: Some(3),
         ..body.clone()
     };
+    // 0 the posted repair, 1 placed one article late, 2 one byte short.
+    let misfit = Arc::new(std::sync::atomic::AtomicU8::new(0));
+    let shape = Arc::clone(&misfit);
     let lookup: infinidysk_nntp::RepairLookup = Box::new(move |requested| {
         if matches!(requested, RepairKey::Article(id) if id == non_spot) {
-            let repaired = non_spot_body.clone();
+            let mut repaired = non_spot_body.clone();
+            match shape.load(std::sync::atomic::Ordering::Relaxed) {
+                1 => repaired.offset += ARTICLE as u64,
+                2 => repaired.data.truncate(ARTICLE - 1),
+                _ => {}
+            }
             return Some(Box::pin(async move { Ok(Some(repaired)) }));
         }
         if !matches!(requested, RepairKey::Omitted(requested) if *requested == key) {
@@ -541,6 +549,34 @@ async fn verifies_existing_content_with_a_scoped_omitted_article() {
         (4 * ARTICLE + data.chunks(ARTICLE).last().unwrap().len()) as u64
     );
     assert_eq!(db.health(item.id).await.unwrap(), before);
+    misfit.store(1, std::sync::atomic::Ordering::Relaxed);
+    assert!(matches!(
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
+            .await
+            .unwrap(),
+        Availability::Source(infinidysk_nntp::Error::Repair(_))
+    ));
+    misfit.store(2, std::sync::atomic::Ordering::Relaxed);
+    assert!(matches!(
+        health
+            .check_availability(
+                item.id,
+                &CancellationToken::new(),
+                AvailabilityOptions::default()
+            )
+            .await
+            .unwrap(),
+        Availability::Damaged {
+            missing: 0,
+            corrupt: 1
+        }
+    ));
+    misfit.store(0, std::sync::atomic::Ordering::Relaxed);
     assert!(health.step().await.unwrap());
     assert_eq!(
         db.health(item.id).await.unwrap().unwrap().1.state,

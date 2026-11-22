@@ -215,6 +215,7 @@ impl Health {
                 let remaining = AtomicU64::new(options.decoded_bytes);
                 let evidence = options.evidence.as_deref();
                 let progress = &options.progress;
+                let local_repairs = direct.client.has_repair_lookup();
                 let requests =
                     segments
                         .iter()
@@ -224,14 +225,16 @@ impl Health {
                             let body = segment.id.is_empty()
                                 || corrupt.contains(&index)
                                 || [0, total / 2, total - 1].contains(&i);
+                            // A local repair is checked against this layout, so its receipt is too.
+                            let placed = body || local_repairs;
                             let slot =
                                 evidence.filter(|_| !segment.id.is_empty()).map(|evidence| {
                                     evidence.slot(Key {
                                         epoch,
                                         source,
                                         id: segment.id.clone(),
-                                        begin: body.then_some(begin).flatten(),
-                                        size: body.then_some(segment.size),
+                                        begin: placed.then_some(begin).flatten(),
+                                        size: placed.then_some(segment.size),
                                     })
                                 });
                             let body_permits = &body_permits;
@@ -249,7 +252,7 @@ impl Health {
                                     return Ok(Probe::Present);
                                 }
                                 let mut result = None;
-                                if body || direct.client.has_repair_lookup() {
+                                if placed {
                                     let _permit = body_permits
                                         .acquire()
                                         .await
@@ -274,7 +277,16 @@ impl Health {
                                         result = Some(probe);
                                         used
                                     } else {
-                                        match direct.client.repaired(&segment.id, None).await {
+                                        match direct.client.repaired(&segment.id, begin).await {
+                                            // Playback rejects a placed repair of another length.
+                                            Ok(Some(repair))
+                                                if begin.is_some()
+                                                    && repair.data.len()
+                                                        != segment.size as usize =>
+                                            {
+                                                result = Some(Probe::Corrupt);
+                                                Some(repair.data.len())
+                                            }
                                             Ok(Some(repair)) => {
                                                 result = Some(Probe::Present);
                                                 Some(repair.data.len())
