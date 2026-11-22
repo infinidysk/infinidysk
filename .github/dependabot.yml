@@ -7,7 +7,7 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: fix(deps)
     groups:
@@ -21,7 +21,7 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: fix(deps)
     groups:
@@ -35,7 +35,7 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: build(docker)
     groups:
@@ -48,7 +48,7 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: build(deps)
 
@@ -66,7 +66,7 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: chore(deps)
     groups:
@@ -75,6 +75,7 @@ updates:
     open-pull-requests-limit: 10
 
   # 1.x on the v1 branch. Dependabot only reads this file from the default branch.
+  # v1 is maintenance-only: patch updates, no minor or major bumps.
   - package-ecosystem: nuget
     directory: /
     target-branch: v1
@@ -82,15 +83,17 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: "fix(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
-      nuget-minor-and-patch:
+      nuget-patch:
         patterns:
           - "*"
         update-types:
-          - minor
           - patch
     open-pull-requests-limit: 10
 
@@ -101,9 +104,12 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: "fix(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       github-actions:
         patterns:
@@ -117,24 +123,25 @@ updates:
     schedule:
       interval: monthly
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: "fix(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       react-router:
         patterns:
           - "react-router"
           - "@react-router/*"
         update-types:
-          - minor
           - patch
-      npm-minor-and-patch:
+      npm-patch:
         patterns:
           - "*"
         exclude-patterns:
           - "react-router"
           - "@react-router/*"
         update-types:
-          - minor
           - patch
     open-pull-requests-limit: 10
