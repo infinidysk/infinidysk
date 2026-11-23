@@ -151,6 +151,49 @@ fn patch() -> Patch {
 }
 
 #[tokio::test]
+async fn retirement_checks_usage_after_the_postgres_row_lock() {
+    for fixture in fixtures().await {
+        if matches!(fixture.cleanup, Cleanup::Postgres(_, _)) {
+            fixture
+                .db
+                .write_config(
+                    &[
+                        ("legacy.repair.enabled", "1"),
+                        ("legacy.repair.last_used_ms", "1"),
+                    ],
+                    &[],
+                )
+                .await
+                .unwrap();
+            let mut conn = PgConnection::connect(&fixture.url).await.unwrap();
+            let mut hit = conn.begin().await.unwrap();
+            sqlx::query("SELECT key FROM config WHERE key = 'legacy.repair.enabled' FOR UPDATE")
+                .execute(&mut *hit)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE config SET value = '100' WHERE key = 'legacy.repair.last_used_ms'")
+                .execute(&mut *hit)
+                .await
+                .unwrap();
+            let db = fixture.db.clone();
+            let retire =
+                tokio::spawn(async move { db.disable_legacy_repairs(50, 101).await.unwrap() });
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let blocked: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid)))").fetch_one(&mut *hit).await.unwrap();
+                    if blocked { break; }
+                    tokio::task::yield_now().await;
+                }
+            }).await.unwrap();
+            hit.commit().await.unwrap();
+            assert!(!retire.await.unwrap());
+            conn.close().await.unwrap();
+        }
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
 async fn legacy_retirement_requires_the_whole_candidate_range() {
     use sha2::{Digest as _, Sha256};
     for range in [
@@ -161,16 +204,23 @@ async fn legacy_retirement_requires_the_whole_candidate_range() {
             let hash = "A".repeat(64);
             fixture
                 .db
+                .write_config(&[("legacy.repair.enabled", "1")], &[])
+                .await
+                .unwrap();
+            fixture
+                .db
                 .stage_legacy_repair(&hash, b"header", b"abc", &Sha256::digest(b"abc"), |_, _| {
                     true
                 })
                 .await
                 .unwrap();
-            fixture
-                .db
-                .legacy_repair_used(&hash, "patch@loopback", 1)
-                .await
-                .unwrap();
+            assert!(
+                fixture
+                    .db
+                    .legacy_repair_used(&hash, "patch@loopback", 1)
+                    .await
+                    .unwrap()
+            );
             let mut partial = patch();
             partial.source.range = range;
             partial.source.part = Some(if range.start == 0 { 1 } else { 3 });

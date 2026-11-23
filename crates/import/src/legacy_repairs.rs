@@ -205,10 +205,11 @@ pub async fn read(db: &Db, id: &str) -> Result<Option<Body>, infinidysk_nntp::Er
         .await
         .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair read stopped"))?
         .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair candidate is corrupt"))?;
-    db.legacy_repair_used(&hash, id, infinidysk_db::now_ms())
+    let enabled = db
+        .legacy_repair_used(&hash, id, infinidysk_db::now_ms())
         .await
         .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair usage could not be recorded"))?;
-    Ok(Some(result))
+    Ok(enabled.then_some(result))
 }
 
 /// Retirement requires a full explicit rewrite pass, zero retained candidates and seven
