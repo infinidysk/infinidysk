@@ -151,6 +151,49 @@ fn patch() -> Patch {
 }
 
 #[tokio::test]
+async fn retirement_checks_usage_after_the_postgres_row_lock() {
+    for fixture in fixtures().await {
+        if matches!(fixture.cleanup, Cleanup::Postgres(_, _)) {
+            fixture
+                .db
+                .write_config(
+                    &[
+                        ("legacy.repair.enabled", "1"),
+                        ("legacy.repair.last_used_ms", "1"),
+                    ],
+                    &[],
+                )
+                .await
+                .unwrap();
+            let mut conn = PgConnection::connect(&fixture.url).await.unwrap();
+            let mut hit = conn.begin().await.unwrap();
+            sqlx::query("SELECT key FROM config WHERE key = 'legacy.repair.enabled' FOR UPDATE")
+                .execute(&mut *hit)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE config SET value = '100' WHERE key = 'legacy.repair.last_used_ms'")
+                .execute(&mut *hit)
+                .await
+                .unwrap();
+            let db = fixture.db.clone();
+            let retire =
+                tokio::spawn(async move { db.disable_legacy_repairs(50, 101).await.unwrap() });
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let blocked: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid)))").fetch_one(&mut *hit).await.unwrap();
+                    if blocked { break; }
+                    tokio::task::yield_now().await;
+                }
+            }).await.unwrap();
+            hit.commit().await.unwrap();
+            assert!(!retire.await.unwrap());
+            conn.close().await.unwrap();
+        }
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
 async fn legacy_retirement_requires_the_whole_candidate_range() {
     use sha2::{Digest as _, Sha256};
     for range in [
@@ -161,16 +204,23 @@ async fn legacy_retirement_requires_the_whole_candidate_range() {
             let hash = "A".repeat(64);
             fixture
                 .db
+                .write_config(&[("legacy.repair.enabled", "1")], &[])
+                .await
+                .unwrap();
+            fixture
+                .db
                 .stage_legacy_repair(&hash, b"header", b"abc", &Sha256::digest(b"abc"), |_, _| {
                     true
                 })
                 .await
                 .unwrap();
-            fixture
-                .db
-                .legacy_repair_used(&hash, "patch@loopback", 1)
-                .await
-                .unwrap();
+            assert!(
+                fixture
+                    .db
+                    .legacy_repair_used(&hash, "patch@loopback", 1)
+                    .await
+                    .unwrap()
+            );
             let mut partial = patch();
             partial.source.range = range;
             partial.source.part = Some(if range.start == 0 { 1 } else { 3 });
@@ -1202,10 +1252,49 @@ async fn exhausted_generations_fail_without_reusing_a_source_version() {
 }
 
 #[tokio::test]
+async fn sibling_changes_before_or_after_settlement_require_a_new_check() {
+    for fixture in fixtures().await {
+        let db = &fixture.db;
+        let owner = Owner::Item(fixture.file.id);
+        let mut sibling = fixture.file.clone();
+        sibling.id = ItemId::new();
+        sibling.name = "sibling.bin".into();
+        sibling.path = "/content/sibling.bin".into();
+        let meta = BlobId::new();
+        sibling.meta_blob = Some(meta);
+        db.insert(&[sibling], &[(meta, b"initial")]).await.unwrap();
+        let id = db.request_par2(owner, false, 0).await.unwrap().unwrap();
+        let job = db.claim_par2(1).await.unwrap().unwrap();
+        db.update_blob(meta, b"during verification").await.unwrap();
+        db.finish_par2(job.claim(), 2, "", 0, 0, 2, None, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.par2_result(owner, false).await.unwrap().unwrap().state,
+            4
+        );
+        let job = db.claim_par2(3).await.unwrap().unwrap();
+        db.finish_par2(job.claim(), 2, "", 0, 0, 4, None, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.par2_result(owner, false).await.unwrap().unwrap().state,
+            2
+        );
+        db.update_blob(meta, b"after settlement").await.unwrap();
+        assert!(db.par2_result(owner, false).await.unwrap().is_none());
+        assert_eq!(db.request_par2(owner, false, 5).await.unwrap(), Some(id));
+        assert_eq!(db.claim_par2(6).await.unwrap().unwrap().id, id);
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
 async fn additive_migration_keeps_existing_files_and_starts_their_generation_at_zero() {
     for mut fixture in fixtures().await {
         fixture.db.close().await;
-        let old_schema = "DROP TABLE repair_jobs;
+        let old_schema = "DROP TABLE repair_coverage;
+            DROP TABLE repair_jobs;
             DROP TABLE legacy_repair_articles;
             DROP TABLE repair_patches;
             ALTER TABLE blobs DROP COLUMN generation;
@@ -1348,10 +1437,28 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
             .unwrap();
         let before = fixture.db.blob_epoch();
         let evicted = fixture.db.repair_epoch();
+        let observation = fixture.db.repair_observation(evicted).unwrap();
+        let writer = fixture.db.clone();
+        let eviction = tokio::spawn(async move { writer.evict_patch(repair.id).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while fixture.db.repair_observation(evicted).is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!eviction.is_finished());
         assert_eq!(
-            fixture.db.evict_patch(repair.id).await.unwrap(),
+            fixture.db.repair_epoch(),
+            evicted,
+            "a queued writer does not advance the epoch while an observation is held"
+        );
+        drop(observation);
+        assert_eq!(
+            eviction.await.unwrap().unwrap(),
             vec![(fixture.file.id, fixture.file.path.clone())]
         );
+        assert!(fixture.db.repair_observation(evicted).is_none());
         assert!(fixture.db.blob_epoch() > before);
         assert!(fixture.db.repair_epoch() > evicted);
         assert_eq!(
@@ -1420,6 +1527,49 @@ async fn an_idempotent_publication_retry_keeps_later_defect_evidence() {
         assert_eq!(
             fixture.db.media_probe(id).await.unwrap().defect,
             Some(defect)
+        );
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn a_replay_after_an_uncertain_commit_finds_exactly_its_own_publication() {
+    for fixture in fixtures().await {
+        let source = fixture.source().await;
+        let first = patch();
+        let publish = |patches: Vec<Patch>, metadata: &'static [u8]| {
+            let (db, source) = (fixture.db.clone(), source.clone());
+            async move {
+                db.publish_repair((), &source, &patches, Some(metadata))
+                    .await
+            }
+        };
+        assert!(publish(vec![first.clone()], b"repaired").await.unwrap());
+        // The same batch again, as after a COMMIT whose result was lost.
+        assert!(
+            publish(vec![first.clone()], b"repaired").await.unwrap(),
+            "a replay of a committed publication succeeds"
+        );
+        let mut other = patch();
+        other.source.message_id = Some("other@loopback".to_owned());
+        assert!(
+            !publish(vec![other], b"repaired").await.unwrap(),
+            "another batch for the old source is stale"
+        );
+        assert!(
+            !publish(vec![first.clone()], b"other metadata")
+                .await
+                .unwrap(),
+            "other metadata for the old source is stale"
+        );
+        fixture
+            .db
+            .update_blob(fixture.meta, b"repaired")
+            .await
+            .unwrap();
+        assert!(
+            !publish(vec![first], b"repaired").await.unwrap(),
+            "a later metadata write is not this publication"
         );
         fixture.close().await;
     }

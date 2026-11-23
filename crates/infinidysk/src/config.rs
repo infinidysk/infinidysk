@@ -180,7 +180,12 @@ pub struct Experiment {
     pub description: &'static str,
 }
 
-pub const EXPERIMENTS: [Experiment; 2] = [
+pub const EXPERIMENTS: [Experiment; 3] = [
+    Experiment {
+        name: "par2-repair",
+        title: "Repair original articles with PAR2",
+        description: "Repairs damaged files with their PAR2 recovery data when Arr replacement cannot, and checks degraded files before they fail. Repairs are stored on disk. Kernel and throughput validation is still pending; back up your config before enabling. Applies after restart.",
+    },
     Experiment {
         name: "win-floor",
         title: "Deeper read-ahead for large articles",

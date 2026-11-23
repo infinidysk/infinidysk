@@ -207,6 +207,7 @@ pub struct Db {
     blob_epoch: Arc<AtomicU64>,
     /// See [`Db::repair_epoch`].
     repair_epoch: Arc<AtomicU64>,
+    repair_commits: Arc<RwLock<()>>,
     repair_present: Arc<AtomicBool>,
 }
 
@@ -1115,6 +1116,7 @@ impl Db {
             announcing: Arc::default(),
             blob_epoch: Arc::default(),
             repair_epoch: Arc::default(),
+            repair_commits: Arc::default(),
             repair_present: Arc::new(AtomicBool::new(repair_present)),
         })
     }
@@ -2252,6 +2254,12 @@ impl Db {
     /// Changes after repair patches are published or evicted in this process.
     pub fn repair_epoch(&self) -> u64 {
         self.repair_epoch.load(Ordering::Acquire)
+    }
+
+    /// Keep an observed repair catalog stable, or decline while a writer is pending.
+    pub fn repair_observation(&self, epoch: u64) -> Option<tokio::sync::RwLockReadGuard<'_, ()>> {
+        let stable = self.repair_commits.try_read().ok()?;
+        (epoch == self.repair_epoch()).then_some(stable)
     }
 
     /// Every stored config entry as `(key, value)`.

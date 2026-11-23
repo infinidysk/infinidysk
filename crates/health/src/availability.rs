@@ -298,6 +298,7 @@ impl Health {
                                                 Some(repair.data.len())
                                             }
                                             Ok(None) => Some(0),
+                                            Err(SourceError::DamagedRepair(bytes)) => Some(bytes),
                                             Err(error) => {
                                                 result = Some(Probe::Inconclusive(error));
                                                 None
@@ -308,10 +309,25 @@ impl Health {
                                         progress
                                             .body_bytes
                                             .fetch_add(used as u64, Ordering::Relaxed);
-                                        remaining.fetch_add(
-                                            MAX_DECODED_LEN as u64 - used as u64,
-                                            Ordering::Relaxed,
-                                        );
+                                        if used <= MAX_DECODED_LEN {
+                                            remaining.fetch_add(
+                                                (MAX_DECODED_LEN - used) as u64,
+                                                Ordering::Relaxed,
+                                            );
+                                        } else if remaining
+                                            .try_update(
+                                                Ordering::Relaxed,
+                                                Ordering::Relaxed,
+                                                |left| {
+                                                    left.checked_sub(
+                                                        (used - MAX_DECODED_LEN) as u64,
+                                                    )
+                                                },
+                                            )
+                                            .is_err()
+                                        {
+                                            return Err("source read allowance exceeded");
+                                        }
                                     }
                                 }
                                 let result = match result {

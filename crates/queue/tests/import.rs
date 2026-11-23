@@ -580,7 +580,7 @@ async fn missing_import(complete_during_import: bool) {
                 .unwrap()
                 .unwrap();
             let job = db.claim_par2(1).await.unwrap().unwrap();
-            db.finish_par2(job.claim(), 3, "repaired", 0, 0, 2, None)
+            db.finish_par2(job.claim(), 3, "repaired", 0, 0, 2, None, 0)
                 .await
                 .unwrap();
             release.send(()).unwrap();

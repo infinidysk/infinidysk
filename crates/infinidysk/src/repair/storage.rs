@@ -1,0 +1,235 @@
+//! Standalone SQLite backups carry verified patch bytes; the live store stays separate.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use anyhow::{Context as _, Result};
+use infinidysk_db::Db;
+use infinidysk_vfs::Vfs;
+use tokio_util::sync::CancellationToken;
+
+use super::{READERS, Repairs};
+
+impl Repairs {
+    /// Payload bytes a backup embeds: only repairs the live catalog references.
+    pub async fn backup_bytes(&self) -> Result<u64> {
+        let (mut after, mut bytes) = (None, 0u64);
+        loop {
+            let patches = self.db.repair_files(after).await?;
+            let Some(last) = patches.last() else {
+                return Ok(bytes);
+            };
+            after = Some(last.id);
+            for patch in &patches {
+                bytes = bytes.saturating_add(patch.source.range.len());
+            }
+        }
+    }
+
+    pub async fn backup_into(
+        self: &Arc<Self>,
+        path: &Path,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        let _lifecycle = tokio::select! {
+            lifecycle = self.lifecycle.lock() => lifecycle,
+            () = cancel.cancelled() => anyhow::bail!("backup cancelled"),
+        };
+        let stopped = cancel.clone();
+        self.db
+            .backup_into(path, move || stopped.is_cancelled())
+            .await?;
+        let snapshot = Db::connect(&crate::app::sqlite_url(path)).await?;
+        let result = async {
+            let mut after = None;
+            loop {
+                let patches = snapshot.repair_files(after).await?;
+                if patches.is_empty() {
+                    break;
+                }
+                for patch in patches {
+                    anyhow::ensure!(!cancel.is_cancelled(), "backup cancelled");
+                    after = Some(patch.id);
+                    let repairs = Arc::clone(self);
+                    // A backup is not a client read, so it keeps the eviction order.
+                    let (patch, data) = tokio::task::spawn_blocking(move || {
+                        // A store that cannot open is a failed read; an embedded copy may remain.
+                        let data = repairs
+                            .store(u64::MAX)
+                            .and_then(|store| store.read_untouched(&patch))
+                            .map(|body| body.data);
+                        (patch, data)
+                    })
+                    .await?;
+                    let error = match data {
+                        Ok(data) => {
+                            snapshot.set_repair_payload(&patch, Some(&data)).await?;
+                            continue;
+                        }
+                        Err(error) => error,
+                    };
+                    // Startup keeps an embedded payload it could not move into the live store,
+                    // so the copied catalog may still hold it. Keep it only if its bytes match.
+                    if let Some(data) = snapshot.repair_payload(patch.id).await? {
+                        match snapshot.set_repair_payload(&patch, Some(&data)).await {
+                            Ok(()) => continue,
+                            Err(infinidysk_db::Error::Corrupt(_)) => {}
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
+                    // A restore has no live store, so the backup drops the reference
+                    // as eviction would, and its files are checked again after restore.
+                    tracing::warn!(
+                        patch = %patch.id,
+                        reason = %error,
+                        "a stored repair cannot be read and is left out of the backup"
+                    );
+                    snapshot.evict_patch(patch.id).await?;
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        snapshot.close().await;
+        result?;
+        let path = path.to_owned();
+        tokio::task::spawn_blocking(move || std::fs::File::open(path)?.sync_all()).await??;
+        Ok(())
+    }
+
+    /// A retained older database may still reference repair files the live one dropped.
+    pub(super) async fn retains_old_database(&self) -> Result<bool> {
+        if self
+            .path
+            .with_file_name(crate::database::PRE_POSTGRES)
+            .try_exists()?
+        {
+            return Ok(true);
+        }
+        if let Some(stats) = self.db.sqlite_stats().await? {
+            let undo = std::path::PathBuf::from(format!("{}.before-restore", stats.path.display()));
+            // The old live database pins its patches while undo remains available.
+            return Ok(undo.try_exists()?);
+        }
+        Ok(false)
+    }
+
+    /// Called before delivery starts. Keep embedded bytes until the store is durable.
+    pub async fn restore_embedded(self: &Arc<Self>) -> Result<()> {
+        let mut after = None;
+        let mut damaged = Vec::new();
+        loop {
+            let patches = self.db.repair_file_page(after).await?;
+            if patches.is_empty() {
+                break;
+            }
+            for (id, patch) in patches {
+                after = Some(id);
+                let patch = match patch {
+                    Ok(patch) => patch,
+                    Err(error) => {
+                        tracing::warn!(patch = %id, reason = %error, "saved repair descriptor is invalid; affected files need a check");
+                        damaged.push(id);
+                        continue;
+                    }
+                };
+                let data = self.db.repair_payload(id).await?;
+                let embedded = data.is_some();
+                let repairs = Arc::clone(self);
+                let result = tokio::task::spawn_blocking(move || -> Result<_> {
+                    let store = repairs.store(u64::MAX)?;
+                    if let Some(data) = data {
+                        store.restore(&patch, &data, || false)?;
+                    }
+                    store.read_untouched(&patch)?;
+                    Ok(patch)
+                })
+                .await?;
+                match result {
+                    Ok(patch) if embedded => self.db.set_repair_payload(&patch, None).await?,
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(reason = %error, "a saved repair is missing or corrupt; affected files need a check");
+                        damaged.push(id);
+                    }
+                }
+            }
+        }
+        for id in damaged {
+            self.db.recheck_missing_repair(id).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn cleanup(self: &Arc<Self>, vfs: &Vfs, cancel: &CancellationToken) -> Result<u64> {
+        let lifecycle = tokio::select! {
+            lifecycle = Arc::clone(&self.lifecycle).lock_owned() => lifecycle,
+            () = cancel.cancelled() => anyhow::bail!("cleanup cancelled"),
+        };
+        let paused = tokio::select! {
+            paused = self.db.pause_writes() => paused,
+            () = cancel.cancelled() => anyhow::bail!("cleanup cancelled"),
+        };
+        // The retained SQLite database shares the repair directory after a cutover.
+        if !self.path.try_exists()? || self.retains_old_database().await? {
+            return Ok(0);
+        }
+        let (nzbs, articles) = vfs.repair_pins();
+        // Reconcile uncertain commits before taking the authoritative keep snapshot.
+        self.db.drain_repair_writes().await?;
+        let mut after = None;
+        loop {
+            let patches = self.db.repair_files(after).await?;
+            if patches.is_empty() {
+                break;
+            }
+            for patch in patches {
+                anyhow::ensure!(!cancel.is_cancelled(), "cleanup cancelled");
+                after = Some(patch.id);
+                // File/reader identities can outlive SQL owners and cache eviction.
+                let source = self.db.patch_nzb(patch.id).await?;
+                let pinned = source.is_some_and(|source| nzbs.contains(&source))
+                    || patch
+                        .source
+                        .message_id
+                        .as_ref()
+                        .is_some_and(|id| articles.contains(id));
+                if !pinned {
+                    self.db.remove_unused_patch(patch.id).await?;
+                }
+            }
+        }
+        let repairs = Arc::clone(self);
+        let stopped = cancel.clone();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let _guards = (lifecycle, paused);
+            repairs.store(u64::MAX)?.prune(
+                |id| {
+                    runtime.block_on(async {
+                        use infinidysk_nntp::patch::Error;
+                        let source =
+                            repairs.db.patch_nzb(id).await.map_err(|_| {
+                                Error::Integrity("repair references cannot be read")
+                            })?;
+                        if source.is_some() {
+                            return Ok(None);
+                        }
+                        // A lookup may already hold a descriptor whose SQL owner was just deleted.
+                        // Shutdown must not wait for that reader; the file stays for a later pass.
+                        tokio::select! {
+                            readers = Arc::clone(&repairs.readers)
+                                .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32")) =>
+                                readers.map(Some).map_err(|_| Error::Recovery),
+                            () = stopped.cancelled() => Err(Error::Cancelled),
+                        }
+                    })
+                },
+                || stopped.is_cancelled(),
+            )
+        })
+        .await
+        .context("repair cleanup stopped")?
+        .map_err(Into::into)
+    }
+}

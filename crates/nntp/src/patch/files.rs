@@ -167,6 +167,7 @@ pub(super) fn evict<G>(
     dir: &File,
     mut used: u64,
     room: impl Fn(u64) -> bool,
+    eligible: impl Fn(PatchId) -> Result<bool, Error>,
     remove: impl Fn(PatchId) -> Result<Option<G>, Error>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<u64, Error> {
@@ -195,16 +196,37 @@ pub(super) fn evict<G>(
         files.push(((metadata.st_mtime, metadata.st_mtime_nsec), name, id, size));
     }
     files.sort_unstable_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-    let mut removed = 0;
-    for (_, name, id, size) in files {
-        if room(used) {
-            break;
-        }
+    let mut files = files.into_iter();
+    let mut plan = Vec::new();
+    let mut planned = used;
+    while !room(planned) {
+        let Some((_, name, id, size)) = files.next() else {
+            return Err(Error::Capacity);
+        };
         check(cancelled)?;
+        if eligible(id)? {
+            plan.push(Ok((id, name, size)));
+            planned = planned.saturating_sub(size);
+        }
+    }
+    // Later files stand in for planned ones that `remove` declines.
+    let reserve = files.filter_map(|(_, name, id, size)| match eligible(id) {
+        Ok(true) => Some(Ok((id, name, size))),
+        Ok(false) => None,
+        Err(error) => Some(Err(error)),
+    });
+    let mut removed = 0;
+    let mut candidates = plan.into_iter().chain(reserve);
+    while !room(used) {
+        check(cancelled)?;
+        let Some(candidate) = candidates.next() else {
+            break;
+        };
+        let (id, name, size) = candidate?;
         if let Some(_guard) = remove(id)? {
             unlinkat(dir, name.as_str(), UnlinkatFlags::NoRemoveDir)?;
-            used = used.saturating_sub(size);
             removed += 1;
+            used = used.saturating_sub(size);
         }
     }
     dir.sync_all()?;
@@ -294,21 +316,30 @@ pub(super) fn validate_file(
     let mut prefix = [0; PREFIX_LEN];
     exact(file, &mut prefix)?;
     let length = header_length(&prefix)?;
-    if metadata.len() != length as u64 + expected.source.range.len() {
-        return Err(Error::Integrity("repair file length"));
-    }
     let mut header = vec![0; length];
     header[..PREFIX_LEN].copy_from_slice(&prefix);
     exact(file, &mut header[PREFIX_LEN..])?;
     if Patch::decode(&header)? != *expected {
         return Err(Error::Integrity("repair identity"));
     }
+    let expected_length = length as u64 + expected.source.range.len();
+    if metadata.len() < expected_length {
+        return Err(Error::Integrity("truncated repair payload"));
+    }
+    if metadata.len() != expected_length {
+        return Err(Error::Integrity("repair file length"));
+    }
     let mut remaining = expected.source.range.len();
     let mut hash = Sha256::new();
     let mut buffer = [0; 16 * 1024];
     while remaining > 0 {
         let count = usize::try_from(remaining.min(buffer.len() as u64)).expect("bounded chunk");
-        exact(file, &mut buffer[..count])?;
+        let count = match file.read(&mut buffer[..count]) {
+            Ok(0) => return Err(Error::Integrity("truncated repair file")),
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
         hash.update(&buffer[..count]);
         if let Some(output) = &mut output {
             output.extend_from_slice(&buffer[..count]);

@@ -19,6 +19,12 @@ const FORGET_DEFECTS: &str = "UPDATE media_probes SET defect_offset = NULL, defe
      defect_seen_at = NULL, defect_source = NULL \
      WHERE item_id IN (SELECT id FROM items WHERE nzb_blob = $1)";
 
+/// Replace repaired metadata only while the item still owns it at the captured generations.
+const REPAIRED_METADATA: &str = "UPDATE blobs SET data = $2, generation = generation + 1 \
+     WHERE id = $1 AND generation = $3 \
+     AND EXISTS (SELECT 1 FROM items i JOIN blobs n ON n.id = i.nzb_blob \
+     WHERE i.id = $4 AND i.meta_blob = $1 AND n.id = $5 AND n.generation = $6)";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Item(ItemId),
@@ -202,9 +208,10 @@ impl Db {
         Ok(())
     }
 
-    pub async fn recheck_missing_repairs(&self) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE health_state <> 7 AND nzb_blob IN (SELECT nzb_blob FROM repair_patches)")
-            .execute(pool).await?.rows_affected());
+    /// Makes every file of the NZB that owns repair `id` due for a check.
+    pub async fn recheck_missing_repair(&self, id: infinidysk_core::PatchId) -> Result<(), Error> {
+        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE health_state <> 7 AND nzb_blob = (SELECT nzb_blob FROM repair_patches WHERE id = $1)")
+            .bind(id.0).execute(pool).await?.rows_affected());
         Ok(())
     }
     /// Catalog order is stable across deletion; at most 64 descriptors per page.
@@ -212,11 +219,25 @@ impl Db {
         &self,
         after: Option<infinidysk_core::PatchId>,
     ) -> Result<Vec<Patch>, Error> {
+        self.repair_file_page(after)
+            .await?
+            .into_iter()
+            .map(|(_, patch)| patch)
+            .collect()
+    }
+
+    pub async fn repair_file_page(
+        &self,
+        after: Option<infinidysk_core::PatchId>,
+    ) -> Result<Vec<(infinidysk_core::PatchId, Result<Patch, Error>)>, Error> {
         let rows: Vec<Row> = on!(self, pool => match after {
             Some(id) => sqlx::query_as(concat!(columns!(), " FROM repair_patches p WHERE p.id > $1 ORDER BY p.id LIMIT 64")).bind(id.0).fetch_all(pool).await?,
             None => sqlx::query_as(concat!(columns!(), " FROM repair_patches p ORDER BY p.id LIMIT 64")).fetch_all(pool).await?,
         });
-        rows.iter().map(decode).collect()
+        Ok(rows
+            .iter()
+            .map(|row| (infinidysk_core::PatchId(row.id), decode(row)))
+            .collect())
     }
 
     pub async fn repair_payload(
@@ -243,8 +264,12 @@ impl Db {
                 ));
             }
         }
+        // Backups embed payloads into a SQLite copy; a full disk there must read as one.
+        let sqlite = matches!(self.pool, Pool::Sqlite(_));
         on!(self, pool => sqlx::query("UPDATE repair_patches SET backup_payload = $2 WHERE id = $1 AND descriptor = $3")
-            .bind(patch.id.0).bind(data).bind(patch.encode()?).execute(pool).await?.rows_affected());
+            .bind(patch.id.0).bind(data).bind(patch.encode()?).execute(pool).await
+            .map_err(|error| if sqlite { crate::backup::sqlite_error(error) } else { error.into() })?
+            .rows_affected());
         Ok(())
     }
 
@@ -270,6 +295,7 @@ impl Db {
         &self,
         id: infinidysk_core::PatchId,
     ) -> Result<Vec<(ItemId, String)>, Error> {
+        let _commit = self.repair_commits.write().await;
         let items: Vec<(Uuid, String)> = on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
             let nzb: Option<Uuid> = sqlx::query_scalar("DELETE FROM repair_patches WHERE id = $1 RETURNING nzb_blob")
@@ -328,10 +354,7 @@ impl Db {
                 sqlx::query("SELECT id FROM blobs WHERE id = $1 OR id = $2 ORDER BY id FOR UPDATE")
                     .bind(source.nzb.0).bind(meta.0).execute(&mut *tx).await?;
             }
-            let changed = sqlx::query(
-            "UPDATE blobs SET data = $2, generation = generation + 1 WHERE id = $1 AND generation = $3 \
-             AND EXISTS (SELECT 1 FROM items i JOIN blobs n ON n.id = i.nzb_blob \
-             WHERE i.id = $4 AND i.meta_blob = $1 AND n.id = $5 AND n.generation = $6)")
+            let changed = sqlx::query(REPAIRED_METADATA)
             .bind(meta.0).bind(data).bind(generation).bind(item.0).bind(source.nzb.0).bind(source.generation)
             .execute(&mut *tx).await?.rows_affected();
             if changed > 0 && let Some(check) = check {
@@ -449,6 +472,13 @@ impl Db {
         self.repair_present.load(Ordering::Acquire)
     }
 
+    /// Every stored article repair, eligible or not: a superset for cheap read misses.
+    pub async fn repair_message_ids(&self) -> Result<Vec<String>, Error> {
+        Ok(on!(self, pool => sqlx::query_scalar(
+            "SELECT DISTINCT message_id FROM repair_patches WHERE message_id IS NOT NULL")
+            .fetch_all(pool).await?))
+    }
+
     /// Named-article candidates across current owners. Callers must reject different
     /// payload/range identities before selecting a local file; message IDs alone do not
     /// justify choosing between conflicting repairs.
@@ -483,19 +513,57 @@ impl Db {
         source: &Source,
         patches: &[Patch],
     ) -> Result<bool, Error> {
-        if patches.is_empty() || patches.len() > MAX_PATCHES {
+        self.publish_repair(guard, source, patches, None).await
+    }
+
+    /// [`publish_patches`](Self::publish_patches) plus the repaired file metadata in the
+    /// same transaction, so neither becomes visible without the other. A retry after an
+    /// uncertain COMMIT returns true when it finds exactly this publication committed.
+    pub async fn publish_repair(
+        &self,
+        guard: impl Send + 'static,
+        source: &Source,
+        patches: &[Patch],
+        metadata: Option<&[u8]>,
+    ) -> Result<bool, Error> {
+        self.publish_replacements(guard, source, patches, metadata, Vec::new(), None)
+            .await
+    }
+
+    pub async fn publish_replacements(
+        &self,
+        guard: impl Send + 'static,
+        source: &Source,
+        patches: &[Patch],
+        metadata: Option<&[u8]>,
+        replacements: Vec<(infinidysk_core::PatchId, infinidysk_core::PatchId)>,
+        claim: Option<Claim>,
+    ) -> Result<bool, Error> {
+        if (patches.is_empty() && (metadata.is_none() || claim.is_none()))
+            || patches.len() > MAX_PATCHES
+        {
             return Err(Error::RepairBounds("batch size"));
         }
         let (db, source, patches) = (self.clone(), source.clone(), patches.to_vec());
+        let metadata = metadata.map(<[u8]>::to_vec);
         owned(tokio::spawn(async move {
-            let result = db.write_patches(&source, &patches).await;
+            let result = db
+                .write_patches(&source, &patches, metadata.as_deref(), &replacements, claim)
+                .await;
             drop(guard);
             result
         }))
         .await
     }
 
-    async fn write_patches(&self, source: &Source, patches: &[Patch]) -> Result<bool, Error> {
+    async fn write_patches(
+        &self,
+        source: &Source,
+        patches: &[Patch],
+        metadata: Option<&[u8]>,
+        replacements: &[(infinidysk_core::PatchId, infinidysk_core::PatchId)],
+        claim: Option<Claim>,
+    ) -> Result<bool, Error> {
         let encoded: Vec<_> = patches
             .iter()
             .map(|patch| {
@@ -505,6 +573,7 @@ impl Db {
                 Ok(patch.encode()?)
             })
             .collect::<Result<_, Error>>()?;
+        let _commit = self.repair_commits.write().await;
         let postgres = matches!(self.pool, Pool::Postgres(_));
         on!(self, pool => {
             // Never return a connection with a changed durability setting to the pool,
@@ -529,13 +598,43 @@ impl Db {
                     .bind(source.nzb.0).bind(source.metadata.map(|(id, _)| id.0))
                     .execute(&mut *tx).await?;
             }
-            if capture!(&mut *tx, source.owner) != Some(source.clone()) {
+            let current = capture!(&mut *tx, source.owner);
+            if current != Some(source.clone()) {
+                // An uncertain COMMIT of this batch advanced the metadata generation. A replay
+                // that finds exactly that publication succeeded; any other change refuses.
+                let mut replayed = false;
+                if let (Some(current), Some(data), Some((meta, then))) =
+                    (current, metadata, source.metadata)
+                    && current.metadata == then.checked_add(1).map(|next| (meta, next))
+                    && current == (Source { metadata: current.metadata, ..source.clone() })
+                {
+                    let stored: Option<Vec<u8>> =
+                        sqlx::query_scalar("SELECT data FROM blobs WHERE id = $1")
+                            .bind(meta.0).fetch_optional(&mut *tx).await?;
+                    replayed = stored.as_deref() == Some(data);
+                    for (patch, descriptor) in patches.iter().zip(&encoded) {
+                        if !replayed {
+                            break;
+                        }
+                        let row: Option<(Uuid, i64, Vec<u8>)> = sqlx::query_as(
+                            "SELECT nzb_blob, generation, descriptor FROM repair_patches WHERE id = $1",
+                        ).bind(patch.id.0).fetch_optional(&mut *tx).await?;
+                        replayed = row.is_some_and(|(nzb, generation, stored)| {
+                            nzb == source.nzb.0 && generation == source.generation && &stored == descriptor
+                        });
+                    }
+                }
                 tx.rollback().await?;
-                return Ok(false);
+                return Ok(replayed);
             }
             let mut inserted = false;
             for (patch, descriptor) in patches.iter().zip(&encoded) {
                 let s = &patch.source;
+                if let Some((_, old)) = replacements.iter().find(|(new, _)| *new == patch.id) {
+                    let previous = Patch { id: *old, ..patch.clone() }.encode()?;
+                    sqlx::query("DELETE FROM repair_patches WHERE id = $1 AND descriptor = $2 AND nzb_blob = $3 AND generation = $4")
+                        .bind(old.0).bind(previous).bind(source.nzb.0).bind(source.generation).execute(&mut *tx).await?;
+                }
                 let start = i64::try_from(s.range.start).expect("validated SQL offset");
                 let end = i64::try_from(s.range.end).expect("validated SQL offset");
                 let existing: Vec<(Uuid, i64, Vec<u8>)> = sqlx::query_as(
@@ -564,7 +663,28 @@ impl Db {
                     .bind(&s.message_id).bind(descriptor).execute(&mut *tx).await?;
                 inserted = true;
             }
+            if let Some(data) = metadata {
+                let changed = match (source.metadata, source.owner) {
+                    (Some((meta, generation)), Owner::Item(item)) => sqlx::query(REPAIRED_METADATA)
+                        .bind(meta.0).bind(data).bind(generation).bind(item.0)
+                        .bind(source.nzb.0).bind(source.generation)
+                        .execute(&mut *tx).await?.rows_affected(),
+                    _ => 0,
+                };
+                if changed == 0 {
+                    tx.rollback().await?;
+                    return Ok(false);
+                }
+            }
             // An idempotent retry adds no bytes, so later defect evidence still stands.
+            if let (Some(claim), Some((meta, generation)), Owner::Item(item)) = (claim, source.metadata, source.owner) {
+                let matched = sqlx::query("UPDATE repair_coverage SET generation = generation + 1 WHERE job_id = $1 AND item_id = $2 AND meta_blob = $3 AND generation = $4 AND EXISTS (SELECT 1 FROM repair_jobs WHERE id = $1 AND claim_generation = $5 AND state = 1)")
+                    .bind(claim.id).bind(item.0).bind(meta.0).bind(generation).bind(claim.generation).execute(&mut *tx).await?.rows_affected();
+                if matched == 0 {
+                    tx.rollback().await?;
+                    return Ok(false);
+                }
+            }
             if inserted {
                 sqlx::query(FORGET_DEFECTS).bind(source.nzb.0).execute(&mut *tx).await?;
             }

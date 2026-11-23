@@ -4,6 +4,8 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{Db, Error, Pool, on};
 
+const LOCK_ENABLED: &str = "SELECT key FROM config WHERE key = 'legacy.repair.enabled' FOR UPDATE";
+
 impl Db {
     /// Keep a durable failure report separate from staged, usable candidate bytes.
     /// Original C# files remain untouched in their source directory.
@@ -89,16 +91,41 @@ impl Db {
         )
     }
 
-    pub async fn legacy_repair_used(&self, hash: &str, id: &str, now: i64) -> Result<(), Error> {
+    pub async fn legacy_repair_used(&self, hash: &str, id: &str, now: i64) -> Result<bool, Error> {
         on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
+            let lock = if matches!(self.pool, Pool::Postgres(_)) { LOCK_ENABLED } else { "SELECT key FROM config WHERE key = 'legacy.repair.enabled'" };
+            if sqlx::query(lock).fetch_optional(&mut *tx).await?.is_none() {
+                tx.rollback().await?;
+                return Ok(false);
+            }
             sqlx::query("UPDATE legacy_repair_articles SET message_id = $2 WHERE hash = $1").bind(hash).bind(id).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO config (key, value) VALUES ('legacy.repair.hits', '1') ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(config.value AS BIGINT) + 1 AS TEXT)").execute(&mut *tx).await?;
             sqlx::query("INSERT INTO config (key, value) VALUES ('legacy.repair.last_used_ms', $1) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
                 .bind(now.to_string()).execute(&mut *tx).await?;
             tx.commit().await?;
         });
-        Ok(())
+        Ok(true)
+    }
+
+    /// Disable the legacy catalog only if its last use, read now, is at or before `cutoff`.
+    pub async fn disable_legacy_repairs(&self, cutoff: i64, now: i64) -> Result<bool, Error> {
+        Ok(on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            if matches!(self.pool, Pool::Postgres(_)) {
+                sqlx::query(LOCK_ENABLED).execute(&mut *tx).await?;
+            }
+            let disabled = sqlx::query("DELETE FROM config WHERE key = 'legacy.repair.enabled' AND COALESCE(\
+                (SELECT CAST(value AS BIGINT) FROM config WHERE key = 'legacy.repair.last_used_ms'), \
+                (SELECT CAST(value AS BIGINT) FROM config WHERE key = 'legacy.repair.staged_at_ms')) <= $1")
+                .bind(cutoff).execute(&mut *tx).await?.rows_affected() == 1;
+            if disabled {
+                sqlx::query("INSERT INTO config (key, value) VALUES ('legacy.repair.retired_at_ms', $1) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+                    .bind(now.to_string()).execute(&mut *tx).await?;
+            }
+            tx.commit().await?;
+            disabled
+        }))
     }
 
     /// The importer decodes its temporary header format; unknown extents stay retained.

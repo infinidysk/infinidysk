@@ -205,49 +205,44 @@ pub async fn read(db: &Db, id: &str) -> Result<Option<Body>, infinidysk_nntp::Er
         .await
         .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair read stopped"))?
         .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair candidate is corrupt"))?;
-    db.legacy_repair_used(&hash, id, infinidysk_db::now_ms())
+    let enabled = db
+        .legacy_repair_used(&hash, id, infinidysk_db::now_ms())
         .await
         .map_err(|_| infinidysk_nntp::Error::Repair("legacy repair usage could not be recorded"))?;
-    Ok(Some(result))
+    Ok(enabled.then_some(result))
 }
 
 /// Retirement requires a full explicit rewrite pass, zero retained candidates and seven
 /// days with no old-format use. Original C# files are never deleted by this migration.
+/// Once retired, or when nothing was imported, the idle worker's calls write nothing.
 pub async fn finish_rewrite(db: &Db, full_pass: bool) -> Result<(), infinidysk_db::Error> {
-    if !full_pass
-        || db
-            .retire_legacy_repairs(|header, length| {
-                let header = parse_header(header, length).ok()?;
-                Some(infinidysk_core::ByteRange {
-                    start: header.part_offset,
-                    end: header.part_offset.checked_add(header.part_size)?,
-                })
-            })
-            .await?
-            != 0
-    {
+    if !full_pass {
         return Ok(());
     }
     let config = db.config().await?;
-    let last = config
+    if !config
         .iter()
-        .find(|(key, _)| key == "legacy.repair.last_used_ms")
-        .or_else(|| {
-            config
-                .iter()
-                .find(|(key, _)| key == "legacy.repair.staged_at_ms")
-        })
-        .and_then(|(_, value)| value.parse::<i64>().ok());
-    if last.is_some_and(|last| infinidysk_db::now_ms().saturating_sub(last) >= 7 * 86_400_000) {
-        db.write_config(
-            &[(
-                "legacy.repair.retired_at_ms",
-                &infinidysk_db::now_ms().to_string(),
-            )],
-            &["legacy.repair.enabled"],
-        )
-        .await?;
+        .any(|(key, value)| key == "legacy.repair.enabled" && value == "1")
+    {
+        return Ok(());
     }
+    if db
+        .retire_legacy_repairs(|header, length| {
+            let header = parse_header(header, length).ok()?;
+            Some(infinidysk_core::ByteRange {
+                start: header.part_offset,
+                end: header.part_offset.checked_add(header.part_size)?,
+            })
+        })
+        .await?
+        != 0
+    {
+        return Ok(());
+    }
+    // A read may record a use after `config` was loaded, so the database checks it again.
+    let now = infinidysk_db::now_ms();
+    db.disable_legacy_repairs(now.saturating_sub(7 * 86_400_000), now)
+        .await?;
     Ok(())
 }
 
@@ -581,8 +576,42 @@ mod tests {
             .await
             .unwrap();
         finish_rewrite(&db, true).await.unwrap();
+        let retired = db.config().await.unwrap();
+        assert!(!retired.iter().any(|(k, _)| k == "legacy.repair.enabled"));
+        // The idle worker calls this every few seconds; a retired catalog stays untouched.
+        db.write_config(&[("legacy.repair.retired_at_ms", "1")], &[])
+            .await
+            .unwrap();
+        finish_rewrite(&db, true).await.unwrap();
         assert!(
-            !db.config()
+            db.config()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(k, v)| k == "legacy.repair.retired_at_ms" && v == "1")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_use_recorded_after_the_config_read_keeps_the_catalog() {
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        db.write_config(
+            &[
+                ("legacy.repair.enabled", "1"),
+                ("legacy.repair.last_used_ms", "0"),
+            ],
+            &[],
+        )
+        .await
+        .unwrap();
+        let now = infinidysk_db::now_ms();
+        // The caller saw the old, quiet value; a read then records a use.
+        db.legacy_repair_used(&"A".repeat(64), "used@test", now)
+            .await
+            .unwrap();
+        assert!(!db.disable_legacy_repairs(now - 1, now).await.unwrap());
+        assert!(
+            db.config()
                 .await
                 .unwrap()
                 .iter()

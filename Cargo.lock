@@ -1403,6 +1403,7 @@ dependencies = [
  "infinidysk-import",
  "infinidysk-mount",
  "infinidysk-nntp",
+ "infinidysk-par2",
  "infinidysk-queue",
  "infinidysk-stream",
  "infinidysk-testkit",

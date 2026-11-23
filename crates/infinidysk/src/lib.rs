@@ -24,6 +24,7 @@ mod provider_test;
 mod quota;
 mod rclone_rc;
 mod release_notes;
+pub mod repair;
 pub mod sab;
 mod ui;
 pub mod update;

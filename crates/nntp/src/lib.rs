@@ -68,6 +68,8 @@ pub enum Error {
     InvalidArgument(&'static str),
     #[error("local repair unavailable: {0}")]
     Repair(&'static str),
+    #[error("local repair unavailable: stored article is missing or corrupt")]
+    DamagedRepair(usize),
     #[error("tls setup failed")]
     Tls(#[from] rustls::Error),
     #[error("article body exceeds {} bytes", article::MAX_DECODED_LEN)]

@@ -869,6 +869,16 @@ Sign-in, first-run setup and the upgrade-failed screen sit outside the app shell
 - Field errors under the field; a failed submission below the action with the input kept, focus returned to the field to fix, and API errors rewritten as "what failed, then the fix"; a blocked state as an `Alert` in the card.
 - Username fields turn off autocapitalize, autocorrect and spellcheck; usernames are case-sensitive.
 
+### PAR2 work
+
+- File details keep **Check availability**, **Repair with PAR2** and **Repair via Arr** as separate actions. Availability explains STAT requests and bounded body spot checks; never imply full byte integrity. Repair explains that full source sets may be read.
+- Queued work is pending, not success. Show its state and reason, decoded provider bytes, saved bytes, verified scope and duration. Announce updates in a polite status region; keep focus in place.
+- Reconstruction also shows completed provider reads and missing results, so missing articles remain visible progress when no body bytes arrive. Counts include repeated reads and cached misses; they are not a completion percentage or unique-article total.
+- Disable duplicate requests while pending. Offer cancellation with an accurate “Cancellation requested” response; accepted publication may still finish.
+- PAR2 status lives in Health, not Overview. Health lists pending jobs and the latest twenty results, with saved repair storage use. Each job identifies its file or source set, phase/reason, attempts, retry time, live provider/saved bytes and elapsed time. Allow cancellation from this list. Poll only while jobs are pending. Hide the list when the experiment is disabled and no jobs exist; otherwise link to Settings → Experiments to enable it.
+- PAR2 limits are policy, not settings, and there is no library-wide scan; scheduled health checks cover the library.
+- Reuse existing outline buttons, confirmation dialogs and settings experiments. Actions and status rows wrap on mobile. Keep unknown per-job progress indeterminate; do not invent a percentage.
+
 ## Copywriting
 
 (Supabase: [Copywriting](https://supabase.com/design-system/docs/copywriting))

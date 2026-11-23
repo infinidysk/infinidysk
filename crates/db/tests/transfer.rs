@@ -15,12 +15,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Every table, as the copy lists them.
-const ALL: [&str; 19] = [
+const ALL: [&str; 20] = [
     "blobs",
     "repair_patches",
     "items",
     "queue",
     "repair_jobs",
+    "repair_coverage",
     "legacy_repair_articles",
     "history",
     "health_checks",
@@ -287,6 +288,10 @@ async fn seed(s: &Sqlite) -> Seeded {
     db.request_par2(Owner::Item(file.id), false, 7)
         .await
         .expect("repair request");
+    db.claim_par2(7)
+        .await
+        .expect("claim with file coverage")
+        .expect("queued repair");
     {
         use sha2::{Digest as _, Sha256};
         db.stage_legacy_repair(

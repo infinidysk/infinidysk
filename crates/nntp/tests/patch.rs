@@ -99,7 +99,21 @@ fn restore_heals_a_corrupt_payload_without_overwriting_a_different_valid_identit
     assert_eq!(store.read(&patch).unwrap().data.as_ref(), b"bytes");
     let mut conflicting = patch.clone();
     conflicting.sha256 = Sha256::digest(b"other").into();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(root.join("repairs").join(format!("{}.patch", patch.id)))
+        .unwrap();
+    file.set_len(file.metadata().unwrap().len() - 1).unwrap();
+    let stored = root.join("repairs").join(format!("{}.patch", patch.id));
+    let damaged = fs::read(&stored).unwrap();
     assert!(store.restore(&conflicting, b"other", || false).is_err());
+    assert_eq!(
+        fs::read(&stored).unwrap(),
+        damaged,
+        "a conflicting restore leaves the file as it was"
+    );
+    assert!(store.read(&patch).is_err());
+    store.restore(&patch, b"bytes", || false).unwrap();
     assert_eq!(store.read(&patch).unwrap().data.as_ref(), b"bytes");
     drop(store);
     fs::remove_dir_all(root).unwrap();
@@ -167,19 +181,74 @@ fn eviction_frees_the_least_recently_read_unpinned_repairs() {
         Err(Error::Capacity)
     ));
     assert!(matches!(
-        store.evict(3 * length + 1, remove, || false),
+        store.evict(3 * length + 1, |_| Ok(true), remove, || false),
         Err(Error::Capacity)
     ));
     assert!(removed.borrow().is_empty());
-    assert_eq!(store.evict(length, remove, || false).unwrap(), 1);
+    assert!(matches!(
+        store.evict(2 * length, |id| Ok(id != ids[0]), remove, || false),
+        Err(Error::Capacity)
+    ));
+    assert!(removed.borrow().is_empty());
+    assert_eq!(
+        store.evict(length, |_| Ok(true), remove, || false).unwrap(),
+        1
+    );
     assert_eq!(*removed.borrow(), [ids[1]]);
     assert!(store.read(&patches[1].0).is_err());
-    let refuse_first = |id| Ok((id != ids[0]).then_some(()));
-    assert_eq!(store.evict(2 * length, refuse_first, || false).unwrap(), 0);
+    let refuse_first = |id| Ok(id != ids[0]);
+    assert!(matches!(
+        store.evict(2 * length, refuse_first, remove, || false),
+        Err(Error::Capacity)
+    ));
     drop(pin);
-    assert_eq!(store.evict(2 * length, refuse_first, || false).unwrap(), 1);
+    assert_eq!(
+        store
+            .evict(2 * length, refuse_first, remove, || false)
+            .unwrap(),
+        1
+    );
     assert!(store.read(&patches[2].0).is_err());
     assert_eq!(store.read(&patches[0].0).unwrap().data.as_ref(), b"first!");
+    store
+        .write(&descriptor(b"fourth"), b"fourth", || false)
+        .unwrap();
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn eviction_moves_past_a_repair_whose_removal_is_declined() {
+    use std::time::{Duration, UNIX_EPOCH};
+    let root = directory();
+    let path = root.join("repairs");
+    let patches = [b"first!", b"second", b"third!"].map(|data| (descriptor(data), data));
+    let length = patches[0].0.encode().unwrap().len() as u64 + 6;
+    let store = Store::open(&path, 3 * length).unwrap();
+    for (seconds, (patch, data)) in (1000..).step_by(1000).zip(&patches) {
+        drop(store.write(patch, *data, || false).unwrap());
+        fs::File::options()
+            .write(true)
+            .open(path.join(format!("{}.patch", patch.id)))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(seconds))
+            .unwrap();
+    }
+    let declined = patches[0].0.id;
+    let remove = |id| Ok((id != declined).then_some(()));
+    let eligible = |id| {
+        assert_ne!(id, patches[2].0.id, "already made room");
+        Ok(true)
+    };
+    assert_eq!(store.evict(length, eligible, remove, || false).unwrap(), 1);
+    assert!(
+        store.read(&patches[0].0).is_ok(),
+        "a declined removal keeps its file"
+    );
+    assert!(
+        store.read(&patches[1].0).is_err(),
+        "the next file makes the room"
+    );
     store
         .write(&descriptor(b"fourth"), b"fourth", || false)
         .unwrap();
@@ -421,6 +490,41 @@ fn a_durable_receipt_pins_unpublished_bytes_until_publication_finishes() {
     assert_eq!(store.read(&patch).unwrap().data.as_ref(), b"verified bytes");
     drop(receipt);
     assert_eq!(store.prune(|_| Ok(Some(())), || false).unwrap(), 1);
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn integrity_reads_keep_eviction_order_and_a_store_with_room_evicts_nothing() {
+    let root = std::env::temp_dir().join(format!("infinidysk-patch-{}", PatchId::new()));
+    fs::create_dir(&root).unwrap();
+    let path = root.join("repairs");
+    let data = b"a repaired article";
+    let patch = descriptor(data);
+    let store = Store::open(&path, 1_000_000).unwrap();
+    drop(store.write(&patch, data, || false).unwrap());
+    let file = path.join(format!("{}.patch", patch.id));
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    let age = |at| fs::File::open(&file).unwrap().set_modified(at).unwrap();
+    let modified = || fs::metadata(&file).unwrap().modified().unwrap();
+    age(old);
+    assert_eq!(store.read_untouched(&patch).unwrap().data.as_ref(), data);
+    assert_eq!(modified(), old, "a backup read keeps the eviction order");
+    assert_eq!(store.read(&patch).unwrap().data.as_ref(), data);
+    assert!(
+        modified() > old,
+        "a client read makes the file the most recent"
+    );
+    let evicted = store
+        .evict(
+            1_000,
+            |_| Ok(true),
+            |_| -> Result<Option<()>, Error> { panic!("a store with room evicts nothing") },
+            || false,
+        )
+        .unwrap();
+    assert_eq!(evicted, 0);
+    assert_eq!(store.read(&patch).unwrap().data.as_ref(), data);
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

@@ -53,9 +53,12 @@ impl From<nix::errno::Errno> for Error {
 /// Issued only after both file data and directory entries have been synced.
 /// SQL visibility and ownership still belong to the publishing transaction.
 #[derive(Debug)]
-pub struct Durable(Patch, Arc<Inner>);
+pub struct Durable(Patch, Arc<Inner>, Option<PatchId>);
 
 impl Durable {
+    pub const fn replaces(&self) -> Option<PatchId> {
+        self.2
+    }
     pub const fn patch(&self) -> &Patch {
         &self.0
     }
@@ -97,6 +100,49 @@ impl Drop for Inner {
 }
 
 impl Store {
+    /// Discard only a verified damaged payload. Its catalog ID must remain unreadable until publication.
+    pub fn prepare_replacement(&self, patch: &Patch) -> Result<bool, Error> {
+        let mut state = self.0.used.lock().map_err(|_| Error::Recovery)?;
+        let name = format!("{}.patch", patch.id);
+        match open_file(&self.0.dir, &name, nix::fcntl::OFlag::O_RDONLY) {
+            Ok(mut file) => match validate_file(&mut file, patch, None) {
+                Ok(()) => return Ok(false),
+                Err(Error::Integrity("repair checksum" | "truncated repair payload")) => {
+                    nix::unistd::unlinkat(
+                        &self.0.dir,
+                        name.as_str(),
+                        nix::unistd::UnlinkatFlags::NoRemoveDir,
+                    )?;
+                    if let Err(error) = self.0.dir.sync_all() {
+                        // The file is gone either way; `None` makes the next use rescan.
+                        *state = scan(&self.0.dir, false).ok();
+                        return Err(error.into());
+                    }
+                }
+                Err(error) => return Err(error),
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        *state = Some(scan(&self.0.dir, false)?);
+        drop(state);
+        Ok(true)
+    }
+
+    pub fn write_replacement(
+        &self,
+        old: &Patch,
+        data: &[u8],
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Durable, Error> {
+        let fresh = Patch {
+            id: PatchId::new(),
+            ..old.clone()
+        };
+        let mut receipt = self.write(&fresh, data, cancelled)?;
+        receipt.2 = Some(old.id);
+        Ok(receipt)
+    }
     /// A checked backup can heal a checksum failure after the stored header matched.
     /// Preserve other identity conflicts so a restore cannot destroy an undo's data.
     pub fn restore(
@@ -106,7 +152,7 @@ impl Store {
         cancelled: impl Fn() -> bool,
     ) -> Result<Durable, Error> {
         match self.write(patch, data, &cancelled) {
-            Err(Error::Integrity("repair checksum")) => {}
+            Err(Error::Integrity("repair checksum" | "truncated repair payload")) => {}
             result => return result,
         }
         {
@@ -115,7 +161,7 @@ impl Store {
             let mut file = open_file(&self.0.dir, &name, nix::fcntl::OFlag::O_RDONLY)?;
             match validate_file(&mut file, patch, None) {
                 Ok(()) => {}
-                Err(Error::Integrity("repair checksum")) => {
+                Err(Error::Integrity("repair checksum" | "truncated repair payload")) => {
                     check(&cancelled)?;
                     nix::unistd::unlinkat(
                         &self.0.dir,
@@ -165,6 +211,7 @@ impl Store {
     pub fn evict<G>(
         &self,
         needed: u64,
+        eligible: impl Fn(PatchId) -> Result<bool, Error>,
         remove: impl Fn(PatchId) -> Result<Option<G>, Error>,
         cancelled: impl Fn() -> bool,
     ) -> Result<u64, Error> {
@@ -173,6 +220,10 @@ impl Store {
         }
         let mut state = self.0.used.lock().map_err(|_| Error::Recovery)?;
         let used = state.ok_or(Error::Recovery)?;
+        // Listing the store costs more as repairs accumulate; skip it when the write fits.
+        if needed <= self.1.saturating_sub(used) {
+            return Ok(0);
+        }
         let result = files::evict(
             &self.0.dir,
             used,
@@ -184,8 +235,9 @@ impl Store {
                     .lock()
                     .map_err(|_| Error::Recovery)?
                     .contains_key(&id);
-                if pinned { Ok(None) } else { remove(id) }
+                if pinned { Ok(false) } else { eligible(id) }
             },
+            remove,
             &cancelled,
         );
         *state = scan(&self.0.dir, false).ok();
@@ -235,7 +287,12 @@ impl Store {
         let count = pins.entry(patch.id).or_default();
         *count = count.checked_add(1).ok_or(Error::Capacity)?;
         drop(pins);
-        Ok(Durable(patch.clone(), Arc::clone(&self.0)))
+        Ok(Durable(patch.clone(), Arc::clone(&self.0), None))
+    }
+
+    /// The bytes [`write`](Self::write) charges against the quota for this repair.
+    pub fn charge(patch: &Patch) -> Result<u64, Error> {
+        Ok(descriptor(patch)?.len() as u64 + patch.source.range.len())
     }
 
     /// Store already verified original posted bytes. Retries of the same immutable
@@ -313,7 +370,21 @@ impl Store {
 
     /// Verify identity, exact size and SHA-256 before returning any bytes. The expected
     /// descriptor must come from a trusted reference, not directory enumeration.
+    /// A successful read makes the file the most recently read for eviction.
     pub fn read(&self, patch: &Patch) -> Result<Body, Error> {
+        self.read_counted(patch, &mut 0)
+    }
+
+    pub fn read_counted(&self, patch: &Patch, consumed: &mut usize) -> Result<Body, Error> {
+        self.load(patch, true, consumed)
+    }
+
+    /// [`Self::read`] for backups and integrity checks: eviction order stays as clients left it.
+    pub fn read_untouched(&self, patch: &Patch) -> Result<Body, Error> {
+        self.load(patch, false, &mut 0)
+    }
+
+    fn load(&self, patch: &Patch, touch: bool, consumed: &mut usize) -> Result<Body, Error> {
         descriptor(patch)?;
         let mut file = open_file(
             &self.0.dir,
@@ -323,9 +394,13 @@ impl Store {
         let mut data = Vec::new();
         data.try_reserve_exact(usize::try_from(patch.source.range.len()).expect("bounded article"))
             .map_err(|_| Error::Allocation)?;
-        validate_file(&mut file, patch, Some(&mut data))?;
-        // Eviction order only; a failed touch must not fail playback.
-        let _ = file.set_modified(std::time::SystemTime::now());
+        let validated = validate_file(&mut file, patch, Some(&mut data));
+        *consumed = consumed.saturating_add(data.len());
+        validated?;
+        if touch {
+            // Eviction order only; a failed touch must not fail playback.
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
         Ok(Body {
             data: data.into(),
             offset: patch.source.range.start,

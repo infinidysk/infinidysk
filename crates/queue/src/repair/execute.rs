@@ -114,25 +114,14 @@ async fn run(
             )?
             .finish(|| cancel.is_cancelled())?;
         }
-        for layout in &layouts {
-            let ids: usize = layout
-                .articles()
-                .iter()
-                .map(|article| {
-                    size_of::<infinidysk_core::Segment>()
-                        + article.id.as_ref().map_or(0, String::len)
-                })
-                .sum();
-            let slices = set.sources()[layout.source()].file.slices.len()
-                * (size_of::<[u8; 16]>() + size_of::<u32>());
-            budget.metadata(ids.saturating_add(slices))?;
-        }
+        let retained = proof_bytes(&set, &layouts)?;
+        budget.metadata(retained)?;
         let sources = layouts
             .iter()
             .map(|layout| VerifiedSource::new(&set, layout))
             .collect::<Result<Vec<_>, _>>()?;
         let verified_bytes = set.sources().iter().map(|source| source.file.length).sum();
-        budget.limits.memory_bytes = limits.memory_bytes;
+        budget.limits.memory_bytes = limits.memory_bytes - retained;
         return Ok(Execution {
             patches: Vec::new(),
             verified_bytes,
@@ -440,22 +429,28 @@ async fn run(
             .checked_mul(24)
             .ok_or(Error::Limit("proof output"))?,
     )?;
-    for layout in &layouts {
-        budget.metadata(
-            VerifiedSource::heap_bytes(&set, layout).ok_or(Error::Limit("proof output"))?,
-        )?;
-    }
+    let retained = proof_bytes(&set, &layouts)?;
+    budget.metadata(retained)?;
     let sources = layouts
         .iter()
         .map(|layout| VerifiedSource::new(&set, layout))
         .collect::<Result<Vec<_>, _>>()?;
-    budget.limits.memory_bytes = limits.memory_bytes;
+    budget.limits.memory_bytes = limits.memory_bytes - retained;
     Ok(Execution {
         patches,
         verified_bytes,
         transferred_bytes: budget.network_bytes,
         remaining: budget.limits,
         sources,
+    })
+}
+
+fn proof_bytes(set: &infinidysk_par2::RepairSet<'_>, layouts: &[Layout]) -> Result<usize, Error> {
+    layouts.iter().try_fold(0usize, |total, layout| {
+        VerifiedSource::heap_bytes(set, layout)
+            .and_then(|bytes| bytes.checked_add(size_of::<VerifiedSource>()))
+            .and_then(|bytes| bytes.checked_add(total))
+            .ok_or(Error::Limit("proof output"))
     })
 }
 

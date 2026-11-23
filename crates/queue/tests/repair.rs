@@ -110,6 +110,14 @@ async fn healthy_verification_reads_each_posted_article_once() {
     .await
     .unwrap();
     assert_eq!(result.verified_bytes, 108_192);
+    let retained: usize = result
+        .sources
+        .iter()
+        .map(|source| {
+            size_of_val(&source.proof.slice_md5[..]) + size_of_val(&source.proof.slice_crc32[..])
+        })
+        .sum();
+    assert!(result.remaining.memory_bytes + retained < limits().memory_bytes);
     assert_eq!(
         server.body_commands(),
         expected,

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <title>PAR2 actions regression</title>
+  <div id="root"></div>
+  <pre id="result">Running</pre>
+  <script type="module">
+    import { act, createElement } from "react";
+    import { createRoot } from "react-dom/client";
+    import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+    import { MemoryRouter } from "react-router";
+    // The API client captures fetch when it loads, so stub it before importing any app module.
+    // Every request must match an expected route; nothing reaches a real server.
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    const unexpected = [];
+    let jobsView = null;
+    let fileView = null;
+    const json = (value) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      const call = `${request.method} ${path}`;
+      requests.push(call);
+      switch (call) {
+        case "GET /api/v1/files/file/par2":
+          return json(fileView);
+        case "DELETE /api/v1/files/file/par2":
+        case "DELETE /api/v1/health/par2-jobs/job":
+          return new Response(null, { status: 204 });
+        case "GET /api/v1/health/par2":
+          return json(jobsView);
+        default:
+          unexpected.push(call);
+          return new Response(JSON.stringify({ error: "unexpected request" }), { status: 500 });
+      }
+    };
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const client = new QueryClient({
+      defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+    });
+    const root = createRoot(document.getElementById("root"));
+    let submitted = 0;
+    const check = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+    const expectRequest = async (call, message) => {
+      await act(settle);
+      check(requests.includes(call), `${message}: expected ${call}, saw ${requests.join(", ") || "nothing"}`);
+      requests.length = 0;
+    };
+    const job = {
+      id: "job",
+      state: "running",
+      reason: "",
+      attempts: 1,
+      verify_only: false,
+      completed_requests: 42,
+      missing_requests: 40,
+      transferred_bytes: 0,
+      stored_bytes: 0,
+      verified_bytes: 0,
+      checked_articles: 0,
+      total_articles: 0,
+      duration_ms: 0,
+      next_at: 0,
+      updated_at: 1,
+    };
+    const render = (child) =>
+      act(async () =>
+        root.render(createElement(QueryClientProvider, { client }, createElement(MemoryRouter, null, child))),
+      );
+    const button = (text) => [...document.querySelectorAll("button")].find((b) => b.textContent.includes(text));
+    try {
+      const { Par2Actions, Par2Jobs } = await import("/src/par2.tsx");
+      fileView = { enabled: true, repair: job, verification: null };
+      client.setQueryData(["par2", "file"], fileView);
+      await render(createElement(Par2Actions, { id: "file", hasNzb: true }));
+      check(button("Check availability"), "Offer availability checks instead of full-provider verification");
+      check(!button("Verify with PAR2"), "Remove the old full-provider verification action");
+      check(button("Repair with PAR2")?.disabled, "Running repairs must not admit duplicate work");
+      const status = () => document.querySelector('[role="status"]').textContent;
+      check(status().includes("running"), "Running state must be announced");
+      check(
+        status().includes("42 provider reads finished") && status().includes("40 missing"),
+        "Missing replies must show repair activity even when no body bytes arrive",
+      );
+      fileView = { enabled: true, repair: { ...job, state: "cancelled" }, verification: null };
+      await act(async () => button("Cancel").click());
+      await expectRequest("DELETE /api/v1/files/file/par2", "Cancel stops this file's repair");
+      await act(async () =>
+        client.setQueryData(["par2", "file"], {
+          enabled: true,
+          repair: { ...job, state: "repaired", stored_bytes: 7000 },
+          verification: null,
+        }),
+      );
+      check(!button("Repair with PAR2").disabled, "A completed repair permits an explicit retry");
+      check(status().includes("repaired"), "Completion must replace running state");
+      await act(async () => client.setQueryData(["par2", "file"], { enabled: false, repair: null, verification: null }));
+      check(button("Check availability")?.disabled, "Disabled execution must disable verification");
+      check(document.querySelector('a[href="/settings/experiments"]'), "Explain how to enable PAR2 work");
+
+      jobsView = {
+        enabled: true,
+        pending_jobs: 2,
+        jobs: [
+          {
+            ...job,
+            reason: "Discovering PAR2 files",
+            transferred_bytes: 7000,
+            duration_ms: 3000,
+            item_id: "item",
+            file_path: "/content/source.bin",
+          },
+          {
+            ...job,
+            id: "availability-job",
+            verify_only: true,
+            checked_articles: 40,
+            total_articles: 100,
+            reason: "Checking article availability",
+          },
+        ],
+        storage_used_bytes: 1000000000,
+      };
+      client.setQueryData(["par2-jobs"], jobsView);
+      const form = (child) =>
+        createElement(
+          "form",
+          {
+            onSubmit: (event) => {
+              event.preventDefault();
+              submitted++;
+            },
+          },
+          child,
+        );
+      await render(form(createElement(Par2Jobs)));
+      const text = () => document.body.textContent;
+      check(text().includes("Discovering PAR2 files"), "Show live worker phase");
+      check(text().includes("40 of 100 articles checked"), "Show measured article progress");
+      check(
+        document.querySelector('progress[aria-label="Current job"][value]')?.value === 40,
+        "Availability progress uses checked articles",
+      );
+      check(text().includes("source.bin"), "Identify queued files");
+      check(text().includes("2 pending jobs") && text().includes("1.0 GB of saved repairs"), "Show pending work and storage");
+      check(!button("Check existing library") && !button("Stop adding files"), "There is no library-wide scan");
+      check(!document.querySelector('a[href="/settings/repair"]'), "There are no repair settings");
+      check(button("Cancel job"), "Allow cancellation from the job list");
+      jobsView = { ...jobsView, pending_jobs: 1, jobs: [{ ...jobsView.jobs[0], state: "cancelled" }, jobsView.jobs[1]] };
+      await act(async () => button("Cancel job").click());
+      await expectRequest("DELETE /api/v1/health/par2-jobs/job", "Cancel job stops that job");
+      check(submitted === 0, "Cancelling a job must not submit a surrounding form");
+
+      client.setQueryData(["par2-jobs"], { enabled: false, pending_jobs: 0, jobs: [], storage_used_bytes: 0 });
+      await render(createElement(Par2Jobs));
+      check(!document.querySelector('[aria-label="Article checks and PAR2 repairs"]'), "Hide the empty list while disabled");
+      await act(settle);
+      check(unexpected.length === 0, `Unexpected requests: ${unexpected.join(", ")}`);
+      document.getElementById("result").textContent = "PASS";
+    } catch (error) {
+      document.getElementById("result").textContent = `FAIL: ${error.message}`;
+    } finally {
+      await act(async () => root.unmount());
+      client.clear();
+      globalThis.fetch = originalFetch;
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    }
+  </script>
+</html>

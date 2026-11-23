@@ -186,7 +186,9 @@ async fn omitted_articles_keep_separate_source_keys_and_never_use_an_empty_id_ca
 
 #[tokio::test]
 async fn a_repaired_article_is_never_padded_to_fit_stale_layout_sizes() {
-    let client = Arc::new(Client::new([]));
+    // A provider that lacks the article: an outage would be transient, not a bad repair.
+    let server = LoopbackServer::start([]).await.unwrap();
+    let (client, _) = setup(&Corpus::generate(1025, 1, ARTICLE_SIZE), &server);
     client.set_repairs(Box::new(|_| {
         Some(Box::pin(async {
             Ok(Some(infinidysk_nntp::Body {
@@ -1178,4 +1180,89 @@ fn setup_timed(
         }
     }));
     (Arc::new(client), Arc::new(layout))
+}
+
+#[tokio::test]
+async fn a_provider_copy_after_a_damaged_repair_skips_a_bad_cache_and_clears_the_hole() {
+    let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
+    let server = LoopbackServer::start(corpus.articles.iter().cloned())
+        .await
+        .unwrap();
+    let (client, layout) = setup(&corpus, &server);
+    let damaged = corpus.articles[MISSING].message_id.clone();
+    let cache = Arc::new(Cache::new(true, 1_000_000));
+    cache.insert(&damaged, bytes::Bytes::from(vec![9; 2]));
+    // The lookup installs once, so shared state turns the local repair off later.
+    let local = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let lookup = Arc::clone(&local);
+    client.set_repairs(Box::new(move |id| {
+        if !lookup.load(std::sync::atomic::Ordering::SeqCst)
+            || !matches!(id, infinidysk_nntp::RepairKey::Article(id) if id == damaged)
+        {
+            return None;
+        }
+        Some(Box::pin(async {
+            Err(infinidysk_nntp::Error::Repair(
+                "stored article is missing or corrupt",
+            ))
+        }))
+    }));
+    let gaps = Arc::new(Gaps::default());
+    gaps.refresh([MISSING].into_iter().collect(), true);
+
+    let mut reader = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 3)
+        .with_cache(cache)
+        .with_gaps(Arc::clone(&gaps));
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).await.unwrap();
+    assert_eq!(bytes, corpus.data, "a wrong-size cache entry is not served");
+
+    local.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut reader = SegmentReader::new(client, layout, 3).with_gaps(gaps);
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).await.unwrap();
+    assert_eq!(
+        bytes, corpus.data,
+        "a hole a provider served is asked again"
+    );
+}
+
+#[tokio::test]
+async fn a_damaged_local_repair_falls_back_to_providers_and_reports_only_when_they_miss() {
+    let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
+    for provider_has_it in [true, false] {
+        let served = corpus
+            .articles
+            .iter()
+            .enumerate()
+            .filter_map(|(i, a)| (provider_has_it || i != MISSING).then_some(a.clone()));
+        let server = LoopbackServer::start(served).await.unwrap();
+        let (client, layout) = setup(&corpus, &server);
+        let damaged = corpus.articles[MISSING].message_id.clone();
+        client.set_repairs(Box::new(move |id| {
+            if !matches!(id, infinidysk_nntp::RepairKey::Article(id) if id == damaged) {
+                return None;
+            }
+            Some(Box::pin(async {
+                Err(infinidysk_nntp::Error::Repair(
+                    "stored article is missing or corrupt",
+                ))
+            }))
+        }));
+        let mut reader = SegmentReader::new(client, layout, 3);
+        let mut bytes = Vec::new();
+        let result = reader.read_to_end(&mut bytes).await;
+        if provider_has_it {
+            result.unwrap();
+            assert_eq!(bytes, corpus.data, "the provider's copy serves the article");
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("stored article is missing or corrupt"),
+                "the local error is reported when no provider has the article: {error}"
+            );
+        }
+    }
 }
