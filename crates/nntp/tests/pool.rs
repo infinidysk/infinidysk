@@ -5,7 +5,10 @@ use std::time::Duration;
 
 use infinidysk_nntp::{Downloads, Endpoint, Pool, PoolConfig, TlsMode, Usage};
 use infinidysk_testkit::{Corpus, Impairment, LoopbackServer};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
+use tokio::time::timeout;
 
 const ARTICLE_SIZE: usize = 16 * 1024;
 const DOWNLOADS: usize = 64;
@@ -169,6 +172,98 @@ async fn a_warm_connection_the_provider_hangs_up_on_is_replaced_and_dropping_the
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(server.quit_commands(), 1);
     assert_eq!(server.open_connections(), 0);
+}
+
+async fn scripted_pool(max: usize, idle_timeout: Duration) -> (Pool, TcpListener, Arc<Usage>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let usage = Arc::new(Usage::default());
+    let endpoint = Endpoint::new(
+        "127.0.0.1",
+        listener.local_addr().unwrap().port(),
+        TlsMode::Plain,
+        None,
+        Duration::from_secs(3),
+    )
+    .unwrap()
+    .with_usage(Arc::clone(&usage));
+    let config = PoolConfig {
+        max_connections: max,
+        min_connections: 0,
+        pipeline_depth: 1,
+        idle_timeout,
+    };
+    (
+        Pool::new(endpoint, config, Downloads::new(2)).unwrap(),
+        listener,
+        usage,
+    )
+}
+
+async fn greet(listener: &TcpListener) -> BufReader<TcpStream> {
+    let (mut socket, _) = timeout(Duration::from_secs(3), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    socket.write_all(b"200 ready\r\n").await.unwrap();
+    BufReader::new(socket)
+}
+
+async fn expect_command(socket: &mut BufReader<TcpStream>, expected: &str) {
+    let mut line = String::new();
+    timeout(Duration::from_secs(3), socket.read_line(&mut line))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(line.trim_end(), expected);
+}
+
+async fn answer_stat(listener: &TcpListener) {
+    let mut next = greet(listener).await;
+    expect_command(&mut next, "STAT <a@test>").await;
+    next.get_mut()
+        .write_all(b"223 0 <a@test>\r\n")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn retiring_socket_holds_its_only_slot_until_quit_finishes() {
+    let (pool, listener, _) = scripted_pool(1, Duration::from_millis(20)).await;
+    let ((), mut first) = tokio::join!(pool.prewarm(1), greet(&listener));
+    expect_command(&mut first, "QUIT").await;
+    let (stat, ()) = tokio::join!(pool.stat("a@test"), async {
+        assert!(
+            timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err(),
+            "a replacement connected before the provider answered QUIT"
+        );
+        first.get_mut().write_all(b"205 closing\r\n").await.unwrap();
+        drop(first);
+        answer_stat(&listener).await;
+    });
+    stat.unwrap();
+}
+
+#[tokio::test]
+async fn partial_idle_notice_does_not_block_stat_on_a_spare_slot() {
+    let (pool, listener, usage) = scripted_pool(2, Duration::from_secs(30)).await;
+    let ((), mut first) = tokio::join!(pool.prewarm(1), greet(&listener));
+    let before = usage.used();
+    first.get_mut().write_all(b"400 idle").await.unwrap();
+    timeout(Duration::from_secs(1), async {
+        while usage.used() == before {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let (stat, ()) = timeout(Duration::from_millis(250), async {
+        tokio::join!(pool.stat("a@test"), answer_stat(&listener))
+    })
+    .await
+    .expect("STAT must not wait for the rest of the 400 line");
+    stat.unwrap();
 }
 
 #[tokio::test]

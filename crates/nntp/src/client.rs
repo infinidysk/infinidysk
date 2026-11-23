@@ -410,15 +410,16 @@ impl Client {
         .await;
     }
 
-    /// Lets go of every connection at shutdown: each says QUIT once its requests are
-    /// answered. Waits up to `wait` for them to close.
+    /// Stops provider pools from accepting work. Waits up to `wait` for handshakes
+    /// and sockets to close; a handshake finishing later cannot publish a worker.
     pub async fn close(&self, wait: Duration) {
         let providers = self.snapshot();
         for entry in providers.iter() {
             entry.provider.pool.close();
         }
         let deadline = Instant::now() + wait;
-        while providers.iter().any(|e| e.provider.pool.live() > 0) && Instant::now() < deadline {
+        while providers.iter().any(|e| e.provider.pool.occupied() > 0) && Instant::now() < deadline
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }

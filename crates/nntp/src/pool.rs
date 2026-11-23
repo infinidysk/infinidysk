@@ -62,8 +62,6 @@ pub struct Pool {
     downloads: Arc<Downloads>,
     /// Requests holding a ticket.
     busy: Arc<AtomicUsize>,
-    /// Connection tasks running.
-    live: Arc<AtomicUsize>,
     state: Arc<Mutex<State>>,
     changed: Arc<Notify>,
     /// Counts every failed connect, background ones included.
@@ -79,7 +77,10 @@ const LARGE_ARTICLE: u32 = 2_097_152;
 #[derive(Default)]
 struct State {
     workers: Vec<Worker>,
+    /// Reserved from before the handshake until the socket closes, including QUIT.
+    slots: usize,
     connecting: usize,
+    closing: bool,
     /// `(limit, since)` after the provider turned a connect away while others were up.
     throttle: Option<(usize, Instant)>,
     /// Set when a connect could not reach the provider while others were up.
@@ -99,6 +100,11 @@ struct Backoff {
 }
 
 impl State {
+    fn reserve(&mut self, slots: usize) {
+        self.slots += slots;
+        self.connecting += slots;
+    }
+
     /// Until when new connects wait; never while nothing is open, so an outage still
     /// gets noticed.
     fn held(&self, open: usize) -> Option<Instant> {
@@ -318,7 +324,6 @@ impl Pool {
             config,
             downloads,
             busy: Arc::default(),
-            live: Arc::default(),
             state: Arc::default(),
             changed: Arc::default(),
             stats: Arc::default(),
@@ -368,8 +373,11 @@ impl Pool {
     pub async fn prewarm(&self, connections: usize) {
         let reserved = {
             let mut state = self.lock();
+            if state.closing {
+                return;
+            }
             state.workers.retain(|w| !w.tx.is_closed());
-            let open = state.workers.len() + state.connecting;
+            let open = state.slots;
             let backoff = open == 0
                 && state
                     .failed_at
@@ -379,11 +387,11 @@ impl Pool {
             } else {
                 connections.min(self.limit(&state)).saturating_sub(open)
             };
-            state.connecting += reserved;
+            state.reserve(reserved);
             reserved
         };
         // Dropping a new connection's load leaves it idle in the pool.
-        join_all((0..reserved).map(|_| self.open(self.connecting(), None))).await;
+        join_all((0..reserved).map(|_| self.open(self.slot(), None))).await;
     }
 
     /// Ends every connection now, abandoning the requests on them.
@@ -403,7 +411,15 @@ impl Pool {
 
     /// Lets go of every connection: each says QUIT once its requests are answered.
     pub(crate) fn close(&self) {
-        self.lock().workers.clear();
+        let mut state = self.lock();
+        state.closing = true;
+        state.workers.clear();
+        drop(state);
+        self.changed.notify_waiters();
+    }
+
+    pub(crate) fn occupied(&self) -> usize {
+        self.lock().slots
     }
 
     pub(crate) const fn max_connections(&self) -> usize {
@@ -444,9 +460,14 @@ impl Pool {
             return false;
         }
         let state = self.lock();
-        let live = state.workers.iter().filter(|w| !w.tx.is_closed());
-        let idle = live.clone().any(|w| w.load.load(Ordering::Relaxed) == 0);
-        let open = live.count() + state.connecting;
+        if state.closing {
+            return false;
+        }
+        let idle = state
+            .workers
+            .iter()
+            .any(|w| !w.tx.is_closed() && w.load.load(Ordering::Relaxed) == 0);
+        let open = state.slots;
         let backed_off = open == 0
             && state
                 .failed_at
@@ -474,7 +495,8 @@ impl Pool {
 
     /// Open connections.
     pub(crate) fn live(&self) -> usize {
-        self.live.load(Ordering::Relaxed)
+        let state = self.lock();
+        state.slots - state.connecting
     }
 
     /// Connection tasks taking requests, and how many of them have none.
@@ -604,8 +626,11 @@ impl Pool {
             changed.as_mut().enable();
             let (reserved, live, held) = {
                 let mut state = self.lock();
+                if state.closing {
+                    return Err(Failure::Request(Error::Closed));
+                }
                 state.workers.retain(|w| !w.tx.is_closed());
-                let open = state.workers.len() + state.connecting;
+                let open = state.slots;
                 let limit = self.limit(&state);
                 let held = state.held(open);
                 let hold_headroom = !stream && limit >= STREAM_HEADROOM_MIN_CONNECTIONS && {
@@ -651,7 +676,7 @@ impl Pool {
                         return Err(Failure::Connect(Error::Unavailable));
                     }
                     _ if spare => {
-                        state.connecting += 1;
+                        state.reserve(1);
                         true
                     }
                     // Every slot is still connecting.
@@ -666,7 +691,7 @@ impl Pool {
                 let until = deadline
                     .filter(|_| !(stream && live))
                     .map(|deadline| deadline.max(now + STREAM_CONNECT_WAIT));
-                let mut open = Box::pin(self.open(self.connecting(), until));
+                let mut open = Box::pin(self.open(self.slot(), until));
                 let opened = if stream && live {
                     let mut patience = now + STREAM_CONNECT_WAIT.min(self.endpoint.timeout() / 2);
                     if let Some(deadline) = deadline {
@@ -709,25 +734,30 @@ impl Pool {
     /// The connect ends by `until` or the endpoint timeout, whichever comes first.
     fn open(
         &self,
-        connecting: Connecting,
+        slot: Slot,
         until: Option<tokio::time::Instant>,
     ) -> impl Future<Output = Result<Option<(mpsc::Sender<Request>, Load, u32)>, Failure>> + Send + 'static
     {
         let (endpoint, config) = (self.endpoint.clone(), self.config);
         let usage = endpoint.usage().cloned();
-        let live = Arc::clone(&self.live);
         let stats = Arc::clone(&self.stats);
         async move {
+            if slot.lock().closing {
+                return Err(Failure::Request(Error::Closed));
+            }
             let started = Instant::now();
             let limit = tokio::time::Instant::now() + endpoint.timeout();
             let until = until.map_or(limit, |until| until.min(limit));
             let conn = match Connection::connect_staged_until(&endpoint, until).await {
                 Ok(conn) => conn,
                 Err((stage, error)) => {
+                    let mut state = slot.lock();
+                    if state.closing {
+                        return Err(Failure::Request(Error::Closed));
+                    }
                     stats.connect_failed();
-                    let mut state = connecting.lock();
                     let live = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
-                    // Excludes this attempt, whose slot `connecting` still holds.
+                    // Excludes this handshake's reservation.
                     let others = live + state.connecting - 1;
                     let now = Instant::now();
                     let (host, port) = (endpoint.host(), endpoint.port());
@@ -808,62 +838,53 @@ impl Pool {
                         }
                     };
                     drop(state);
-                    drop(connecting);
                     return result;
                 }
             };
-            let (tx, rx) = mpsc::channel(config.pipeline_depth);
-            let load = Arc::new(AtomicUsize::new(0));
-            let acquired = Load::watched(&load, &connecting.changed);
-            let link = Arc::clone(conn.link());
-            let id = link.id;
-            let task = tokio::spawn(run(
-                conn,
-                rx,
-                config,
-                Live::acquire(&live),
-                usage,
-                endpoint.host().to_owned(),
-            ));
-            let mut state = connecting.lock();
-            if let Some(backoff) = state.backoff.take() {
-                tracing::info!(
-                    host = endpoint.host(),
-                    port = endpoint.port(),
-                    failures = backoff.failures,
-                    "provider connects work again"
-                );
+            {
+                let shared = Arc::clone(&slot.state);
+                let changed = Arc::clone(&slot.changed);
+                let mut state = shared.lock().unwrap_or_else(PoisonError::into_inner);
+                if !state.closing {
+                    if let Some(backoff) = state.backoff.take() {
+                        tracing::info!(
+                            host = endpoint.host(),
+                            port = endpoint.port(),
+                            failures = backoff.failures,
+                            "provider connects work again"
+                        );
+                    }
+                    let worker =
+                        slot.start(&mut state, conn, config, usage, endpoint.host().to_owned());
+                    drop(state);
+                    changed.notify_waiters();
+                    return Ok(Some(worker));
+                }
             }
-            state.failed_at = None;
-            state.connect_error = None;
-            state.connected = true;
-            state.workers.push(Worker {
-                tx: tx.clone(),
-                load,
-                task: task.abort_handle(),
-                link,
-            });
-            // A throttle set while these connects were pending must not hold below them.
-            let open = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
-            if state.throttle.is_some() && open > state.limit(config.max_connections) {
-                state.throttle = Some((open, Instant::now()));
-            }
-            drop(state);
-            drop(connecting);
-            Ok(Some((tx, acquired, id)))
+            // Shutdown won the race with the handshake. Never publish its sender.
+            conn.quit().await;
+            Err(Failure::Request(Error::Closed))
         }
     }
 
     /// Reserves nothing itself: the caller already counted the slot in `connecting`.
-    fn connecting(&self) -> Connecting {
-        Connecting {
+    fn slot(&self) -> Slot {
+        Slot {
             state: Arc::clone(&self.state),
             changed: Arc::clone(&self.changed),
+            connecting: true,
         }
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Drop for Pool {
+    fn drop(&mut self) {
+        // Workers hold their slot's state, so explicitly release the senders.
+        self.close();
     }
 }
 
@@ -889,54 +910,72 @@ async fn dispatch(tx: &mpsc::Sender<Request>, mut request: Request) -> Option<Re
     response.await.ok()
 }
 
-/// Releases a reserved connection slot, also when `connect` fails or is cancelled.
-struct Connecting {
+/// One provider slot, owned first by the handshake and then by the worker.
+struct Slot {
     state: Arc<Mutex<State>>,
     changed: Arc<Notify>,
+    connecting: bool,
 }
 
-impl Connecting {
+impl Slot {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    fn start(
+        mut self,
+        state: &mut State,
+        conn: Connection,
+        config: PoolConfig,
+        usage: Option<Arc<Usage>>,
+        host: String,
+    ) -> (mpsc::Sender<Request>, Load, u32) {
+        state.connecting -= 1;
+        self.connecting = false;
+        let (tx, rx) = mpsc::channel(config.pipeline_depth);
+        let load = Arc::new(AtomicUsize::new(0));
+        let acquired = Load::watched(&load, &self.changed);
+        let link = Arc::clone(conn.link());
+        let id = link.id;
+        let task = tokio::spawn(run(self, conn, rx, config, usage, host));
+        state.failed_at = None;
+        state.connect_error = None;
+        state.connected = true;
+        state.workers.push(Worker {
+            tx: tx.clone(),
+            load,
+            task: task.abort_handle(),
+            link,
+        });
+        // A throttle set while these connects were pending must not hold below them.
+        let open = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
+        if state.throttle.is_some() && open > state.limit(config.max_connections) {
+            state.throttle = Some((open, Instant::now()));
+        }
+        (tx, acquired, id)
+    }
+
+    fn retire(&self, rx: &mut mpsc::Receiver<Request>, floor: usize) -> bool {
+        let state = self.lock();
+        if state.workers.iter().filter(|w| !w.tx.is_closed()).count() <= floor {
+            return false;
+        }
+        // Remove it from dispatch under the same lock that protects the warm floor.
+        rx.close();
+        drop(state);
+        true
+    }
 }
 
-impl Drop for Connecting {
+impl Drop for Slot {
     fn drop(&mut self) {
-        self.lock().connecting -= 1;
+        let mut state = self.lock();
+        state.slots -= 1;
+        if self.connecting {
+            state.connecting -= 1;
+        }
+        drop(state);
         self.changed.notify_waiters();
-    }
-}
-
-/// One running connection task; counted until it exits or retires itself.
-struct Live(Option<Arc<AtomicUsize>>);
-
-impl Live {
-    fn acquire(live: &Arc<AtomicUsize>) -> Self {
-        live.fetch_add(1, Ordering::Relaxed);
-        Self(Some(Arc::clone(live)))
-    }
-
-    /// Leaves the count when more than `floor` remain; `false` keeps this one alive.
-    fn retire(&mut self, floor: usize) -> bool {
-        let Some(live) = &self.0 else { return true };
-        let retired = live
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                (n > floor).then(|| n - 1)
-            })
-            .is_ok();
-        if retired {
-            self.0 = None;
-        }
-        retired
-    }
-}
-
-impl Drop for Live {
-    fn drop(&mut self) {
-        if let Some(live) = &self.0 {
-            live.fetch_sub(1, Ordering::Relaxed);
-        }
     }
 }
 
@@ -954,10 +993,10 @@ enum Idle {
 /// connection-level error. Any requests still queued are dropped, which callers see
 /// as unanswered and retry.
 async fn run(
+    slot: Slot,
     mut conn: Connection,
     mut rx: mpsc::Receiver<Request>,
     config: PoolConfig,
-    mut live: Live,
     usage: Option<Arc<Usage>>,
     host: String,
 ) {
@@ -981,6 +1020,8 @@ async fn run(
                     None => return conn.quit().await,
                 },
                 Idle::HungUp => {
+                    drop(rx);
+                    slot.changed.notify_waiters();
                     let reason = conn.hang_up_reason().await;
                     tracing::debug!(
                         host = host.as_str(),
@@ -995,7 +1036,7 @@ async fn run(
                     } else {
                         config.min_connections
                     };
-                    if live.retire(floor) {
+                    if slot.retire(&mut rx, floor) {
                         // Closed before QUIT, so no request is sent to this connection.
                         drop(rx);
                         return conn.quit().await;

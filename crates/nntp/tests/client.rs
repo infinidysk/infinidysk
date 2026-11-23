@@ -222,6 +222,63 @@ async fn body(client: &Client, id: &str) -> Result<infinidysk_nntp::Body, Error>
 }
 
 #[tokio::test]
+async fn shutdown_while_waiting_for_a_greeting_never_publishes_a_worker() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let client = Client::new([provider(port, 0, None, &Downloads::new(2))]);
+    let warm = client.prewarm(1);
+    tokio::pin!(warm);
+    let (mut socket, _) = tokio::select! {
+        () = &mut warm => panic!("prewarm finished without a greeting"),
+        accepted = listener.accept() => accepted.unwrap(),
+    };
+    let close = client.close(Duration::from_millis(100));
+    tokio::pin!(close);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut close)
+            .await
+            .is_err(),
+        "the pending handshake still holds a socket"
+    );
+    tokio::time::timeout(Duration::from_secs(1), close)
+        .await
+        .expect("shutdown must respect its deadline");
+    socket.write_all(b"200 ready\r\n").await.unwrap();
+    let ((), ()) = tokio::join!(warm, async {
+        let mut socket = BufReader::new(socket);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(1), socket.read_line(&mut line))
+            .await
+            .expect("the late connection must be closed")
+            .unwrap();
+        assert_eq!(line, "QUIT\r\n");
+        socket
+            .get_mut()
+            .write_all(b"205 closing\r\n")
+            .await
+            .unwrap();
+    });
+    assert_eq!(client.connections(), (0, 0));
+    tokio::time::timeout(Duration::from_millis(250), client.prewarm(1))
+        .await
+        .expect("a closed pool must not dial again");
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            client.stat("a@test", Workload::Stream, None)
+        )
+        .await
+        .expect("a closed pool must reject new work")
+        .is_err()
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), listener.accept())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn an_unexpected_reply_keeps_its_text_without_control_characters() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
