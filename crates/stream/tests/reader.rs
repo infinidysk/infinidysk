@@ -186,7 +186,9 @@ async fn omitted_articles_keep_separate_source_keys_and_never_use_an_empty_id_ca
 
 #[tokio::test]
 async fn a_repaired_article_is_never_padded_to_fit_stale_layout_sizes() {
-    let client = Arc::new(Client::new([]));
+    // A provider that lacks the article: an outage would be transient, not a bad repair.
+    let server = LoopbackServer::start([]).await.unwrap();
+    let (client, _) = setup(&Corpus::generate(1025, 1, ARTICLE_SIZE), &server);
     client.set_repairs(Box::new(|_| {
         Some(Box::pin(async {
             Ok(Some(infinidysk_nntp::Body {
@@ -1190,8 +1192,13 @@ async fn a_provider_copy_after_a_damaged_repair_skips_a_bad_cache_and_clears_the
     let damaged = corpus.articles[MISSING].message_id.clone();
     let cache = Arc::new(Cache::new(true, 1_000_000));
     cache.insert(&damaged, bytes::Bytes::from(vec![9; 2]));
+    // The lookup installs once, so shared state turns the local repair off later.
+    let local = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let lookup = Arc::clone(&local);
     client.set_repairs(Box::new(move |id| {
-        if !matches!(id, infinidysk_nntp::RepairKey::Article(id) if id == damaged) {
+        if !lookup.load(std::sync::atomic::Ordering::SeqCst)
+            || !matches!(id, infinidysk_nntp::RepairKey::Article(id) if id == damaged)
+        {
             return None;
         }
         Some(Box::pin(async {
@@ -1210,7 +1217,7 @@ async fn a_provider_copy_after_a_damaged_repair_skips_a_bad_cache_and_clears_the
     reader.read_to_end(&mut bytes).await.unwrap();
     assert_eq!(bytes, corpus.data, "a wrong-size cache entry is not served");
 
-    client.set_repairs(Box::new(|_| None));
+    local.store(false, std::sync::atomic::Ordering::SeqCst);
     let mut reader = SegmentReader::new(client, layout, 3).with_gaps(gaps);
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes).await.unwrap();

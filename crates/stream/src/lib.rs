@@ -1275,8 +1275,11 @@ async fn fetch(
                 .map_err(Arc::new),
             body => body,
         };
-        let Ok(data) = body else {
-            return Err(local);
+        let data = match body.map_err(io::Error::other) {
+            Ok(data) => data,
+            // A provider outage stays transient, so read-ahead still refetches.
+            Err(error) if is_transient(&error) => return Err(error),
+            Err(_) => return Err(local),
         };
         if data.len() == size {
             // A later read whose repair is gone must ask providers, not fill.
