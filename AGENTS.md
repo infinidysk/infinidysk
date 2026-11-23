@@ -67,7 +67,7 @@ The maintainer's Rust rules are in the private [`hoivikaj/rust-skills`](https://
 - Workspace with crates under `crates/<short-name>` (folder `crates/nntp`, package `infinidysk-nntp`); each crate inherits `[workspace.package]`, sets `[lints] workspace = true`, and takes shared dependency versions from `[workspace.dependencies]`. The product binary is `crates/infinidysk`. Dependencies point downward only. Parsers do no I/O. No traits just for mocking.
 - Release profile: `lto = "fat"`, `codegen-units = 1`, panic **unwind** (never `abort`; the streaming invariants need catchable callback panics).
 - Clippy: `pedantic` baseline minus noisy lints plus selected nursery lints, all set in the root `Cargo.toml`. Prefer fixing over `#[allow]`; any `#[allow]` needs a one-line reason.
-- Edition 2024, toolchain pinned in `rust-toolchain.toml`. Before committing: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`. CI also runs `cargo-deny` (`deny.toml` license allowlist + advisories) and native glibc release builds on Ubuntu 26.04 x64/arm64.
+- Edition 2024, toolchain pinned in `rust-toolchain.toml`.
 - Product version lives in `version.txt` (owned by release-please); crate versions stay `0.0.0`.
 - Mark deliberate corner-cutting with a `ponytail:` comment naming the ceiling and the upgrade path.
 - `unsafe` only in FFI crates (e.g. yEnc), which opt in with `#![allow(unsafe_code)]`; every block needs a `// SAFETY:` comment (enforced by clippy).
@@ -92,6 +92,15 @@ Known failures (provider errors, missing articles, timeouts, auth failures, miss
 - Non-behavior work (CI, tests, docs, `AGENTS.md`, skills, tooling) is `chore(<scope>)`; never bare `docs` / `ci` / `test`. Breaking changes use `!`. Never edit `CHANGELOG.md` by hand.
 - When a task makes several commits, push once, after the last commit. Every push starts a CI run, so do not push between commits.
 - Types, scopes and examples: `infinidysk-commits` (see Load on demand).
+
+### Local checks
+
+Local checks verify the change. PR CI verifies the workspace.
+
+- For Rust changes, run `cargo fmt --all --check` and the smallest test that exercises the changed behavior. For docs-only changes, skip builds and tests.
+- Reuse a passing local result while its inputs are unchanged. Committing, pushing, opening a PR, or editing its description is not a reason to rerun a check.
+- Leave workspace-wide Clippy, the full test suite, dependency checks, and production builds to PR CI. Run a broader check locally only when the maintainer asks, when diagnosing a specific failure, or when CI does not cover the behavior you need to verify.
+- In the PR test plan, distinguish checks passed locally from checks left to CI. Do not report pending checks as passed.
 
 ## Never write media titles
 
