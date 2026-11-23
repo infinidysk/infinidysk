@@ -1744,9 +1744,11 @@ async fn staging_evicts_the_least_recently_read_repair_to_make_room() {
     let mut next = f.patch.clone();
     next.id = PatchId::new();
     // Room for the new article plus its header reserve once either file goes, not before.
+    // The repair being staged belongs to another NZB.
     let receipts = repairs
         .stage(
             vec![(next.clone(), DATA.to_vec())],
+            BlobId::new(),
             DATA.len() as u64 + 16_384 + used - 1,
             &tokio_util::sync::CancellationToken::new(),
         )
@@ -1778,6 +1780,7 @@ async fn staging_keeps_every_repair_while_an_older_database_is_retained() {
     let error = repairs
         .stage(
             vec![(next, DATA.to_vec())],
+            BlobId::new(),
             // Room only through eviction.
             used + 1,
             &tokio_util::sync::CancellationToken::new(),
@@ -1862,6 +1865,100 @@ async fn a_damaged_local_repair_falls_back_to_a_provider_copy() {
     );
     drop(client);
     drop(server);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn staging_never_evicts_repairs_the_same_nzb_still_needs() {
+    let f = Fixture::new().await;
+    let client = Client::new([]);
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    let (stale, used) = two_read_repairs(&f, &repairs).await;
+    let mut next = f.patch.clone();
+    next.id = PatchId::new();
+    next.source.message_id = Some("next@loopback".into());
+    let error = repairs
+        .stage(
+            vec![(next, DATA.to_vec())],
+            f.source.nzb(),
+            // Room only through eviction.
+            used + 1,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("exceed"), "{error:#}");
+    let store = repairs.store(u64::MAX).unwrap();
+    assert_eq!(store.read(&stale).unwrap().data.as_ref(), DATA);
+    assert_eq!(store.read(&f.patch).unwrap().data.as_ref(), DATA);
+    assert_eq!(
+        f.db.article_repairs("stale@loopback").await.unwrap(),
+        [stale]
+    );
+    assert_eq!(
+        f.db.article_repairs("repair@loopback").await.unwrap(),
+        std::slice::from_ref(&f.patch)
+    );
+    drop((store, repairs));
+    f.close().await;
+}
+
+#[tokio::test]
+async fn a_published_repair_whose_file_is_missing_or_damaged_is_rebuilt_under_its_id() {
+    let f = Fixture::new().await;
+    f.publish().await;
+    let client = Client::new([]);
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    let path = f.root.join("repairs").join(format!("{}.patch", f.patch.id));
+    for damage in [
+        Box::new(|path: &std::path::Path| std::fs::remove_file(path).unwrap())
+            as Box<dyn Fn(&std::path::Path)>,
+        Box::new(|path: &std::path::Path| {
+            let mut corrupt = std::fs::read(path).unwrap();
+            *corrupt.last_mut().unwrap() ^= 1;
+            std::fs::write(path, corrupt).unwrap();
+        }),
+    ] {
+        damage(&path);
+        let mut rebuilt = f.patch.clone();
+        rebuilt.id = PatchId::new();
+        let kept = repairs
+            .unpublished(&f.source, vec![(rebuilt, DATA.to_vec())])
+            .await
+            .unwrap();
+        assert_eq!(
+            kept.iter().map(|(patch, _)| patch).collect::<Vec<_>>(),
+            [&f.patch],
+            "the published descriptor is staged again"
+        );
+        let receipts = repairs
+            .stage(
+                kept,
+                f.source.nzb(),
+                1_000_000,
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        // Publishing the same descriptor again is idempotent.
+        assert!(
+            f.db.publish_patches((), &f.source, std::slice::from_ref(&f.patch))
+                .await
+                .unwrap()
+        );
+        drop(receipts);
+        assert_eq!(
+            repairs
+                .store(u64::MAX)
+                .unwrap()
+                .read(&f.patch)
+                .unwrap()
+                .data
+                .as_ref(),
+            DATA
+        );
+    }
+    drop(repairs);
     f.close().await;
 }
 

@@ -638,7 +638,10 @@ impl Repairs {
                     .map(|(_, bytes)| bytes.len() as u64)
                     .sum::<u64>();
                 // Durable but unpublished: receipts keep these files from eviction.
-                receipts.extend(self.stage(patches, progress.store_bytes, cancel).await?);
+                receipts.extend(
+                    self.stage(patches, source.nzb(), progress.store_bytes, cancel)
+                        .await?,
+                );
             }
         }
         anyhow::ensure!(
@@ -681,9 +684,10 @@ impl Repairs {
         })
     }
 
-    /// Drop rebuilt articles that already have an identical published repair.
+    /// Drop rebuilt articles that already have an identical readable published repair.
+    /// A published copy whose file is missing or damaged is rebuilt under its descriptor.
     pub(super) async fn unpublished(
-        &self,
+        self: &Arc<Self>,
         source: &infinidysk_db::repair::Source,
         patches: Vec<(Patch, Vec<u8>)>,
     ) -> Result<Vec<(Patch, Vec<u8>)>> {
@@ -703,20 +707,31 @@ impl Repairs {
                         .await?
                 }
             };
-            if !published
-                .iter()
-                .any(|stored| stored.source == patch.source && stored.sha256 == patch.sha256)
-            {
+            let Some(stored) = published
+                .into_iter()
+                .find(|stored| stored.source == patch.source && stored.sha256 == patch.sha256)
+            else {
                 fresh.push((patch, bytes));
+                continue;
+            };
+            let repairs = Arc::clone(self);
+            let check = stored.clone();
+            let readable = tokio::task::spawn_blocking(move || -> Result<bool> {
+                Ok(repairs.store(u64::MAX)?.read_untouched(&check).is_ok())
+            })
+            .await??;
+            if !readable {
+                fresh.push((stored, bytes));
             }
         }
         Ok(fresh)
     }
 
-    /// Write one set's articles, evicting least recently read repairs for room.
+    /// Write one set's articles, evicting least recently read repairs of other NZBs for room.
     pub(super) async fn stage(
         self: &Arc<Self>,
         patches: Vec<(Patch, Vec<u8>)>,
+        nzb: BlobId,
         capacity: u64,
         cancel: &CancellationToken,
     ) -> Result<Vec<patch::Durable>> {
@@ -750,7 +765,7 @@ impl Repairs {
                     if retained {
                         Ok(None)
                     } else {
-                        repairs.evict(&runtime, id)
+                        repairs.evict(&runtime, id, nzb)
                     }
                 },
                 || stopped.is_cancelled(),
@@ -761,8 +776,9 @@ impl Repairs {
             patches
                 .into_iter()
                 .map(|(patch, bytes)| {
+                    // Restore replaces a damaged file left by an earlier publication.
                     store
-                        .write(&patch, &bytes, || stopped.is_cancelled())
+                        .restore(&patch, &bytes, || stopped.is_cancelled())
                         .map_err(|error| match error {
                             patch::Error::Capacity => full(),
                             error => error.into(),
@@ -774,13 +790,23 @@ impl Repairs {
     }
 
     /// Blocking: drop one stored repair's reference. Admitted readers finish before the
-    /// reference goes, so none loses it mid-read; later readers miss.
+    /// reference goes, so none loses it mid-read; later readers miss. Repairs of `keep`
+    /// stay: the file being repaired may still need them.
     fn evict(
         &self,
         runtime: &tokio::runtime::Handle,
         id: PatchId,
+        keep: BlobId,
     ) -> Result<Option<OwnedSemaphorePermit>, patch::Error> {
         runtime.block_on(async {
+            let owner = self
+                .db
+                .patch_nzb(id)
+                .await
+                .map_err(|_| patch::Error::Integrity("repair references cannot be read"))?;
+            if owner == Some(keep) {
+                return Ok(None);
+            }
             let readers = Arc::clone(&self.readers)
                 .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32"))
                 .await
