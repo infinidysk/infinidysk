@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.2](https://github.com/infinidysk/infinidysk/compare/v1.7.1...v1.7.2) (2026-11-23)
+
+
+### Bug Fixes
+
+* **deps:** Bump docker/login-action ([#1842](https://github.com/infinidysk/infinidysk/issues/1842)) ([ab11aca](https://github.com/infinidysk/infinidysk/commit/ab11acaf6297407eb528450fcef77eb6977365c8))
+* **deps:** Bump github/codeql-action ([#1951](https://github.com/infinidysk/infinidysk/issues/1951)) ([b9fedd8](https://github.com/infinidysk/infinidysk/commit/b9fedd8935f3e77858e10af086ae00e394cc20fe))
+* **deps:** Bump the npm-minor-and-patch group ([#1845](https://github.com/infinidysk/infinidysk/issues/1845)) ([2714ecf](https://github.com/infinidysk/infinidysk/commit/2714ecf945a8c4d64c659dc05fd8f9958d89fbe4))
+* **deps:** Bump the npm-patch group across 1 directory with 11 updates ([#1954](https://github.com/infinidysk/infinidysk/issues/1954)) ([734cc01](https://github.com/infinidysk/infinidysk/commit/734cc0180022b5475ec23c377c85c121e60329f3))
+* **deps:** Bump the nuget-minor-and-patch group with 9 updates ([#1846](https://github.com/infinidysk/infinidysk/issues/1846)) ([69fa8ae](https://github.com/infinidysk/infinidysk/commit/69fa8ae2fb809a0e849f864aeb76c86972e62815))
+* **deps:** Bump the nuget-patch group with 11 updates ([#1955](https://github.com/infinidysk/infinidysk/issues/1955)) ([0912650](https://github.com/infinidysk/infinidysk/commit/0912650ccbe4aac7fa539580884e3e3e9db662a1))
+* **deps:** Bump the react-router group in /frontend with 5 updates ([#1843](https://github.com/infinidysk/infinidysk/issues/1843)) ([db82801](https://github.com/infinidysk/infinidysk/commit/db82801869d24ae477284bf6da3df847dd2d5def))
+* **deps:** Bump the react-router group in /frontend with 5 updates ([#1949](https://github.com/infinidysk/infinidysk/issues/1949)) ([d6ec2fc](https://github.com/infinidysk/infinidysk/commit/d6ec2fc355959b6bd9eb8db54d9bb4d7519facc6))
+
 ## [1.7.1](https://github.com/infinidysk/infinidysk/compare/v1.7.0...v1.7.1) (2026-11-03)
 
 
