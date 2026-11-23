@@ -1028,7 +1028,7 @@ impl Maintenance {
         let time_zone = zone_label(&tz, now);
         let local = |ms: i64| {
             Timestamp::from_millisecond(ms)
-                .map(|t| t.to_zoned(tz.clone()).datetime().to_string())
+                .map(|t| t.to_zoned_datetime(tz.clone()).datetime().to_string())
                 .unwrap_or_default()
         };
         let window = settings
@@ -1182,10 +1182,10 @@ fn window(now: Timestamp, tz: &TimeZone, (start, end): (u16, u16)) -> Option<(i6
             i8::try_from(minutes / 60).ok()?,
             i8::try_from(minutes % 60).ok()?,
         );
-        let zoned = date.at(h, m, 0, 0).to_zoned(tz.clone()).ok()?;
+        let zoned = date.at(h, m, 0, 0).to_zoned_datetime(tz.clone()).ok()?;
         Some(zoned.timestamp().as_millisecond())
     };
-    let today = now.to_zoned(tz.clone()).date();
+    let today = now.to_zoned_datetime(tz.clone()).date();
     let now = now.as_millisecond();
     for day in [today.yesterday().ok()?, today, today.tomorrow().ok()?] {
         let start_ms = at(day, start)?;

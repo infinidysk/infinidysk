@@ -16,6 +16,9 @@ ignore = [
     # libsqlite3-sys < 0.39: needs a planted -wal file with a mismatched page size in our data dir.
     # Remove once a sqlx release allows libsqlite3-sys >= 0.39 (sqlx 0.9.0 caps it below 0.38).
     { id = "RUSTSEC-2026-0459", reason = "exploit needs write access to the database directory; no sqlx release allows the fix yet" },
+    # chrono, through oauth2 and openidconnect: unmaintained, not a vulnerability. We use jiff directly.
+    # Remove once openidconnect drops chrono.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained notice only; pulled in by openidconnect, which has no chrono-free release" },
 ]
 
 [licenses]

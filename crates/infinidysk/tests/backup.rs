@@ -147,7 +147,7 @@ async fn launch(root: &Path, mount: Option<&Path>) -> (SocketAddr, Server, Cance
 
 /// A one-minute maintenance window half a day away, so a scheduled job never holds the slot.
 fn closed_window() -> [(String, String); 2] {
-    let start = jiff::Zoned::now()
+    let start = jiff::ZonedDateTime::now()
         .time()
         .wrapping_add(jiff::Span::new().hours(12));
     let end = start.wrapping_add(jiff::Span::new().minutes(1));
