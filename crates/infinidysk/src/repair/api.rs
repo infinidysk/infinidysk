@@ -208,7 +208,8 @@ pub struct Par2Jobs {
     pending_jobs: i64,
     /// Pending jobs, then the latest finished ones.
     jobs: Vec<Par2Job>,
-    storage_used_bytes: u64,
+    /// `None` when the repair store cannot be read; the jobs stay usable.
+    storage_used_bytes: Option<u64>,
 }
 
 #[utoipa::path(get, path = "/api/v1/health/par2", tag = "health",
@@ -229,7 +230,10 @@ pub async fn get_par2_jobs(State(admin): State<Arc<Admin>>) -> Result<Json<Par2J
             .repairs
             .used_bytes()
             .await
-            .map_err(|e| Fail::Failed(e.to_string()))?,
+            .inspect_err(|error| {
+                tracing::warn!(reason = %error, "repair storage use could not be read");
+            })
+            .ok(),
     }))
 }
 

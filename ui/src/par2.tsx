@@ -86,6 +86,7 @@ export function Par2Actions({ id, hasNzb }: { id: string; hasNzb: boolean }) {
           onConfirm={() => act.mutate({ verify: false })}
         />
       </div>
+      {act.isError && <Failure error={act.error} />}
       {!enabled && (
         <p className="text-muted-foreground text-xs">
           Enable PAR2 repair in{" "}
@@ -195,11 +196,13 @@ export function Par2Jobs() {
         </p>
       )}
       <p role="status" className="text-muted-foreground text-sm">
-        {pending_jobs.toLocaleString()} pending jobs · {bytes(storage_used_bytes)} of saved repairs
+        {pending_jobs.toLocaleString()} pending jobs ·{" "}
+        {storage_used_bytes == null ? "saved repair size unavailable" : `${bytes(storage_used_bytes)} of saved repairs`}
       </p>
       <p role="status" className="sr-only">
         {announcement}
       </p>
+      {cancelJob.isError && <Failure error={cancelJob.error} />}
 
       {jobs.length > 0 && (
         <div className="divide-y rounded-lg border" aria-label="Pending work and recent results">

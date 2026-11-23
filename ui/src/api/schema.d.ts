@@ -3456,8 +3456,11 @@ export interface components {
             jobs: components["schemas"]["Par2Job"][];
             /** Format: int64 */
             pending_jobs: number;
-            /** Format: int64 */
-            storage_used_bytes: number;
+            /**
+             * Format: int64
+             * @description `None` when the repair store cannot be read; the jobs stay usable.
+             */
+            storage_used_bytes?: number | null;
         };
         Par2Status: {
             enabled: boolean;
