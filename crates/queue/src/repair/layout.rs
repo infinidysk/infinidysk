@@ -314,16 +314,26 @@ mod tests {
             priority: 0,
             backbone: None,
         }]);
-        let lookup: infinidysk_nntp::RepairLookup = Box::new(|key| match key {
-            RepairKey::Article(_) => Some(Box::pin(async {
-                Err(infinidysk_nntp::Error::Repair(
-                    "stored article is missing or corrupt",
-                ))
-            })),
-            RepairKey::Omitted(_) => None,
-        });
-        client.set_repairs(lookup);
+        // Both the committed and the legacy lookup fail; record what each was asked.
+        let failing = |seen: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| {
+            let seen = std::sync::Arc::clone(seen);
+            let lookup: infinidysk_nntp::RepairLookup = Box::new(move |key| match key {
+                RepairKey::Article(id) => {
+                    seen.lock().unwrap().push(id.to_owned());
+                    Some(Box::pin(async {
+                        Err(infinidysk_nntp::Error::Repair(
+                            "stored article is missing or corrupt",
+                        ))
+                    }))
+                }
+                RepairKey::Omitted(_) => None,
+            });
+            lookup
+        };
+        let (local, legacy) = (std::sync::Arc::default(), std::sync::Arc::default());
+        client.set_repairs(failing(&local));
         let mut budget = budget();
+        budget.candidates = Some(std::sync::Arc::new(failing(&legacy)));
         budget.limits.decoded_bytes = 4 * MAX_DECODED_LEN as u64;
         let body = budget.body(&client, &id).await.unwrap();
         assert_eq!(body.data.as_ref(), data);
@@ -331,5 +341,11 @@ mod tests {
             budget.body(&client, "missing@test").await,
             Err(Error::Source(infinidysk_nntp::Error::NotFound))
         ));
+        for seen in [local, legacy] {
+            assert_eq!(
+                *seen.lock().unwrap(),
+                [id.clone(), "missing@test".to_owned()]
+            );
+        }
     }
 }

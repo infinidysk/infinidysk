@@ -627,14 +627,20 @@ impl Budget {
             let body = tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => return Err(Error::Cancelled),
-                result = read => result.map_err(Error::Source)?,
+                result = read => result,
             };
-            if let Some(body) = body {
-                if body.data.is_empty() || body.data.len() > MAX_DECODED_LEN {
-                    return Err(Error::Limit("candidate article"));
+            match body {
+                Ok(Some(body)) => {
+                    if body.data.is_empty() || body.data.len() > MAX_DECODED_LEN {
+                        return Err(Error::Limit("candidate article"));
+                    }
+                    self.retain_id(id.to_owned())?;
+                    return Ok(body);
                 }
-                self.retain_id(id.to_owned())?;
-                return Ok(body);
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(reason = %error, "a legacy repair cannot be read; asking providers");
+                }
             }
         }
         self.limits.requests = self
