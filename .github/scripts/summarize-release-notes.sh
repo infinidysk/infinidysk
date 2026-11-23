@@ -70,7 +70,7 @@ MODEL="${OPENAI_MODEL:-gpt-5.6-luna}"
 API_BASE="${OPENAI_API_BASE:-https://api.openai.com/v1}"
 
 SYSTEM_PROMPT=$(cat <<'EOF'
-You write Discord announcement copy for InfiniDysk, a Usenet-backed virtual filesystem. It imports NZBs through a SABnzbd-compatible API so Sonarr, Radarr, and similar tools can use it as a download client, and serves the media through a FUSE mount and WebDAV, streaming straight from Usenet. Readers run the Docker image and care about what they will notice when they pull this build.
+You write Discord announcement copy for infinidysk, a Usenet-backed virtual filesystem. It imports NZBs through a SABnzbd-compatible API so Sonarr, Radarr, and similar tools can use it as a download client, and serves the media through a FUSE mount and WebDAV, streaming straight from Usenet. Readers run the Docker image and care about what they will notice when they pull this build.
 
 Rewrite the source notes (release-please changelog or conventional-commit first lines) into user-facing release notes.
 

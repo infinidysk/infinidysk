@@ -1,11 +1,11 @@
 name: Feature request
-description: Suggest an improvement to InfiniDysk
+description: Suggest an improvement to infinidysk
 type: Feature
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for sharing an idea. Feature requests should describe a legitimate use case for InfiniDysk; the project supports legally obtained content only.
+        Thanks for sharing an idea. Feature requests should describe a legitimate use case for infinidysk; the project supports legally obtained content only.
 
         New features go into 2.x. 1.x (the `v1` branch) gets bug fixes only.
 
@@ -48,10 +48,14 @@ body:
       label: Relevant area
       options:
         - WebDAV or streaming
+        - FUSE mount
         - Usenet provider connection
         - Queue, NZB processing, or health checks
         - SABnzbd-compatible API
-        - Sonarr, Radarr, or another integration
+        - Arr application or integration
+        - 1.x upgrade or import
+        - Database, backup, or restore
+        - PAR2 verify or repair
         - Admin UI
         - Authentication
         - Documentation
@@ -66,7 +70,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        <!-- nzbdav-votes-footer -->
+        <!-- infinidysk-votes-footer -->
         ---
 
         **Upvote this request** by reacting with a thumbs-up (👍) on this issue. Thumbs-up counts are tracked as Votes on the project board and help us prioritize feature work.
