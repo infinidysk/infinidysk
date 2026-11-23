@@ -95,6 +95,7 @@ struct Sampled {
     /// Counters since start at the last sample.
     last: HashMap<String, u64>,
     last_at: Option<Instant>,
+    maintenance_generation: u64,
     /// Providers whose breaker is open, by key.
     open: HashMap<String, Outage>,
     /// Bytes served per open read at the last sample.
@@ -1309,6 +1310,10 @@ impl Metrics {
             budget_waiters,
             now,
         );
+        let (maintenance, maintenance_started) = self
+            .sources
+            .maintenance
+            .sample(&mut state.maintenance_generation);
         let view = LiveView {
             at,
             read_bps,
@@ -1335,7 +1340,7 @@ impl Metrics {
                         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
                 })
                 .collect(),
-            maintenance: self.sources.maintenance.get(),
+            maintenance,
             providers: live_providers,
             permits_free: self.sources.client.free_permits(),
             resources,
@@ -1345,6 +1350,7 @@ impl Metrics {
         drop(guard);
         let trim_due = idle_trim.is_some_and(|idle| {
             let busy = interval_work
+                || maintenance_started
                 || !view.reads.is_empty()
                 || !view.imports.is_empty()
                 || view.maintenance.is_some()
