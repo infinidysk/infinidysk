@@ -738,7 +738,7 @@ pub async fn serve(
     let admin = Arc::new(Admin {
         config: Arc::clone(&config),
         queue: Arc::clone(&queue),
-        client,
+        client: Arc::clone(&client),
         vfs,
         health,
         repairs,
@@ -822,6 +822,7 @@ pub async fn serve(
     if let Some(mount) = mount {
         let _ = mount.await;
     }
+    client.close(DRAIN).await;
     db.close().await;
     info!("stopped");
     served.map(|()| {

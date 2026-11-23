@@ -410,6 +410,20 @@ impl Client {
         .await;
     }
 
+    /// Stops provider pools from accepting work. Waits up to `wait` for handshakes
+    /// and sockets to close; a handshake finishing later cannot publish a worker.
+    pub async fn close(&self, wait: Duration) {
+        let providers = self.snapshot();
+        for entry in providers.iter() {
+            entry.provider.pool.close();
+        }
+        let deadline = Instant::now() + wait;
+        while providers.iter().any(|e| e.provider.pool.occupied() > 0) && Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     /// Fetches and decodes one body (message-id without angle brackets); `probe` traces
     /// each provider attempt.
     ///
