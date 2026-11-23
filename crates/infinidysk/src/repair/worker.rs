@@ -547,11 +547,15 @@ impl Repairs {
             && let Some(item) = self.db.item(id).await?
             && let Some(meta) = item.meta_blob
         {
-            self.db
+            // Skipping the coverage check would let a repair pass without proving this file.
+            let raw = self
+                .db
                 .repair_blob(meta, 16_000_000)
                 .await?
-                .map(|raw| blob::decode_meta_limited(&raw, 16_000_000))
-                .transpose()?
+                .context(unavailable(
+                    "file metadata is missing or exceeds the metadata allowance",
+                ))?;
+            Some(blob::decode_meta_limited(&raw, 16_000_000)?)
         } else {
             None
         };
@@ -596,6 +600,7 @@ impl Repairs {
         let mut hash_only = false;
         let mut receipts = Vec::new();
         let mut stored_bytes = 0;
+        let mut verified_sets = Vec::new();
         for set in reader.sets() {
             progress.phase("Verifying source files and reconstructing damage");
             let result = repair::execute(
@@ -627,6 +632,7 @@ impl Repairs {
             // Published articles are immutable. A slice that spans an already repaired
             // article rebuilds it too; keep the published copy and stage only new articles.
             let patches = self.unpublished(&source, result.patches).await?;
+            verified_sets.push(result.sources);
             if !patches.is_empty() {
                 anyhow::ensure!(
                     receipts.len() + patches.len() <= MAX_PATCHES,
@@ -652,6 +658,28 @@ impl Repairs {
             anyhow::ensure!(
                 !covered.is_empty() && covered.iter().all(|covered| *covered),
                 unavailable("PAR2 data does not cover every part of this file")
+            );
+        }
+        // The job and its result belong to the whole NZB, so every file needs its proof.
+        for (item, meta) in self.db.par2_files(source.nzb()).await? {
+            if matches!(owner, infinidysk_db::repair::Owner::Item(id) if id == item) {
+                continue;
+            }
+            let raw = self
+                .db
+                .repair_blob(meta, 16_000_000)
+                .await?
+                .context(unavailable(
+                    "file metadata is missing or exceeds the metadata allowance",
+                ))?;
+            let mut metadata = blob::decode_meta_limited(&raw, 16_000_000)?;
+            let mut covered = Vec::new();
+            for sources in &verified_sets {
+                repair::refresh_metadata(&mut metadata, sources, &mut covered);
+            }
+            anyhow::ensure!(
+                !covered.is_empty() && covered.iter().all(|covered| *covered),
+                unavailable("PAR2 data does not cover every file in this release")
             );
         }
         let metadata = match context.metadata.as_deref() {

@@ -528,6 +528,77 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     )
     .await
     .unwrap();
+    let mut uncovered = Item::child(&parent, "uncovered.bin", ItemKind::NzbFile).unwrap();
+    let uncovered_meta = BlobId::new();
+    uncovered.nzb_blob = Some(nzb);
+    uncovered.meta_blob = Some(uncovered_meta);
+    uncovered.size = Some(7000);
+    let raw = blob::encode_meta(&FileMeta::Nzb(infinidysk_core::NzbFile {
+        segments: Segments {
+            items: vec![Segment {
+                id: "uncovered@loopback".into(),
+                size: 7000,
+                fallbacks: vec![],
+            }],
+            sizes_trusted: true,
+            missing: vec![],
+            corrupt: vec![],
+        },
+        proof: None,
+    }))
+    .unwrap();
+    f.db.insert(&[uncovered.clone()], &[(uncovered_meta, &raw)])
+        .await
+        .unwrap();
+    let whole =
+        f.db.request_par2(Owner::Item(item.id), false, 0)
+            .await
+            .unwrap()
+            .unwrap();
+    f.db.restart_par2(whole, 0).await.unwrap();
+    let whole_job =
+        f.db.claim_par2(infinidysk_db::now_ms())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(whole_job.id, whole);
+    let error = repairs
+        .perform(
+            &client,
+            &publisher,
+            &health,
+            &whole_job,
+            &tokio_util::sync::CancellationToken::new(),
+            &worker::Progress::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("every file in this release"),
+        "a sibling's proof cannot verify an uncovered file: {error:#}"
+    );
+    let (state, reason, retry, outcome) = settle(worker::Outcome::Unavailable(error.to_string()));
+    f.db.finish_par2(
+        whole_job.claim(),
+        state,
+        &reason,
+        0,
+        0,
+        infinidysk_db::now_ms(),
+        retry,
+        outcome,
+    )
+    .await
+    .unwrap();
+    assert_ne!(
+        f.db.par2_result(Owner::Item(uncovered.id), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        2,
+        "the uncovered file is not reported verified"
+    );
     server.stall_article(&file.segments.items[0].id, 1, Duration::from_secs(10));
     let verification =
         f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())

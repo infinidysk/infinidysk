@@ -519,6 +519,16 @@ impl Db {
         Ok(job.map(|id| Owner::Queue(JobId(id))))
     }
 
+    /// Every file of `nzb` with stored metadata: one NZB-wide repair must cover them all.
+    pub async fn par2_files(&self, nzb: BlobId) -> Result<Vec<(ItemId, BlobId)>, Error> {
+        let rows: Vec<(Uuid, Uuid)> = on!(self, pool => sqlx::query_as("SELECT id, meta_blob FROM items WHERE nzb_blob = $1 AND kind <> 1 AND meta_blob IS NOT NULL ORDER BY id")
+            .bind(nzb.0).fetch_all(pool).await?);
+        Ok(rows
+            .into_iter()
+            .map(|(item, meta)| (ItemId(item), BlobId(meta)))
+            .collect())
+    }
+
     async fn request_verification(
         &self,
         item: ItemId,
