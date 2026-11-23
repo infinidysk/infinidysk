@@ -75,6 +75,10 @@ macro_rules! columns {
     () => { "id, nzb_blob, item_id, meta_blob, meta_generation, generation, claim_generation, verify_only, state, attempts, reason, transferred_bytes, stored_bytes, updated_at, duration_ms, verified_bytes, started_at, next_at, scan_at, repair_on_failure, checked_articles, total_articles, completed_requests, missing_requests, outcome" };
 }
 
+macro_rules! stale_coverage {
+    () => { "verify_only = FALSE AND state IN (2, 3) AND (EXISTS (SELECT i.id, i.meta_blob, m.generation FROM items i JOIN blobs m ON m.id = i.meta_blob WHERE i.nzb_blob = repair_jobs.nzb_blob AND i.kind <> 1 EXCEPT SELECT c.item_id, c.meta_blob, c.generation FROM repair_coverage c WHERE c.job_id = repair_jobs.id) OR EXISTS (SELECT c.item_id, c.meta_blob, c.generation FROM repair_coverage c WHERE c.job_id = repair_jobs.id EXCEPT SELECT i.id, i.meta_blob, m.generation FROM items i JOIN blobs m ON m.id = i.meta_blob WHERE i.nzb_blob = repair_jobs.nzb_blob AND i.kind <> 1))" };
+}
+
 impl Db {
     pub async fn update_par2_requests(
         &self,
@@ -169,12 +173,44 @@ impl Db {
         verify: bool,
         prefer_scan: bool,
     ) -> Result<Option<Job>, Error> {
-        Ok(on!(self, pool => sqlx::query_as(concat!(
+        self.claim_lane(now, Some(verify), prefer_scan).await
+    }
+
+    async fn claim_lane(
+        &self,
+        now: i64,
+        lane: Option<bool>,
+        prefer_scan: bool,
+    ) -> Result<Option<Job>, Error> {
+        Ok(on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let job: Option<Job> = sqlx::query_as(concat!(
             "UPDATE repair_jobs SET state = 1, claim_generation = claim_generation + 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
-            "(SELECT id FROM repair_jobs WHERE state IN (0, 4) AND next_at <= $1 AND verify_only = $2 ",
-            "ORDER BY CASE WHEN (scan_at IS NOT NULL) = $3 THEN 0 ELSE 1 END, next_at, id LIMIT 1) ",
+            "(SELECT id FROM repair_jobs WHERE state IN (0, 4) AND next_at <= $1 AND (verify_only = $2 OR $4) ",
+            "ORDER BY CASE WHEN $4 OR (scan_at IS NOT NULL) = $3 THEN 0 ELSE 1 END, next_at, id LIMIT 1) ",
             "AND state IN (0, 4) AND next_at <= $1 RETURNING ", columns!()))
-            .bind(now).bind(verify).bind(prefer_scan).fetch_optional(pool).await?))
+            .bind(now).bind(lane.unwrap_or(false)).bind(prefer_scan).bind(lane.is_none()).fetch_optional(&mut *tx).await?;
+            if let Some(job) = &job && !job.verify_only {
+                sqlx::query("DELETE FROM repair_coverage WHERE job_id = $1").bind(job.id).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO repair_coverage(job_id, item_id, meta_blob, generation) SELECT $1, i.id, i.meta_blob, m.generation FROM items i JOIN blobs m ON m.id = i.meta_blob WHERE i.nzb_blob = $2 AND i.kind <> 1")
+                    .bind(job.id).bind(job.nzb_blob).execute(&mut *tx).await?;
+            }
+            tx.commit().await?;
+            job
+        }))
+    }
+
+    pub async fn advance_par2_coverage(
+        &self,
+        claim: Claim,
+        source: &crate::repair::Source,
+    ) -> Result<(), Error> {
+        let (Owner::Item(item), Some((meta, generation))) = (source.owner, source.metadata) else {
+            return Ok(());
+        };
+        on!(self, pool => sqlx::query("UPDATE repair_coverage SET generation = generation + 1 WHERE job_id = $1 AND item_id = $2 AND meta_blob = $3 AND generation = $4 AND EXISTS (SELECT 1 FROM repair_jobs WHERE id = $1 AND claim_generation = $5 AND state = 1)")
+            .bind(claim.id).bind(item.0).bind(meta.0).bind(generation).bind(claim.generation).execute(pool).await?.rows_affected());
+        Ok(())
     }
 
     /// Tag only a new request or an explicit scan retry; pending manual work keeps its priority.
@@ -397,7 +433,17 @@ impl Db {
             let existing: Option<Uuid> = sqlx::query_scalar(
                 "SELECT id FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = $3")
                 .bind(source.nzb().0).bind(source.generation()).bind(verify).fetch_optional(&mut *tx).await?;
-            if let Some(id) = existing { tx.rollback().await?; return Ok(Some(id)); }
+            if let Some(id) = existing {
+                let stale: bool = sqlx::query_scalar(concat!("SELECT EXISTS(SELECT 1 FROM repair_jobs WHERE id = $1 AND ", stale_coverage!(), ")"))
+                    .bind(id).fetch_one(&mut *tx).await?;
+                if !stale { tx.rollback().await?; return Ok(Some(id)); }
+                if count >= QUEUE_CAPACITY { return Err(Error::RepairQueueFull); }
+                sqlx::query("UPDATE repair_jobs SET state = 0, attempts = 0, updated_at = $2, next_at = $2, reason = '', outcome = 0, duration_ms = 0, transferred_bytes = 0, stored_bytes = 0, verified_bytes = 0, completed_requests = 0, missing_requests = 0 WHERE id = $1")
+                    .bind(id).bind(now).execute(&mut *tx).await?;
+                tx.commit().await?;
+                self.notify(crate::Change::Health);
+                return Ok(Some(id));
+            }
             if count >= QUEUE_CAPACITY { tx.rollback().await?; return Err(Error::RepairQueueFull); }
             let id = Uuid::new_v4();
             sqlx::query("INSERT INTO repair_jobs (id, nzb_blob, generation, verify_only, next_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)")
@@ -410,12 +456,7 @@ impl Db {
     }
 
     pub async fn claim_par2(&self, now: i64) -> Result<Option<Job>, Error> {
-        // Atomic UPDATE also prevents duplicate claims from concurrent async callers.
-        Ok(on!(self, pool => sqlx::query_as(concat!(
-            "UPDATE repair_jobs SET state = 1, claim_generation = claim_generation + 1, attempts = attempts + 1, updated_at = $1, started_at = $1 WHERE id = ",
-            "(SELECT id FROM repair_jobs WHERE state IN (0, 4) AND next_at <= $1 ORDER BY next_at, id LIMIT 1) ",
-            "AND state IN (0, 4) AND next_at <= $1 RETURNING ", columns!()))
-            .bind(now).fetch_optional(pool).await?))
+        self.claim_lane(now, None, false).await
     }
 
     /// Call only at application startup, before launching the single worker.
@@ -479,7 +520,11 @@ impl Db {
             let result: Option<(i16, Option<Uuid>)> = sqlx::query_as("UPDATE repair_jobs SET attempts = CASE WHEN state = 1 AND attempts = $10 AND attempts > 0 THEN attempts - 1 ELSE attempts END, state = CASE WHEN state = 6 THEN 6 ELSE $2 END, reason = CASE WHEN state = 6 THEN reason ELSE $3 END, outcome = CASE WHEN state = 6 THEN outcome ELSE $9 END, transferred_bytes = $4, stored_bytes = $5, updated_at = $6, next_at = $7, duration_ms = duration_ms + CASE WHEN started_at IS NULL OR started_at > $6 THEN 0 ELSE $6 - started_at END, started_at = NULL WHERE id = $1 AND claim_generation = $8 AND (state = 1 OR (state = 6 AND started_at IS NOT NULL)) RETURNING state, nzb_blob")
                 .bind(claim.id).bind(state).bind(reason).bind(transferred).bind(stored).bind(now).bind(retry.unwrap_or(now))
                 .bind(claim.generation).bind(outcome).bind(refund).fetch_optional(&mut *tx).await?;
-            if let Some((state, Some(source))) = result && state != 4 { release_nzb!(self, tx, source); }
+            if let Some((state, Some(source))) = result && state != 4 {
+                let stale = matches!(state, 2 | 3) && sqlx::query(concat!("UPDATE repair_jobs SET state = 4, next_at = $2, reason = 'File metadata changed during verification', attempts = attempts - 1 WHERE id = $1 AND ", stale_coverage!()))
+                    .bind(claim.id).bind(now).execute(&mut *tx).await?.rows_affected() != 0;
+                if !stale { release_nzb!(self, tx, source); }
+            }
             tx.commit().await?;
         });
         self.notify(crate::Change::Health);
@@ -505,7 +550,7 @@ impl Db {
         };
         Ok(
             on!(self, pool => sqlx::query_as(concat!("SELECT ", columns!(),
-            " FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = $3"))
+            " FROM repair_jobs WHERE nzb_blob = $1 AND generation = $2 AND verify_only = $3 AND NOT (", stale_coverage!(), ")"))
             .bind(source.nzb().0).bind(source.generation()).bind(verify).fetch_optional(pool).await?),
         )
     }

@@ -711,6 +711,9 @@ impl Repairs {
                     .await?,
                 unavailable("source changed before publication")
             );
+            if metadata_changed {
+                self.db.advance_par2_coverage(job.claim(), &source).await?;
+            }
             progress.stored.fetch_add(stored_bytes, Ordering::Relaxed);
         }
         // The repair stands either way; waiting work then runs at its scheduled time.

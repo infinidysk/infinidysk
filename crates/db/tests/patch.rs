@@ -1202,10 +1202,49 @@ async fn exhausted_generations_fail_without_reusing_a_source_version() {
 }
 
 #[tokio::test]
+async fn sibling_changes_before_or_after_settlement_require_a_new_check() {
+    for fixture in fixtures().await {
+        let db = &fixture.db;
+        let owner = Owner::Item(fixture.file.id);
+        let mut sibling = fixture.file.clone();
+        sibling.id = ItemId::new();
+        sibling.name = "sibling.bin".into();
+        sibling.path = "/content/sibling.bin".into();
+        let meta = BlobId::new();
+        sibling.meta_blob = Some(meta);
+        db.insert(&[sibling], &[(meta, b"initial")]).await.unwrap();
+        let id = db.request_par2(owner, false, 0).await.unwrap().unwrap();
+        let job = db.claim_par2(1).await.unwrap().unwrap();
+        db.update_blob(meta, b"during verification").await.unwrap();
+        db.finish_par2(job.claim(), 2, "", 0, 0, 2, None, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.par2_result(owner, false).await.unwrap().unwrap().state,
+            4
+        );
+        let job = db.claim_par2(3).await.unwrap().unwrap();
+        db.finish_par2(job.claim(), 2, "", 0, 0, 4, None, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.par2_result(owner, false).await.unwrap().unwrap().state,
+            2
+        );
+        db.update_blob(meta, b"after settlement").await.unwrap();
+        assert!(db.par2_result(owner, false).await.unwrap().is_none());
+        assert_eq!(db.request_par2(owner, false, 5).await.unwrap(), Some(id));
+        assert_eq!(db.claim_par2(6).await.unwrap().unwrap().id, id);
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
 async fn additive_migration_keeps_existing_files_and_starts_their_generation_at_zero() {
     for mut fixture in fixtures().await {
         fixture.db.close().await;
-        let old_schema = "DROP TABLE repair_jobs;
+        let old_schema = "DROP TABLE repair_coverage;
+            DROP TABLE repair_jobs;
             DROP TABLE legacy_repair_articles;
             DROP TABLE repair_patches;
             ALTER TABLE blobs DROP COLUMN generation;

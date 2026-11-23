@@ -57,6 +57,7 @@ pub(crate) const TABLES: &[(&str, Key)] = &[
     ("items", Key::One("id")),
     ("queue", Key::One("id")),
     ("repair_jobs", Key::One("id")),
+    ("repair_coverage", Key::Two("job_id", "item_id")),
     ("legacy_repair_articles", Key::One("hash")),
     ("history", Key::One("id")),
     ("health_checks", Key::One("id")),
@@ -74,7 +75,7 @@ pub(crate) const TABLES: &[(&str, Key)] = &[
 ];
 
 /// Tables a foreign key points at. Their deletes run after every upsert.
-const PARENTS: &[&str] = &["blobs", "items", "rejected_releases"];
+const PARENTS: &[&str] = &["blobs", "items", "rejected_releases", "repair_jobs"];
 
 const CHANGES: &str = "pg_sync_changes";
 const BATCH_ROWS: usize = 1000;
