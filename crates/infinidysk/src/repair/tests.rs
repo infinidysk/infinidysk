@@ -599,7 +599,10 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         2,
         "the uncovered file is not reported verified"
     );
-    server.stall_article(&file.segments.items[0].id, 1, Duration::from_secs(10));
+    // Each stalled BODY costs a 3 s request timeout, so an attempt that ignores
+    // cancellation keeps the lane for well over the wait below.
+    let stalled = &file.segments.items[0].id;
+    server.stall_article(stalled, 8, Duration::from_secs(10));
     let verification =
         f.db.request_par2(Owner::Item(item.id), true, infinidysk_db::now_ms())
             .await
@@ -646,28 +649,25 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
         .await
         .unwrap();
     assert!(f.db.par2_cancelled(running_claim).await.unwrap());
-    tokio::time::timeout(Duration::from_secs(8), async {
-        loop {
-            if f.db
-                .par2_jobs()
-                .await
-                .unwrap()
-                .iter()
-                .find(|job| job.id == verification)
-                .unwrap()
-                .started_at
-                .is_none()
-            {
-                break;
-            }
+    let claim = async || {
+        f.db.par2_jobs()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|job| job.id == verification)
+            .unwrap()
+            .claim()
+    };
+    let requeued = claim().await;
+    // One verify lane: any later claim proves the old attempt returned.
+    tokio::time::timeout(Duration::from_secs(6), async {
+        while claim().await == requeued {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("cancellation stops the active attempt");
-    f.db.restart_par2(verification, infinidysk_db::now_ms())
-        .await
-        .unwrap();
+    .expect("the cancelled attempt stops at its next poll and frees its lane");
+    server.stall_article(stalled, 0, Duration::ZERO);
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let current =
