@@ -1,6 +1,6 @@
 [package]
 name = "infinidysk-import"
-description = "One-time importer of a C# InfiniDysk /config"
+description = "One-time importer of a C# infinidysk /config"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

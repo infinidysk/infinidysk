@@ -217,10 +217,10 @@ jobs:
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
           SUMMARY=$(printf '%s' "$NOTES" | bash .github/scripts/summarize-release-notes.sh --type dev --version "$RELEASE_TAG" || true)
           if [ -n "$SUMMARY" ]; then
-            BODY=$(printf '🛠️ **InfiniDysk 2.x: %s**\nImage: `%s:edge`\n\n%s\n\nRelease notes: %s' \
+            BODY=$(printf '🛠️ **infinidysk 2.x: %s**\nImage: `%s:edge`\n\n%s\n\nRelease notes: %s' \
               "$RELEASE_TAG" "$IMAGE" "$SUMMARY" "$URL")
           else
-            BODY=$(printf '🛠️ **InfiniDysk 2.x: %s**\nImage: `%s:edge`\nRelease notes: %s\n\n%s' \
+            BODY=$(printf '🛠️ **infinidysk 2.x: %s**\nImage: `%s:edge`\nRelease notes: %s\n\n%s' \
               "$RELEASE_TAG" "$IMAGE" "$URL" "$NOTES")
           fi
           printf '%s' "$BODY" | bash .github/scripts/post-discord-messages.sh

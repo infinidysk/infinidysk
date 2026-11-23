@@ -1,5 +1,5 @@
 # Recounts thumbs-up (👍) reactions on issue bodies linked to the
-# InfiniDysk Ecosystem project and writes the count to the Votes number field.
+# infinidysk Ecosystem project and writes the count to the Votes number field.
 # Also appends an upvote footer to open Feature issues when missing.
 #
 # Requires repo secret PROJECT_VOTES_TOKEN: a fine-grained PAT (or GitHub App
@@ -250,10 +250,11 @@ jobs:
           import subprocess
           import sys
 
-          FOOTER_MARKER = "<!-- nzbdav-votes-footer -->"
+          FOOTER_MARKER = "<!-- infinidysk-votes-footer -->"
+          OLD_FOOTER_MARKER = "<!-- nzbdav-votes-footer -->"
           FOOTER = "\n".join(
               [
-                  "<!-- nzbdav-votes-footer -->",
+                  "<!-- infinidysk-votes-footer -->",
                   "---",
                   "",
                   "**Upvote this request** by reacting with a thumbs-up (👍) on this issue. "
@@ -292,6 +293,7 @@ jobs:
           repo_owner = os.environ["REPO_OWNER"]
           repo_name = os.environ["REPO_NAME"]
           footer_appended = 0
+          footer_migrated = 0
           footer_present = 0
           footer_skipped = 0
           cursor = None
@@ -332,7 +334,37 @@ jobs:
                       footer_skipped += 1
                       continue
 
-                  body = issue.get("body") or ""
+                  current = gh_graphql(
+                      """
+                      query($id: ID!) {
+                        node(id: $id) {
+                          ... on Issue {
+                            body
+                          }
+                        }
+                      }
+                      """,
+                      {"id": issue["id"]},
+                  )
+                  body = current["node"].get("body") or ""
+                  if OLD_FOOTER_MARKER in body:
+                      new_body = body.replace(OLD_FOOTER_MARKER, FOOTER_MARKER)
+                      gh_graphql(
+                          """
+                          mutation($id: ID!, $body: String!) {
+                            updateIssue(input: { id: $id, body: $body }) {
+                              issue {
+                                id
+                              }
+                            }
+                          }
+                          """,
+                          {"id": issue["id"], "body": new_body},
+                      )
+                      print(f"Migrated upvote footer on #{issue['number']}")
+                      footer_migrated += 1
+                      continue
+
                   if FOOTER_MARKER in body:
                       footer_present += 1
                       continue
@@ -360,7 +392,7 @@ jobs:
 
           print(
               "Feature footers done. "
-              f"appended={footer_appended} already-present={footer_present} "
+              f"appended={footer_appended} migrated={footer_migrated} already-present={footer_present} "
               f"skipped={footer_skipped}"
           )
           PY
