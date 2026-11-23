@@ -78,7 +78,7 @@ fn queue_page(path: &str) -> Value {
             "status": "completed", "trackedDownloadState": "importBlocked",
             "episodeIds": [11, 12, 21], "statusMessages": [],
         }]}),
-        "/api/v3/notification" | "/api/v5/connection" => json!([{ "id": 4, "name": "infinidysk" }]),
+        "/api/v3/notification" | "/api/v5/connection" => json!([{ "id": 4, "name": "Infinidysk" }]),
         _ => json!({}),
     }
 }

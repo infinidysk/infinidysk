@@ -334,7 +334,19 @@ jobs:
                       footer_skipped += 1
                       continue
 
-                  body = issue.get("body") or ""
+                  current = gh_graphql(
+                      """
+                      query($id: ID!) {
+                        node(id: $id) {
+                          ... on Issue {
+                            body
+                          }
+                        }
+                      }
+                      """,
+                      {"id": issue["id"]},
+                  )
+                  body = current["node"].get("body") or ""
                   if OLD_FOOTER_MARKER in body:
                       new_body = body.replace(OLD_FOOTER_MARKER, FOOTER_MARKER)
                       gh_graphql(
