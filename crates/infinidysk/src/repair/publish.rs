@@ -154,7 +154,14 @@ impl Publisher {
         #[cfg(target_os = "linux")]
         if let Some(mount) = &self.mount {
             let mut native = mount.prepare(&mut writers)?;
-            if let Err(error) = native.block().await {
+            let blocked = tokio::select! {
+                result = native.block() => result,
+                () = stopped.cancelled() => {
+                    native.abort();
+                    return Err(refused());
+                }
+            };
+            if let Err(error) = blocked {
                 native.abort();
                 return Err(error).context("repair publication could not close delivery");
             }
