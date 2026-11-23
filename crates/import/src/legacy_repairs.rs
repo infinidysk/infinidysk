@@ -213,22 +213,31 @@ pub async fn read(db: &Db, id: &str) -> Result<Option<Body>, infinidysk_nntp::Er
 
 /// Retirement requires a full explicit rewrite pass, zero retained candidates and seven
 /// days with no old-format use. Original C# files are never deleted by this migration.
+/// Once retired, or when nothing was imported, the idle worker's calls write nothing.
 pub async fn finish_rewrite(db: &Db, full_pass: bool) -> Result<(), infinidysk_db::Error> {
-    if !full_pass
-        || db
-            .retire_legacy_repairs(|header, length| {
-                let header = parse_header(header, length).ok()?;
-                Some(infinidysk_core::ByteRange {
-                    start: header.part_offset,
-                    end: header.part_offset.checked_add(header.part_size)?,
-                })
-            })
-            .await?
-            != 0
-    {
+    if !full_pass {
         return Ok(());
     }
     let config = db.config().await?;
+    if !config
+        .iter()
+        .any(|(key, value)| key == "legacy.repair.enabled" && value == "1")
+    {
+        return Ok(());
+    }
+    if db
+        .retire_legacy_repairs(|header, length| {
+            let header = parse_header(header, length).ok()?;
+            Some(infinidysk_core::ByteRange {
+                start: header.part_offset,
+                end: header.part_offset.checked_add(header.part_size)?,
+            })
+        })
+        .await?
+        != 0
+    {
+        return Ok(());
+    }
     let last = config
         .iter()
         .find(|(key, _)| key == "legacy.repair.last_used_ms")
@@ -581,12 +590,19 @@ mod tests {
             .await
             .unwrap();
         finish_rewrite(&db, true).await.unwrap();
+        let retired = db.config().await.unwrap();
+        assert!(!retired.iter().any(|(k, _)| k == "legacy.repair.enabled"));
+        // The idle worker calls this every few seconds; a retired catalog stays untouched.
+        db.write_config(&[("legacy.repair.retired_at_ms", "1")], &[])
+            .await
+            .unwrap();
+        finish_rewrite(&db, true).await.unwrap();
         assert!(
-            !db.config()
+            db.config()
                 .await
                 .unwrap()
                 .iter()
-                .any(|(k, _)| k == "legacy.repair.enabled")
+                .any(|(k, v)| k == "legacy.repair.retired_at_ms" && v == "1")
         );
     }
 }
