@@ -52,14 +52,15 @@ impl Repairs {
                     after = Some(patch.id);
                     let repairs = Arc::clone(self);
                     // A backup is not a client read, so it keeps the eviction order.
-                    let (patch, data) = tokio::task::spawn_blocking(move || -> Result<_> {
+                    let (patch, data) = tokio::task::spawn_blocking(move || {
+                        // A store that cannot open is a failed read; an embedded copy may remain.
                         let data = repairs
-                            .store(u64::MAX)?
-                            .read_untouched(&patch)
+                            .store(u64::MAX)
+                            .and_then(|store| store.read_untouched(&patch))
                             .map(|body| body.data);
-                        Ok((patch, data))
+                        (patch, data)
                     })
-                    .await??;
+                    .await?;
                     let error = match data {
                         Ok(data) => {
                             snapshot.set_repair_payload(&patch, Some(&data)).await?;

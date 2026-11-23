@@ -1826,7 +1826,10 @@ async fn two_read_repairs(f: &Fixture, repairs: &Repairs) -> (Patch, u64) {
             .unwrap();
     }
     store.read(&f.patch).unwrap();
-    assert!(modified(&f.patch) > modified(&stale), "a read makes a repair the newest");
+    assert!(
+        modified(&f.patch) > modified(&stale),
+        "a read makes a repair the newest"
+    );
     (stale, store.used_bytes().unwrap())
 }
 
@@ -2205,6 +2208,36 @@ async fn a_backup_keeps_an_embedded_payload_whose_local_file_is_missing() {
             .as_deref(),
         Some(DATA),
         "the only recoverable bytes stay in the backup"
+    );
+    snapshot.close().await;
+    drop(repairs);
+    drop(client);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn a_backup_keeps_an_embedded_payload_when_the_store_cannot_open() {
+    let f = Fixture::new().await;
+    f.publish().await;
+    f.db.set_repair_payload(&f.patch, Some(DATA)).await.unwrap();
+    let broken = f.root.join("not-a-directory");
+    std::fs::write(&broken, b"").unwrap();
+    let client = Arc::new(Client::new([]));
+    let repairs = install(&client, f.db.clone(), broken);
+    assert_eq!(repairs.backup_bytes().await.unwrap(), DATA.len() as u64);
+    let backup = f.root.join("backup.sqlite");
+    repairs
+        .backup_into(&backup, &tokio_util::sync::CancellationToken::new())
+        .await
+        .unwrap();
+    let snapshot = Db::connect(&crate::app::sqlite_url(&backup)).await.unwrap();
+    assert_eq!(
+        snapshot
+            .repair_payload(f.patch.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(DATA)
     );
     snapshot.close().await;
     drop(repairs);
