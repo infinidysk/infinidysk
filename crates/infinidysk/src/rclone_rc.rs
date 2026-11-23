@@ -145,13 +145,17 @@ pub(crate) struct RcClient {
 
 impl RcClient {
     pub(crate) fn new(rc: &RcloneRc) -> anyhow::Result<Self> {
+        let url = rc.forget_url().context("reading the rclone RC URL")?;
+        let mut http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(ATTEMPT_TIMEOUT);
+        // Plain HTTP is only allowed to loopback; a proxy would take it off the host.
+        if url.scheme() == "http" {
+            http = http.no_proxy();
+        }
         Ok(Self {
-            http: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(ATTEMPT_TIMEOUT)
-                .build()
-                .context("building the rclone RC client")?,
-            url: rc.forget_url().context("reading the rclone RC URL")?,
+            http: http.build().context("building the rclone RC client")?,
+            url,
             fs: rc.fs.clone(),
             user: rc.user.clone(),
             password: rc.password.clone(),
