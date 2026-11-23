@@ -12,10 +12,6 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 
-#[cfg(target_os = "linux")]
-#[global_allocator]
-static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("openapi") {
@@ -78,19 +74,6 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .with(capture)
         .init();
-    // jemalloc retries a failed extra worker in a tight loop; one worker has no extras.
-    #[cfg(target_os = "linux")]
-    if let Err(error) = tikv_jemalloc_ctl::max_background_threads::write(1)
-        .and_then(|()| tikv_jemalloc_ctl::background_thread::write(true))
-    {
-        let message = "cannot start background memory purging; raise the container's process limit or free memory, then restart";
-        if tracing::enabled!(tracing::Level::WARN) {
-            tracing::warn!(reason = %error, "{message}");
-        } else {
-            eprintln!("{message}: {error}");
-        }
-        std::process::exit(1);
-    }
     tracing::info!(dir = %boot.home.display(), "using the config folder");
     if let Some(error) = unkept {
         tracing::warn!(

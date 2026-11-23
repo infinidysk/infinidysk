@@ -43,7 +43,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg fuse3 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/bin/infinidysk /usr/local/bin/infinidysk
-COPY --chmod=0644 licenses/jemalloc.txt /usr/share/doc/infinidysk/jemalloc.txt
 # Declared after the layers above so a new commit does not rebuild them.
 ARG COMMIT=""
 ARG VERSION=""

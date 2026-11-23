@@ -180,7 +180,14 @@ pub struct Experiment {
     pub description: &'static str,
 }
 
-pub const EXPERIMENTS: [Experiment; 3] = [
+pub(crate) const IDLE_MEMORY_TRIM: &str = "idle-memory-trim";
+
+pub const EXPERIMENTS: [Experiment; 4] = [
+    Experiment {
+        name: IDLE_MEMORY_TRIM,
+        title: "Release unused memory when idle",
+        description: "On Linux, return unused memory to the OS after two minutes without playback or other work. Keeps the segment cache. The next playback may take slightly longer to start.",
+    },
     Experiment {
         name: "par2-repair",
         title: "Repair original articles with PAR2",

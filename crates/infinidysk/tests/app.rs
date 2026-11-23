@@ -554,7 +554,15 @@ async fn serves_every_api_on_one_port_and_applies_settings_live() {
     // Renaming the WebDAV user applies at once; the masked password round-trips unchanged.
     let (code, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
     assert_eq!(code, "HTTP/1.1 200 OK");
-    let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
+    let mut view = serde_json::from_str::<Value>(&body).unwrap();
+    assert!(
+        view["experiments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "idle-memory-trim")
+    );
+    let mut settings = view["settings"].take();
     assert_eq!(settings["webdav"]["password"], "********");
     settings["webdav"]["user"] = "dav".into();
     settings["network"]["trusted_proxies"] = serde_json::json!(["172.18.0.0/16"]);
@@ -603,6 +611,10 @@ async fn serves_every_api_on_one_port_and_applies_settings_live() {
         }
     };
     let mut remote = settings.clone();
+    let mut trim = settings.clone();
+    trim["experiments"] = json!(["idle-memory-trim"]);
+    assert_eq!(restart_required(&trim).await, true);
+    assert_eq!(restart_required(&settings).await, false);
     remote["rclone_rc"] = json!({ "enabled": false, "url": format!("http://{rc}/") });
     assert_eq!(restart_required(&remote).await, false, "off stays off");
     remote["rclone_rc"]["enabled"] = true.into();

@@ -88,7 +88,7 @@ jobs:
           dir="$RUNNER_TEMP/$ARCHIVE"
           mkdir "$dir"
           install -m 0755 "$RUNNER_TEMP/binary/infinidysk" "$dir/infinidysk"
-          install -m 0644 LICENSE version.txt licenses/jemalloc.txt "$dir/"
+          install -m 0644 LICENSE version.txt "$dir/"
           printf '%s\n' "$GITHUB_SHA" > "$dir/commit.txt"
       - name: Check the glibc floor
         run: |
