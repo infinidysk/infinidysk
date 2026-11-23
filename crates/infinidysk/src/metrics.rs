@@ -1283,7 +1283,9 @@ impl Metrics {
             .iter()
             .map(|d| get(&format!("served.{}", d.label())))
             .sum();
-        let interval_work = idle_trim.is_some() && (!ended.is_empty() || !deltas.is_empty());
+        // Served bytes are already counters, so an ended read that served and fetched
+        // nothing (a metadata probe the kernel page cache answered) is not work.
+        let interval_work = idle_trim.is_some() && !deltas.is_empty();
         state.last = totals;
         if state.minute.len() == SAMPLES_PER_MINUTE {
             state.minute.pop_front();
