@@ -504,7 +504,9 @@ impl Discovery {
                     batch.all();
                 }
             }
-            if std::mem::take(&mut startup) || (missed && !batch.dirs().is_empty()) {
+            // A missed forget is retried with the next listing change, or once per Arr try.
+            let arr_waits = snapshot.as_ref().is_some_and(|pending| !pending.is_empty());
+            if std::mem::take(&mut startup) || (missed && (arr_waits || !batch.dirs().is_empty())) {
                 batch.all();
             }
             if !batch.dirs().is_empty() {

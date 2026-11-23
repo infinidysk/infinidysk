@@ -1332,6 +1332,17 @@ async fn rclone_forget_finishes_before_the_owning_arr_is_told() {
     .await;
     assert!(order.forgets.load(Ordering::SeqCst) > before);
 
+    // The next Arr refresh first retries the missed forget, also with no listing change.
+    order.fail.store(false, Ordering::SeqCst);
+    let before = order.forgets.load(Ordering::SeqCst);
+    send(addr, &add("bad again", "still not xml")).await;
+    wait("recovering refresh", {
+        let order = Arc::clone(&order);
+        Box::new(move || order.told.lock().unwrap().len() == 4)
+    })
+    .await;
+    assert!(order.forgets.load(Ordering::SeqCst) > before);
+
     cancel.cancel();
     server.await.unwrap().unwrap();
 }
