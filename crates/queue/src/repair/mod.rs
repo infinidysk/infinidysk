@@ -609,10 +609,15 @@ impl Budget {
         let local = tokio::select! {
             biased;
             () = self.cancel.cancelled() => return Err(Error::Cancelled),
-            result = client.repaired(id, None) => result.map_err(Error::Source)?,
+            result = client.repaired(id, None) => result,
         };
-        if let Some(body) = local {
-            return Ok(body);
+        match local {
+            Ok(Some(body)) => return Ok(body),
+            Ok(None) => {}
+            // A damaged local repair must not hide a provider's copy of this article.
+            Err(error) => {
+                tracing::debug!(reason = %error, "a stored repair cannot be read; asking providers");
+            }
         }
         let candidate = self
             .candidates

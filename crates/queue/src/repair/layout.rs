@@ -281,4 +281,55 @@ mod tests {
         let articles = slots.finish(30).unwrap();
         assert_eq!(articles[1].range, 10..20);
     }
+
+    #[tokio::test]
+    async fn a_damaged_local_repair_falls_back_to_providers() {
+        use infinidysk_nntp::{
+            Client, Downloads, Endpoint, MAX_DECODED_LEN, Pool, PoolConfig, Provider, RepairKey,
+            TlsMode,
+        };
+        use infinidysk_testkit::{LoopbackServer, post};
+        let data = b"posted article";
+        let articles = post("fallback", "f.bin", data, data.len());
+        let id = articles[0].message_id.clone();
+        let server = LoopbackServer::start(articles).await.unwrap();
+        let endpoint = Endpoint::new(
+            "127.0.0.1",
+            server.addr().port(),
+            TlsMode::Plain,
+            None,
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        let config = PoolConfig {
+            max_connections: 1,
+            pipeline_depth: 1,
+            idle_timeout: std::time::Duration::from_secs(5),
+            min_connections: 0,
+        };
+        let client = Client::new([Provider {
+            pool: Pool::new(endpoint, config, Downloads::new(4)).unwrap(),
+            key: "test".to_owned(),
+            name: String::new(),
+            priority: 0,
+            backbone: None,
+        }]);
+        let lookup: infinidysk_nntp::RepairLookup = Box::new(|key| match key {
+            RepairKey::Article(_) => Some(Box::pin(async {
+                Err(infinidysk_nntp::Error::Repair(
+                    "stored article is missing or corrupt",
+                ))
+            })),
+            RepairKey::Omitted(_) => None,
+        });
+        client.set_repairs(lookup);
+        let mut budget = budget();
+        budget.limits.decoded_bytes = 4 * MAX_DECODED_LEN as u64;
+        let body = budget.body(&client, &id).await.unwrap();
+        assert_eq!(body.data.as_ref(), data);
+        assert!(matches!(
+            budget.body(&client, "missing@test").await,
+            Err(Error::Source(infinidysk_nntp::Error::NotFound))
+        ));
+    }
 }
