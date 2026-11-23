@@ -96,7 +96,7 @@ impl Publisher {
             oneshot::Sender<Result<bool>>,
         >,
     ) -> Result<bool> {
-        let lifecycle = tokio::select! {
+        let mut lifecycle = tokio::select! {
             lifecycle = self.repairs.lifecycle.lock() => lifecycle,
             () = stopped.cancelled() => anyhow::bail!("repair stopped before publication"),
         };
@@ -126,13 +126,19 @@ impl Publisher {
             match self.vfs.begin_publication(source.nzb(), &patches) {
                 Ok(publication) => break (paused, publication),
                 // An earlier publication still waiting for FUSE invalidation holds the slot.
-                // Wait without the write pause; this repair has not failed.
+                // Wait without the write pause or the lifecycle lock; this repair has not
+                // failed, and receipts keep its verified files from eviction meanwhile.
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     drop(paused);
+                    drop(lifecycle);
                     tokio::select! {
                         () = stopped.cancelled() => return Err(refused()),
                         () = tokio::time::sleep(Duration::from_millis(250)) => {}
                     }
+                    lifecycle = tokio::select! {
+                        lifecycle = self.repairs.lifecycle.lock() => lifecycle,
+                        () = stopped.cancelled() => return Err(refused()),
+                    };
                 }
                 Err(error) => return Err(error.into()),
             }
