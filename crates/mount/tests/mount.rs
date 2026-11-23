@@ -371,7 +371,10 @@ async fn reads_the_tree_through_the_kernel() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     cancel.cancel();
-    task.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .expect("the mount stops after cancellation")
+        .unwrap();
     result.unwrap();
     let reported = reported.expect("the mount reports its kernel limits");
     assert_eq!(reported.max_background, Some(64));

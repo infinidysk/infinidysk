@@ -1516,8 +1516,9 @@ dependencies = [
 
 [[package]]
 name = "infinidysk-fuse"
-version = "0.10.1"
-source = "git+https://github.com/infinidysk/infinidysk-fuse?rev=06aaf3a46ad10354136d53fe7cb55d536feca1a4#06aaf3a46ad10354136d53fe7cb55d536feca1a4"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86b46f7ebbfcec9a1593cffdec437e7c15ae06b82181d5bfecf3a57757b5d2f7"
 dependencies = [
  "async-notify",
  "bytes",
