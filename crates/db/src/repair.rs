@@ -207,9 +207,10 @@ impl Db {
         Ok(())
     }
 
-    pub async fn recheck_missing_repairs(&self) -> Result<(), Error> {
-        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE health_state <> 7 AND nzb_blob IN (SELECT nzb_blob FROM repair_patches)")
-            .execute(pool).await?.rows_affected());
+    /// Makes every file of the NZB that owns repair `id` due for a check.
+    pub async fn recheck_missing_repair(&self, id: infinidysk_core::PatchId) -> Result<(), Error> {
+        on!(self, pool => sqlx::query("UPDATE items SET health_state = CASE WHEN health_state = 5 THEN 5 ELSE 0 END, next_health_check = 0, recheck_requested = CASE WHEN recheck_requested = 2 THEN 2 ELSE 1 END WHERE health_state <> 7 AND nzb_blob = (SELECT nzb_blob FROM repair_patches WHERE id = $1)")
+            .bind(id.0).execute(pool).await?.rows_affected());
         Ok(())
     }
     /// Catalog order is stable across deletion; at most 64 descriptors per page.

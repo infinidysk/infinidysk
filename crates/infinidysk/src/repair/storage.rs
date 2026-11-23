@@ -117,7 +117,7 @@ impl Repairs {
     /// Called before delivery starts. Keep embedded bytes until the store is durable.
     pub async fn restore_embedded(self: &Arc<Self>) -> Result<()> {
         let mut after = None;
-        let mut damaged = false;
+        let mut damaged = Vec::new();
         loop {
             let patches = self.db.repair_files(after).await?;
             if patches.is_empty() {
@@ -125,6 +125,7 @@ impl Repairs {
             }
             for patch in patches {
                 after = Some(patch.id);
+                let id = patch.id;
                 let data = self.db.repair_payload(patch.id).await?;
                 let embedded = data.is_some();
                 let repairs = Arc::clone(self);
@@ -142,13 +143,13 @@ impl Repairs {
                     Ok(_) => {}
                     Err(error) => {
                         tracing::warn!(reason = %error, "a saved repair is missing or corrupt; affected files need a check");
-                        damaged = true;
+                        damaged.push(id);
                     }
                 }
             }
         }
-        if damaged {
-            self.db.recheck_missing_repairs().await?;
+        for id in damaged {
+            self.db.recheck_missing_repair(id).await?;
         }
         Ok(())
     }

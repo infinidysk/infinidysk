@@ -1,6 +1,6 @@
 //! Separate durable availability and repair workers. Playback keeps priority.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -133,6 +133,8 @@ pub(super) struct Progress {
     watch: Arc<infinidysk_core::wait::Watch>,
     stored: AtomicU64,
     verified: AtomicU64,
+    /// A publication settled, so the attempt's result stands even after its time limit.
+    published: AtomicBool,
     availability: Arc<AvailabilityProgress>,
     requests: Arc<repair::Progress>,
 }
@@ -146,6 +148,7 @@ impl Default for Progress {
             watch: Arc::default(),
             stored: AtomicU64::default(),
             verified: AtomicU64::default(),
+            published: AtomicBool::default(),
             availability: Arc::default(),
             requests: Arc::default(),
         }
@@ -314,13 +317,21 @@ impl Repairs {
             () = async {
                 loop {
                     tokio::select! { () = cancel.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(2)) => {} }
+                    #[cfg(test)]
+                    let _gate = self.poll_gate.lock().await;
                     if self.db.par2_cancelled(job.claim()).await.unwrap_or(false) { break; }
                     progress.save(&self.db, job).await;
                 }
             } => { stopped.cancel(); work.await },
         };
         let outcome = match result {
-            Ok(outcome) => outcome,
+            Ok(outcome)
+                if !expired
+                    || matches!(outcome, Outcome::Escalated)
+                    || progress.published.load(Ordering::Relaxed) =>
+            {
+                outcome
+            }
             _ if stopped.is_cancelled() && cancel.is_cancelled() => Outcome::Interrupted,
             _ if expired => Outcome::Failed("repair time limit reached".to_owned()),
             _ if stopped.is_cancelled() => Outcome::Cancelled,
@@ -331,6 +342,8 @@ impl Repairs {
                 },
                 None => Outcome::Failed(format!("{error:#}")),
             },
+            // A late result that published nothing is taken by `_ if expired` above.
+            Ok(_) => Outcome::Failed("repair time limit reached".to_owned()),
         };
         let failed = matches!(outcome, Outcome::Unavailable(_) | Outcome::Failed(_));
         let verified = if matches!(outcome, Outcome::Verified { .. } | Outcome::Repaired { .. }) {
@@ -705,12 +718,11 @@ impl Repairs {
                 "repair cancelled before publication"
             );
             progress.phase("Publishing repaired articles");
-            anyhow::ensure!(
-                publisher
-                    .publish(source.clone(), receipts, metadata, cancel)
-                    .await?,
-                unavailable("source changed before publication")
-            );
+            let published = publisher
+                .publish(source.clone(), receipts, metadata, cancel)
+                .await?;
+            progress.published.store(true, Ordering::Relaxed);
+            anyhow::ensure!(published, unavailable("source changed before publication"));
             if metadata_changed {
                 self.db.advance_par2_coverage(job.claim(), &source).await?;
             }

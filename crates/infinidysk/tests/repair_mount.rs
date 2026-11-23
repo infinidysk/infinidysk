@@ -83,9 +83,14 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
     let root = std::env::temp_dir().join(format!("infinidysk-repair-mount-{}", ItemId::new()));
     std::fs::create_dir(&root).unwrap();
     let _scratch = Scratch(root.clone());
-    let db = Db::connect(&format!("sqlite:{}", root.join("data.sqlite").display()))
-        .await
-        .unwrap();
+    // sqlx percent-decodes the path and splits parameters at `?`, as the app encodes them.
+    let file = root.join("data.sqlite").display().to_string();
+    let db = Db::connect(&format!(
+        "sqlite:{}",
+        file.replace('%', "%25").replace('?', "%3F")
+    ))
+    .await
+    .unwrap();
     let parent = db.item(ItemId::CONTENT).await.unwrap().unwrap();
     let mut item = Item::child(&parent, "source.bin", ItemKind::NzbFile).unwrap();
     let (metadata, nzb) = (BlobId::new(), BlobId::new());

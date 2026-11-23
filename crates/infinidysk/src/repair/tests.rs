@@ -633,6 +633,8 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
     })
     .await
     .expect("live phase and article progress are saved before completion");
+    // The worker must not poll between the cancel and the restart.
+    let gate = repairs.poll_gate.lock().await;
     f.db.cancel_par2(verification, infinidysk_db::now_ms())
         .await
         .unwrap();
@@ -659,6 +661,7 @@ async fn durable_worker_recovers_a_missing_article_and_upgrades_existing_proofs(
             .claim()
     };
     let requeued = claim().await;
+    drop(gate);
     // One verify lane: any later claim proves the old attempt returned.
     tokio::time::timeout(Duration::from_secs(6), async {
         while claim().await == requeued {
@@ -752,7 +755,7 @@ async fn metadata_publication_retires_readers_and_rejects_a_stale_source() {
 
 #[tokio::test]
 async fn cleanup_preserves_owned_repairs_then_removes_unowned_bytes_without_breaking_buffers() {
-    use tokio::io::AsyncReadExt as _;
+    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
     let f = Fixture::new().await;
     f.publish().await;
     let (repairs, vfs, mut reader) = delivery(&f).await;
@@ -768,13 +771,16 @@ async fn cleanup_preserves_owned_repairs_then_removes_unowned_bytes_without_brea
             .unwrap();
     f.db.delete_item(item.id).await.unwrap();
     assert_eq!(repairs.cleanup(&vfs, &stopped).await.unwrap(), 0);
+    bytes.fill(0);
+    reader.seek(std::io::SeekFrom::Start(0)).await.unwrap();
+    reader.read_exact(&mut bytes).await.unwrap();
+    assert_eq!(bytes, DATA, "the open handle still delivers the repair");
     drop(reader);
     let rollback = f.root.join(crate::database::PRE_POSTGRES);
     std::fs::write(&rollback, b"retained SQLite copy").unwrap();
     assert_eq!(repairs.cleanup(&vfs, &stopped).await.unwrap(), 0);
     std::fs::remove_file(rollback).unwrap();
     assert_eq!(repairs.cleanup(&vfs, &stopped).await.unwrap(), 1);
-    assert_eq!(bytes, DATA);
     assert_eq!(repairs.store(u64::MAX).unwrap().used_bytes().unwrap(), 0);
     drop(vfs);
     drop(repairs);
@@ -859,6 +865,17 @@ async fn moving_the_database_without_its_repair_directory_requests_a_recheck() {
     f.db.set_health(item.id, &health, Recheck::None)
         .await
         .unwrap();
+    // A file of another NZB with no damaged repair keeps its health.
+    let parent = f.db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let mut other = Item::child(&parent, "other.bin", ItemKind::Multipart).unwrap();
+    let other_nzb = BlobId::new();
+    other.nzb_blob = Some(other_nzb);
+    f.db.insert(&[other.clone()], &[(other_nzb, b"other nzb")])
+        .await
+        .unwrap();
+    f.db.set_health(other.id, &health, Recheck::None)
+        .await
+        .unwrap();
     let moved = f.root.join("moved");
     std::fs::create_dir(&moved).unwrap();
     let database = moved.join("data.sqlite");
@@ -872,6 +889,12 @@ async fn moving_the_database_without_its_repair_directory_requests_a_recheck() {
     let (_, health) = db.health(item.id).await.unwrap().unwrap();
     assert_eq!(health.state, HealthState::Unchecked);
     assert_eq!(health.next_check, Some(0));
+    let (_, health) = db.health(other.id).await.unwrap().unwrap();
+    assert_eq!(
+        health.state,
+        HealthState::Healthy,
+        "an undamaged NZB is not rechecked"
+    );
     assert!(client.repaired("repair@loopback", None).await.is_err());
     drop(repairs);
     drop(client);

@@ -100,27 +100,37 @@ impl Publisher {
             lifecycle = self.repairs.lifecycle.lock() => lifecycle,
             () = stopped.cancelled() => anyhow::bail!("repair stopped before publication"),
         };
+        let refused = || anyhow::anyhow!("repair stopped before publication");
         let repairs = Arc::clone(&self.repairs);
         let (patches, receipts) = if receipts.is_empty() {
             (Vec::new(), receipts)
         } else {
-            let permit = Arc::clone(&repairs.readers).acquire_owned().await?;
+            let permit = tokio::select! {
+                permit = Arc::clone(&repairs.readers).acquire_owned() => permit?,
+                () = stopped.cancelled() => return Err(refused()),
+            };
+            let stop = stopped.clone();
+            // Receipts and the permit stay in the blocking task until its last read exits.
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let store = repairs.store(u64::MAX)?;
                 let mut patches = Vec::with_capacity(receipts.len());
                 for receipt in &receipts {
-                    store.read(receipt.patch())?;
+                    if stop.is_cancelled() {
+                        return Ok(None);
+                    }
+                    // Verification must not reorder eviction as a client read would.
+                    store.read_untouched(receipt.patch())?;
                     patches.push(receipt.patch().clone());
                 }
-                Ok::<_, infinidysk_nntp::patch::Error>((patches, receipts))
+                Ok::<_, infinidysk_nntp::patch::Error>(Some((patches, receipts)))
             })
             .await
             .context("repair file verification stopped")??
+            .ok_or_else(refused)?
         };
         anyhow::ensure!(!stopped.is_cancelled(), "repair stopped before publication");
 
-        let refused = || anyhow::anyhow!("repair stopped before publication");
         let (paused, publication) = loop {
             // Drain old health/import observations before taking any item writers.
             let paused = tokio::select! {
@@ -177,16 +187,16 @@ impl Publisher {
             drop(paused);
             // Other publications, eviction and backups do not wait for invalidation.
             drop(lifecycle);
-            // An uncertain COMMIT may be visible. Reconcile delivery even on SQL errors.
+            // Report the SQL result before invalidation. Only these items' writers wait for
+            // it, so their old bytes stay fenced; shutdown drops this task and them.
             let mut committed = Some(committed);
+            if let (Some(settle), Some(committed)) = (settle.take(), committed.take()) {
+                let _ = settle.send(committed);
+            }
+            // An uncertain COMMIT may be visible. Reconcile delivery even on SQL errors.
             let mut result = native.apply().await;
             if let Err(error) = &result {
                 tracing::warn!(reason = %error, "repair publication is waiting for FUSE invalidation");
-                // Report the SQL result now. Only these items' writers wait for a session,
-                // so their old bytes stay fenced; shutdown drops this task and them.
-                if let (Some(settle), Some(committed)) = (settle.take(), committed.take()) {
-                    let _ = settle.send(committed);
-                }
             }
             while result.is_err() {
                 tokio::time::sleep(Duration::from_millis(250)).await;

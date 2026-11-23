@@ -28,6 +28,9 @@ pub struct Repairs {
     lifecycle: Arc<tokio::sync::Mutex<()>>,
     known: Mutex<Known>,
     refresh: Arc<tokio::sync::Mutex<()>>,
+    /// Held by tests to stop the worker before its next cancellation poll.
+    #[cfg(test)]
+    poll_gate: tokio::sync::Mutex<()>,
 }
 
 /// Install once per client; publishers must retain this same service/store owner.
@@ -40,6 +43,8 @@ pub fn install(client: &Client, db: Db, path: PathBuf) -> Arc<Repairs> {
         lifecycle: Arc::new(tokio::sync::Mutex::new(())),
         known: Mutex::new(None),
         refresh: Arc::new(tokio::sync::Mutex::new(())),
+        #[cfg(test)]
+        poll_gate: tokio::sync::Mutex::new(()),
     });
     client.set_repairs(Box::new({
         let repairs = Arc::clone(&repairs);
@@ -103,16 +108,20 @@ impl Repairs {
 
     /// A missing article must not wait for a reader permit or a full catalog read.
     async fn stored(self: &Arc<Self>, id: &str) -> Result<bool, Error> {
-        if let Some(stored) = self.cached(id) {
-            return Ok(stored);
-        }
-        // One background task rebuilds the set; this read asks for its own ID only.
-        if let Ok(refresh) = Arc::clone(&self.refresh).try_lock_owned() {
-            let repairs = Arc::clone(self);
-            tokio::spawn(async move {
-                let _refresh = refresh;
-                repairs.refresh_known().await;
-            });
+        match self.cached(id) {
+            Some(false) => return Ok(false),
+            // The set can name a repair that is no longer eligible; ask SQL before a permit.
+            Some(true) => {}
+            // One background task rebuilds the set; this read asks for its own ID only.
+            None => {
+                if let Ok(refresh) = Arc::clone(&self.refresh).try_lock_owned() {
+                    let repairs = Arc::clone(self);
+                    tokio::spawn(async move {
+                        let _refresh = refresh;
+                        repairs.refresh_known().await;
+                    });
+                }
+            }
         }
         Ok(!self.candidates(RepairKey::Article(id)).await?.is_empty())
     }
