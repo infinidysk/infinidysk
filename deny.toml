@@ -19,6 +19,9 @@ ignore = [
     # chrono, through oauth2 and openidconnect: unmaintained, not a vulnerability. We use jiff directly.
     # Remove once openidconnect drops chrono.
     { id = "RUSTSEC-2026-0543", reason = "unmaintained notice only; pulled in by openidconnect, which has no chrono-free release" },
+    # paste, through tikv-jemalloc-ctl: unmaintained, not a vulnerability; a compile-time macro only.
+    # Remove once tikv-jemalloc-ctl drops paste.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained notice only; compile-time macro used by tikv-jemalloc-ctl" },
 ]
 
 [licenses]
