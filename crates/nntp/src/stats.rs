@@ -186,7 +186,7 @@ pub(crate) const fn outcome(error: &Error) -> Outcome {
         Error::Unavailable
         | Error::InvalidArgument(_)
         | Error::Repair(_)
-        | Error::DamagedRepair => Reason::Other,
+        | Error::DamagedRepair(_) => Reason::Other,
     };
     Outcome::NotRetrieved(reason)
 }

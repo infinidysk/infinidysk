@@ -534,7 +534,7 @@ impl Client {
         self.provider_body_tagged(message_id, tag)
             .await
             .map_err(|error| match local {
-                Some(Error::DamagedRepair) if health => error,
+                Some(Error::DamagedRepair(_)) if health => error,
                 other => other.unwrap_or(error),
             })
     }
@@ -561,7 +561,7 @@ impl Client {
     ) -> Result<(), Error> {
         match self.repaired(message_id, None).await {
             Ok(Some(_)) => return Ok(()),
-            Err(Error::DamagedRepair) if workload == Workload::Health => {}
+            Err(Error::DamagedRepair(_)) if workload == Workload::Health => {}
             Err(error) => return Err(error),
             Ok(None) => {}
         }

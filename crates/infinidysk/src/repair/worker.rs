@@ -57,7 +57,7 @@ pub(super) enum Outcome {
         hash_only: bool,
     },
     /// Missing or corrupt articles, with no repair requested.
-    Damaged,
+    Damaged(u64),
     /// `escalate_par2` already finished the check and queued its repair.
     Escalated,
     /// Playback preempted a check; the attempt does not count.
@@ -92,7 +92,7 @@ impl Outcome {
             Self::Available(_) => (2, AVAILABLE.to_owned(), None, 0),
             Self::Verified { hash_only } => (2, hashes(hash_only), None, 0),
             Self::Repaired { hash_only } => (3, hashes(hash_only), None, 0),
-            Self::Damaged => (
+            Self::Damaged(_) => (
                 5,
                 "Missing or corrupt articles found.".to_owned(),
                 None,
@@ -352,7 +352,7 @@ impl Repairs {
             0
         };
         let observed = match outcome {
-            Outcome::Available(epoch) => Some(epoch),
+            Outcome::Available(epoch) | Outcome::Damaged(epoch) => Some(epoch),
             _ => None,
         };
         let Some(finish) = outcome.finish(job.attempts, now_ms()) else {
@@ -470,13 +470,18 @@ impl Repairs {
                     !cancel.is_cancelled(),
                     "repair stopped before repair handoff"
                 );
+                let Some(observation) = self.db.repair_observation(epoch) else {
+                    return Ok(Outcome::Restarted);
+                };
+                let escalated = self.db.escalate_par2(job.claim(), now_ms()).await?;
+                drop(observation);
                 anyhow::ensure!(
-                    self.db.escalate_par2(job.claim(), now_ms()).await?,
+                    escalated,
                     unavailable("source changed before repair handoff")
                 );
                 Ok(Outcome::Escalated)
             }
-            Availability::Damaged { .. } => Ok(Outcome::Damaged),
+            Availability::Damaged { .. } => Ok(Outcome::Damaged(epoch)),
             Availability::Source(error) => Err(anyhow::Error::new(error)),
             Availability::Unavailable(reason) => Err(unavailable(reason.to_string()).into()),
             // Repair epochs are global; only a change to this file's source ends the check.
@@ -623,8 +628,8 @@ impl Repairs {
         })
         .await??;
         let mut hash_only = false;
-        let mut receipts = Vec::new();
-        let mut stored_bytes = 0;
+        let mut pending = Vec::new();
+        let mut article_hashes = std::collections::HashMap::new();
         let mut verified_sets = Vec::new();
         for set in reader.sets() {
             progress.phase("Verifying source files and reconstructing damage");
@@ -658,21 +663,28 @@ impl Repairs {
             // article rebuilds it too; keep the published copy and stage only new articles.
             let patches = self.unpublished(&source, result.patches).await?;
             verified_sets.push(result.sources);
-            if !patches.is_empty() {
+            for (patch, bytes) in patches {
+                if let Some(id) = &patch.source.message_id
+                    && let Some(previous) = article_hashes.insert(id.clone(), patch.sha256)
+                {
+                    anyhow::ensure!(
+                        previous == patch.sha256,
+                        unavailable("PAR2 sets disagree on reconstructed article bytes")
+                    );
+                    continue;
+                }
                 anyhow::ensure!(
-                    receipts.len() + patches.len() <= MAX_PATCHES,
+                    pending.len() < MAX_PATCHES,
                     unavailable(format!("more than {MAX_PATCHES} repaired articles"))
                 );
-                progress.phase("Saving repaired articles");
-                stored_bytes += patches
-                    .iter()
-                    .map(|(_, bytes)| bytes.len() as u64)
-                    .sum::<u64>();
-                // Durable but unpublished: receipts keep these files from eviction.
-                receipts.extend(
-                    self.stage(patches, source.nzb(), progress.store_bytes, cancel)
-                        .await?,
-                );
+                limits.memory_bytes =
+                    limits
+                        .memory_bytes
+                        .checked_sub(bytes.capacity())
+                        .context(unavailable(
+                            "reconstructed articles exceed the memory allowance",
+                        ))?;
+                pending.push((patch, bytes));
             }
         }
         anyhow::ensure!(
@@ -711,21 +723,28 @@ impl Repairs {
             Some(metadata) if metadata_changed => Some(blob::encode_meta(metadata)?),
             _ => None,
         };
-        let repaired = !receipts.is_empty();
+        let repaired = !pending.is_empty();
+        let stored_bytes = pending.iter().map(|(_, bytes)| bytes.len() as u64).sum();
+        let receipts = if repaired {
+            progress.phase("Saving repaired articles");
+            self.stage(pending, source.nzb(), progress.store_bytes, cancel)
+                .await?
+        } else {
+            Vec::new()
+        };
         if repaired || metadata.is_some() {
             anyhow::ensure!(
                 !cancel.is_cancelled(),
                 "repair cancelled before publication"
             );
             progress.phase("Publishing repaired articles");
+            let mut publisher = publisher.clone();
+            publisher.claim = metadata_changed.then(|| job.claim());
             let published = publisher
                 .publish(source.clone(), receipts, metadata, cancel)
                 .await?;
             progress.published.store(true, Ordering::Relaxed);
             anyhow::ensure!(published, unavailable("source changed before publication"));
-            if metadata_changed {
-                self.db.advance_par2_coverage(job.claim(), &source).await?;
-            }
             progress.stored.fetch_add(stored_bytes, Ordering::Relaxed);
         }
         // The repair stands either way; waiting work then runs at its scheduled time.

@@ -119,14 +119,21 @@ impl Repairs {
         let mut after = None;
         let mut damaged = Vec::new();
         loop {
-            let patches = self.db.repair_files(after).await?;
+            let patches = self.db.repair_file_page(after).await?;
             if patches.is_empty() {
                 break;
             }
-            for patch in patches {
-                after = Some(patch.id);
-                let id = patch.id;
-                let data = self.db.repair_payload(patch.id).await?;
+            for (id, patch) in patches {
+                after = Some(id);
+                let patch = match patch {
+                    Ok(patch) => patch,
+                    Err(error) => {
+                        tracing::warn!(patch = %id, reason = %error, "saved repair descriptor is invalid; affected files need a check");
+                        damaged.push(id);
+                        continue;
+                    }
+                };
+                let data = self.db.repair_payload(id).await?;
                 let embedded = data.is_some();
                 let repairs = Arc::clone(self);
                 let result = tokio::task::spawn_blocking(move || -> Result<_> {
@@ -155,11 +162,11 @@ impl Repairs {
     }
 
     pub async fn cleanup(self: &Arc<Self>, vfs: &Vfs, cancel: &CancellationToken) -> Result<u64> {
-        let _lifecycle = tokio::select! {
-            lifecycle = self.lifecycle.lock() => lifecycle,
+        let lifecycle = tokio::select! {
+            lifecycle = Arc::clone(&self.lifecycle).lock_owned() => lifecycle,
             () = cancel.cancelled() => anyhow::bail!("cleanup cancelled"),
         };
-        let _paused = tokio::select! {
+        let paused = tokio::select! {
             paused = self.db.pause_writes() => paused,
             () = cancel.cancelled() => anyhow::bail!("cleanup cancelled"),
         };
@@ -196,6 +203,7 @@ impl Repairs {
         let stopped = cancel.clone();
         let runtime = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
+            let _guards = (lifecycle, paused);
             repairs.store(u64::MAX)?.prune(
                 |id| {
                     runtime.block_on(async {

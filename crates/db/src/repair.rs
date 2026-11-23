@@ -218,11 +218,25 @@ impl Db {
         &self,
         after: Option<infinidysk_core::PatchId>,
     ) -> Result<Vec<Patch>, Error> {
+        self.repair_file_page(after)
+            .await?
+            .into_iter()
+            .map(|(_, patch)| patch)
+            .collect()
+    }
+
+    pub async fn repair_file_page(
+        &self,
+        after: Option<infinidysk_core::PatchId>,
+    ) -> Result<Vec<(infinidysk_core::PatchId, Result<Patch, Error>)>, Error> {
         let rows: Vec<Row> = on!(self, pool => match after {
             Some(id) => sqlx::query_as(concat!(columns!(), " FROM repair_patches p WHERE p.id > $1 ORDER BY p.id LIMIT 64")).bind(id.0).fetch_all(pool).await?,
             None => sqlx::query_as(concat!(columns!(), " FROM repair_patches p ORDER BY p.id LIMIT 64")).fetch_all(pool).await?,
         });
-        rows.iter().map(decode).collect()
+        Ok(rows
+            .iter()
+            .map(|row| (infinidysk_core::PatchId(row.id), decode(row)))
+            .collect())
     }
 
     pub async fn repair_payload(
@@ -511,7 +525,7 @@ impl Db {
         patches: &[Patch],
         metadata: Option<&[u8]>,
     ) -> Result<bool, Error> {
-        self.publish_replacements(guard, source, patches, metadata, Vec::new())
+        self.publish_replacements(guard, source, patches, metadata, Vec::new(), None)
             .await
     }
 
@@ -522,15 +536,18 @@ impl Db {
         patches: &[Patch],
         metadata: Option<&[u8]>,
         replacements: Vec<(infinidysk_core::PatchId, infinidysk_core::PatchId)>,
+        claim: Option<Claim>,
     ) -> Result<bool, Error> {
-        if patches.is_empty() || patches.len() > MAX_PATCHES {
+        if (patches.is_empty() && (metadata.is_none() || claim.is_none()))
+            || patches.len() > MAX_PATCHES
+        {
             return Err(Error::RepairBounds("batch size"));
         }
         let (db, source, patches) = (self.clone(), source.clone(), patches.to_vec());
         let metadata = metadata.map(<[u8]>::to_vec);
         owned(tokio::spawn(async move {
             let result = db
-                .write_patches(&source, &patches, metadata.as_deref(), &replacements)
+                .write_patches(&source, &patches, metadata.as_deref(), &replacements, claim)
                 .await;
             drop(guard);
             result
@@ -544,6 +561,7 @@ impl Db {
         patches: &[Patch],
         metadata: Option<&[u8]>,
         replacements: &[(infinidysk_core::PatchId, infinidysk_core::PatchId)],
+        claim: Option<Claim>,
     ) -> Result<bool, Error> {
         let encoded: Vec<_> = patches
             .iter()
@@ -658,6 +676,14 @@ impl Db {
                 }
             }
             // An idempotent retry adds no bytes, so later defect evidence still stands.
+            if let (Some(claim), Some((meta, generation)), Owner::Item(item)) = (claim, source.metadata, source.owner) {
+                let matched = sqlx::query("UPDATE repair_coverage SET generation = generation + 1 WHERE job_id = $1 AND item_id = $2 AND meta_blob = $3 AND generation = $4 AND EXISTS (SELECT 1 FROM repair_jobs WHERE id = $1 AND claim_generation = $5 AND state = 1)")
+                    .bind(claim.id).bind(item.0).bind(meta.0).bind(generation).bind(claim.generation).execute(&mut *tx).await?.rows_affected();
+                if matched == 0 {
+                    tx.rollback().await?;
+                    return Ok(false);
+                }
+            }
             if inserted {
                 sqlx::query(FORGET_DEFECTS).bind(source.nzb.0).execute(&mut *tx).await?;
             }

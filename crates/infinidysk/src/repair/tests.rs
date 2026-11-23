@@ -15,6 +15,95 @@ use super::*;
 const DATA: &[u8] = b"repaired article";
 
 #[tokio::test]
+async fn invalid_descriptor_schedules_a_recheck_without_stopping_startup() {
+    use sqlx::Connection as _;
+    let fixture = Fixture::new().await;
+    fixture.publish().await;
+    let mut connection =
+        sqlx::SqliteConnection::connect(&crate::app::sqlite_url(&fixture.root.join("data.sqlite")))
+            .await
+            .unwrap();
+    sqlx::query("UPDATE repair_patches SET descriptor = zeroblob(length(descriptor))")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let client = Client::new([]);
+    let repairs = install(&client, fixture.db.clone(), fixture.root.join("repairs"));
+    repairs.restore_embedded().await.unwrap();
+    let item = fixture
+        .db
+        .item_by_path("/content/source.bin")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fixture
+            .db
+            .health(item.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .1
+            .next_check,
+        Some(0)
+    );
+    connection.close().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn missing_claim_coverage_rolls_back_metadata_and_articles() {
+    use sqlx::Connection as _;
+    let fixture = Fixture::new().await;
+    let item = fixture
+        .db
+        .item_by_path("/content/source.bin")
+        .await
+        .unwrap()
+        .unwrap();
+    fixture
+        .db
+        .request_par2(Owner::Item(item.id), false, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    let job = fixture.db.claim_par2(11).await.unwrap().unwrap();
+    let mut connection =
+        sqlx::SqliteConnection::connect(&crate::app::sqlite_url(&fixture.root.join("data.sqlite")))
+            .await
+            .unwrap();
+    sqlx::query("DELETE FROM repair_coverage")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let published = fixture
+        .db
+        .publish_replacements(
+            (),
+            &fixture.source,
+            std::slice::from_ref(&fixture.patch),
+            Some(b"changed"),
+            Vec::new(),
+            Some(job.claim()),
+        )
+        .await
+        .unwrap();
+    assert!(!published);
+    assert_eq!(fixture.db.repair_files(None).await.unwrap(), []);
+    assert_eq!(
+        fixture
+            .db
+            .repair_source(Owner::Item(item.id))
+            .await
+            .unwrap()
+            .as_ref(),
+        Some(&fixture.source)
+    );
+    connection.close().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn ready_jobs_do_not_wait_for_the_idle_poll_between_attempts() {
     use tokio::sync::watch;
     let f = Fixture::new().await;
@@ -1331,7 +1420,7 @@ async fn missing_corrupt_and_stale_repairs_cannot_count_as_effective_availabilit
     std::fs::write(&path, corrupt).unwrap();
     assert!(matches!(
         client.body("repair@loopback", Workload::Stream, None).await,
-        Err(Error::DamagedRepair)
+        Err(Error::DamagedRepair(bytes)) if bytes == DATA.len()
     ));
     assert!(matches!(
         client.stat("repair@loopback", Workload::Health, None).await,
@@ -1768,7 +1857,7 @@ fn failed_attempts_retry_after_the_cooldown_then_stop() {
         .unwrap();
     assert_eq!((last.state, last.retry, last.outcome), (5, None, EXHAUSTED));
     assert_eq!(last.reason, "Retry limit reached: provider timed out");
-    let damaged = Outcome::Damaged.finish(1, now).unwrap();
+    let damaged = Outcome::Damaged(0).finish(1, now).unwrap();
     assert_eq!((damaged.state, damaged.outcome), (5, DAMAGED));
     let unavailable = Outcome::Unavailable("repair unavailable: no recovery data".into())
         .finish(1, now)
@@ -2109,7 +2198,7 @@ async fn a_damaged_local_repair_falls_back_to_a_provider_copy() {
     std::fs::write(&path, corrupt).unwrap();
     assert!(matches!(
         client.repaired("repair@loopback", None).await,
-        Err(Error::DamagedRepair)
+        Err(Error::DamagedRepair(bytes)) if bytes == DATA.len()
     ));
     // The provider's copy wins; the local error surfaces only when no provider has one.
     assert_eq!(

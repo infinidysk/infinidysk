@@ -333,7 +333,12 @@ pub(super) fn validate_file(
     let mut buffer = [0; 16 * 1024];
     while remaining > 0 {
         let count = usize::try_from(remaining.min(buffer.len() as u64)).expect("bounded chunk");
-        exact(file, &mut buffer[..count])?;
+        let count = match file.read(&mut buffer[..count]) {
+            Ok(0) => return Err(Error::Integrity("truncated repair file")),
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
         hash.update(&buffer[..count]);
         if let Some(output) = &mut output {
             output.extend_from_slice(&buffer[..count]);

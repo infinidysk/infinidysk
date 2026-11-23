@@ -372,15 +372,19 @@ impl Store {
     /// descriptor must come from a trusted reference, not directory enumeration.
     /// A successful read makes the file the most recently read for eviction.
     pub fn read(&self, patch: &Patch) -> Result<Body, Error> {
-        self.load(patch, true)
+        self.read_counted(patch, &mut 0)
+    }
+
+    pub fn read_counted(&self, patch: &Patch, consumed: &mut usize) -> Result<Body, Error> {
+        self.load(patch, true, consumed)
     }
 
     /// [`Self::read`] for backups and integrity checks: eviction order stays as clients left it.
     pub fn read_untouched(&self, patch: &Patch) -> Result<Body, Error> {
-        self.load(patch, false)
+        self.load(patch, false, &mut 0)
     }
 
-    fn load(&self, patch: &Patch, touch: bool) -> Result<Body, Error> {
+    fn load(&self, patch: &Patch, touch: bool, consumed: &mut usize) -> Result<Body, Error> {
         descriptor(patch)?;
         let mut file = open_file(
             &self.0.dir,
@@ -390,7 +394,9 @@ impl Store {
         let mut data = Vec::new();
         data.try_reserve_exact(usize::try_from(patch.source.range.len()).expect("bounded article"))
             .map_err(|_| Error::Allocation)?;
-        validate_file(&mut file, patch, Some(&mut data))?;
+        let validated = validate_file(&mut file, patch, Some(&mut data));
+        *consumed = consumed.saturating_add(data.len());
+        validated?;
         if touch {
             // Eviction order only; a failed touch must not fail playback.
             let _ = file.set_modified(std::time::SystemTime::now());

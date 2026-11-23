@@ -202,9 +202,10 @@ impl Repairs {
                 }
                 opened.as_ref().expect("opened above").clone()
             };
-            let mut failure = Error::DamagedRepair;
+            let mut failure = None;
+            let mut consumed = 0;
             for patch in patches {
-                match store.read(&patch) {
+                match store.read_counted(&patch, &mut consumed) {
                     Ok(body) => return Ok((body, patch, permit)),
                     Err(
                         infinidysk_nntp::patch::Error::Integrity(_)
@@ -212,10 +213,10 @@ impl Repairs {
                     ) => {}
                     Err(infinidysk_nntp::patch::Error::Io(error))
                         if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => failure = Error::Repair("stored article cannot be read"),
+                    Err(_) => failure = Some(Error::Repair("stored article cannot be read")),
                 }
             }
-            Err(failure)
+            Err(failure.unwrap_or(Error::DamagedRepair(consumed)))
         })
         .await
         .map_err(|_| Error::Repair("local reader stopped unexpectedly"))??;

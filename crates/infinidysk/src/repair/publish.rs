@@ -15,6 +15,7 @@ use super::Repairs;
 
 #[derive(Clone)]
 pub struct Publisher {
+    pub(super) claim: Option<infinidysk_db::repair_jobs::Claim>,
     repairs: Arc<Repairs>,
     vfs: Arc<Vfs>,
     #[cfg(target_os = "linux")]
@@ -35,6 +36,7 @@ impl Publisher {
             "repair and delivery database owners differ"
         );
         Ok(Self {
+            claim: None,
             repairs,
             vfs,
             #[cfg(target_os = "linux")]
@@ -235,13 +237,20 @@ impl Publisher {
         metadata: Option<&[u8]>,
     ) -> Result<bool> {
         let db = &self.repairs.db;
-        if !patches.is_empty() {
+        if !patches.is_empty() || self.claim.is_some() {
             let replacements = receipts
                 .iter()
                 .filter_map(|receipt| receipt.replaces().map(|old| (receipt.patch().id, old)))
                 .collect();
             return db
-                .publish_replacements(receipts, source, patches, metadata, replacements)
+                .publish_replacements(
+                    receipts,
+                    source,
+                    patches,
+                    metadata,
+                    replacements,
+                    self.claim,
+                )
                 .await
                 .context("repair references could not be published");
         }

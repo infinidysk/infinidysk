@@ -60,7 +60,7 @@ async fn damaged_local_bytes_do_not_mask_a_definitive_health_miss() {
     let server = LoopbackServer::start([]).await.unwrap();
     let client = Client::new([provider(server.addr().port(), 0, None, &Downloads::new(1))]);
     client.set_repairs(Box::new(|_| {
-        Some(Box::pin(async { Err(Error::DamagedRepair) }))
+        Some(Box::pin(async { Err(Error::DamagedRepair(0)) }))
     }));
     // Distinct IDs keep a cached miss from answering a later check.
     assert!(matches!(
@@ -79,7 +79,7 @@ async fn damaged_local_bytes_do_not_mask_a_definitive_health_miss() {
         client
             .body("missing-stream@test", Workload::Stream, None)
             .await,
-        Err(Error::DamagedRepair)
+        Err(Error::DamagedRepair(0))
     ));
 }
 
