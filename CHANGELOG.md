@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.0.0-beta.11](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.10...v2.0.0-beta.11) (2026-11-23)
+
+
+### Features
+
+* **health:** repair damaged files with PAR2 and show progress ([#1932](https://github.com/infinidysk/infinidysk/issues/1932)) ([f295533](https://github.com/infinidysk/infinidysk/commit/f295533fb7a5913710825e8327226ec4f4d1e9cc))
+* **par2:** reconstruct and retain verified repair articles ([#1930](https://github.com/infinidysk/infinidysk/issues/1930)) ([442e586](https://github.com/infinidysk/infinidysk/commit/442e5865234e341165ddd340a26d360fe6061a19))
+* **queue:** reconstruct damaged sources and serve repaired bytes ([#1931](https://github.com/infinidysk/infinidysk/issues/1931)) ([f9fa64d](https://github.com/infinidysk/infinidysk/commit/f9fa64d5f3b635a4d0402073f44d9347805b7971))
+* **ui:** add dismissible GitHub star notice ([#1944](https://github.com/infinidysk/infinidysk/issues/1944)) ([b808f34](https://github.com/infinidysk/infinidysk/commit/b808f345c625305b978eb4c06492c28253d37251))
+* **webdav:** let remote rclone mounts see library changes before their cache expires ([#1946](https://github.com/infinidysk/infinidysk/issues/1946)) ([e86be34](https://github.com/infinidysk/infinidysk/commit/e86be34153418790d540c724a671913b881fb16b))
+
+
+### Bug Fixes
+
+* **deps:** Bump jiff from 0.2.46 to 1.0.1 ([#1953](https://github.com/infinidysk/infinidysk/issues/1953)) ([d7be5de](https://github.com/infinidysk/infinidysk/commit/d7be5dea9afc974e9e9c07846fe78a6c7a02c0a3))
+* **deps:** Bump nix from 0.31.3 to 0.32.0 ([#1945](https://github.com/infinidysk/infinidysk/issues/1945)) ([bfe39f0](https://github.com/infinidysk/infinidysk/commit/bfe39f0315a1dffec0eb521ae0741ba7cc3bdbb9))
+* **deps:** Bump the cargo-minor-patch group across 1 directory with 4 updates ([#1941](https://github.com/infinidysk/infinidysk/issues/1941)) ([381efaf](https://github.com/infinidysk/infinidysk/commit/381efaff0df9cc6f4a1dc65503020f20da13a65e))
+* **deps:** Bump the cargo-minor-patch group with 3 updates ([#1952](https://github.com/infinidysk/infinidysk/issues/1952)) ([b3c10d0](https://github.com/infinidysk/infinidysk/commit/b3c10d008deba993956cd424621db6548efeede9))
+* **deps:** Bump the npm-minor-patch group in /ui with 2 updates ([#1940](https://github.com/infinidysk/infinidysk/issues/1940)) ([2de00c3](https://github.com/infinidysk/infinidysk/commit/2de00c3ec4ebf141ea6c52a77a121f8eb4f1d83f))
+* **deps:** Bump the npm-minor-patch group in /ui with 3 updates ([#1950](https://github.com/infinidysk/infinidysk/issues/1950)) ([ceb9ad7](https://github.com/infinidysk/infinidysk/commit/ceb9ad7cbe82d224b285fb31a8eb5083061a36c6))
+* **deps:** update libsqlite3-sys and remove its advisory waiver ([#1959](https://github.com/infinidysk/infinidysk/issues/1959)) ([6467f00](https://github.com/infinidysk/infinidysk/commit/6467f002ba063d507d62ca52f873834eeab4042f))
+* **health:** stop a backlog of new files from delaying repairs of broken files ([#1938](https://github.com/infinidysk/infinidysk/issues/1938)) ([971099b](https://github.com/infinidysk/infinidysk/commit/971099bc4a0a3f59bb7df883ba6e6dd5a1134add))
+* **mount:** use infinidysk-fuse 0.11.0 for bounded unmount ([#1958](https://github.com/infinidysk/infinidysk/issues/1958)) ([2d11474](https://github.com/infinidysk/infinidysk/commit/2d11474b250ea184df7fd7f96d066322a093ac45))
+* **nntp:** keep idle provider connections quiet and close them cleanly ([#1961](https://github.com/infinidysk/infinidysk/issues/1961)) ([92545c9](https://github.com/infinidysk/infinidysk/commit/92545c92fbfe89b96f389ecc818084becee45b2f))
+* **ui:** summarize Arr queue issues per Arr on the queue page ([#1943](https://github.com/infinidysk/infinidysk/issues/1943)) ([ff8937b](https://github.com/infinidysk/infinidysk/commit/ff8937b7fcf2e9e5b5fd746b182d08b1a117ecb0)), closes [#1928](https://github.com/infinidysk/infinidysk/issues/1928)
+
+
+### Performance Improvements
+
+* **stream:** let users release unused Linux memory after playback ([#1957](https://github.com/infinidysk/infinidysk/issues/1957)) ([c28389d](https://github.com/infinidysk/infinidysk/commit/c28389d1ff0b14817d376963f4ac43af957870a7))
+
 ## [2.0.0-beta.10](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.9...v2.0.0-beta.10) (2026-11-17)
 
 
