@@ -48,6 +48,8 @@ zip.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 infinidysk-mount.workspace = true
+tikv-jemalloc-ctl.workspace = true
+tikv-jemallocator.workspace = true
 
 [dev-dependencies]
 infinidysk-par2.workspace = true
