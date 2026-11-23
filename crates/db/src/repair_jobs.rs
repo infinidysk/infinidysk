@@ -404,6 +404,7 @@ impl Db {
                 .bind(id).bind(source.nzb().0).bind(source.generation()).bind(verify).bind(now)
                 .execute(&mut *tx).await?;
             tx.commit().await?;
+            self.notify(crate::Change::Health);
             Ok(Some(id))
         })
     }
