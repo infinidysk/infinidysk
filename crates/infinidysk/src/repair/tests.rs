@@ -1948,6 +1948,41 @@ async fn a_published_repair_whose_file_is_missing_or_damaged_is_rebuilt_under_it
 }
 
 #[tokio::test]
+async fn replacing_a_damaged_repair_evicts_nothing_for_its_own_bytes() {
+    let f = Fixture::new().await;
+    let client = Client::new([]);
+    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
+    let (stale, used) = two_read_repairs(&f, &repairs).await;
+    let path = f.root.join("repairs").join(format!("{}.patch", f.patch.id));
+    let mut corrupt = std::fs::read(&path).unwrap();
+    *corrupt.last_mut().unwrap() ^= 1;
+    std::fs::write(&path, corrupt).unwrap();
+    let kept = repairs
+        .unpublished(&f.source, vec![(f.patch.clone(), DATA.to_vec())])
+        .await
+        .unwrap();
+    // A full store: only eviction of the other NZB's repair would make new room.
+    let receipts = repairs
+        .stage(
+            kept,
+            BlobId::new(),
+            used,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        f.db.article_repairs("stale@loopback").await.unwrap(),
+        [stale]
+    );
+    let store = repairs.store(u64::MAX).unwrap();
+    assert_eq!(store.read(&f.patch).unwrap().data.as_ref(), DATA);
+    drop((receipts, store, repairs));
+    f.close().await;
+}
+
+#[tokio::test]
 async fn staging_keeps_every_repair_while_an_older_database_is_retained() {
     let f = Fixture::new().await;
     let client = Client::new([]);

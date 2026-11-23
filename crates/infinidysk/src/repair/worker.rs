@@ -782,6 +782,13 @@ impl Repairs {
             let _staging = staging;
             let store = repairs.store(capacity)?;
             let needed = patches.iter().try_fold(0u64, |sum, (patch, _)| {
+                // Restore swaps a damaged file of the same length, so it needs no new room.
+                if matches!(
+                    store.read_untouched(patch),
+                    Err(patch::Error::Integrity("repair checksum"))
+                ) {
+                    return Ok(sum);
+                }
                 Ok::<_, patch::Error>(sum.saturating_add(patch::Store::charge(patch)?))
             })?;
             match store.evict(
