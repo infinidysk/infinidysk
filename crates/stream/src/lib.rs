@@ -1218,21 +1218,21 @@ async fn fetch(
     };
     // A damaged local repair must not hide a provider's copy. Its error is reported only
     // when no provider has the article, and it skips the gap filler: a repair existed.
-    let (repaired, local) = match repaired {
+    let (repaired, mut local) = match repaired {
         Ok(repaired) => (repaired, None),
         Err(error) => (None, Some(io::Error::other(Arc::new(error)))),
     };
     if let Some(body) = repaired {
-        if body.data.len() != size {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "repair size differs from layout",
-            ));
+        if body.data.len() == size {
+            if let Some(gaps) = &hole.gaps {
+                gaps.repaired(hole.index);
+            }
+            return Ok((body.data, false));
         }
-        if let Some(gaps) = &hole.gaps {
-            gaps.repaired(hole.index);
-        }
-        return Ok((body.data, false));
+        local = Some(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "repair size differs from layout",
+        ));
     }
     if local.is_none() && !strict && hole.gaps.as_ref().is_some_and(|g| g.is_hole(hole.index)) {
         return Ok((hole.filler.fill(hole.at, size).into(), true));
