@@ -1398,6 +1398,11 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
         .await
         .unwrap();
         assert!(!eviction.is_finished());
+        assert_eq!(
+            fixture.db.repair_epoch(),
+            evicted,
+            "a queued writer does not advance the epoch while an observation is held"
+        );
         drop(observation);
         assert_eq!(
             eviction.await.unwrap().unwrap(),

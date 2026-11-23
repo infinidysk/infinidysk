@@ -62,16 +62,23 @@ async fn damaged_local_bytes_do_not_mask_a_definitive_health_miss() {
     client.set_repairs(Box::new(|_| {
         Some(Box::pin(async { Err(Error::DamagedRepair) }))
     }));
+    // Distinct IDs keep a cached miss from answering a later check.
     assert!(matches!(
-        client.body("missing@test", Workload::Health, None).await,
+        client
+            .body("missing-body@test", Workload::Health, None)
+            .await,
         Err(Error::NotFound)
     ));
     assert!(matches!(
-        client.stat("missing@test", Workload::Health, None).await,
+        client
+            .stat("missing-stat@test", Workload::Health, None)
+            .await,
         Err(Error::NotFound)
     ));
     assert!(matches!(
-        client.body("missing@test", Workload::Stream, None).await,
+        client
+            .body("missing-stream@test", Workload::Stream, None)
+            .await,
         Err(Error::DamagedRepair)
     ));
 }
