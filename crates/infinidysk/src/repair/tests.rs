@@ -1813,9 +1813,20 @@ async fn two_read_repairs(f: &Fixture, repairs: &Repairs) -> (Patch, u64) {
             .await
             .unwrap()
     );
-    store.read(&stale).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let dir = f.root.join("repairs");
+    let file = |patch: &Patch| dir.join(format!("{}.patch", patch.id));
+    let modified = |patch: &Patch| std::fs::metadata(file(patch)).unwrap().modified().unwrap();
+    let now = std::time::SystemTime::now();
+    for (patch, age) in [(&f.patch, 200), (&stale, 100)] {
+        std::fs::File::options()
+            .write(true)
+            .open(file(patch))
+            .unwrap()
+            .set_modified(now - std::time::Duration::from_secs(age))
+            .unwrap();
+    }
     store.read(&f.patch).unwrap();
+    assert!(modified(&f.patch) > modified(&stale), "a read makes a repair the newest");
     (stale, store.used_bytes().unwrap())
 }
 
