@@ -573,8 +573,8 @@ impl Backups {
             .sqlite_stats()
             .await?
             .ok_or_else(|| Stop::Reason(POSTGRES.to_owned()))?;
-        // The copy embeds every stored repair's bytes next to the database pages.
-        let repairs = self.parts.repairs.used_bytes().await.map_err(|error| {
+        // The copy embeds every referenced repair's bytes next to the database pages.
+        let repairs = self.parts.repairs.backup_bytes().await.map_err(|error| {
             Stop::Reason(format!("Could not measure the stored repairs: {error}"))
         })?;
         let estimate = stats

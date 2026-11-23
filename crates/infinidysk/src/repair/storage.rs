@@ -11,6 +11,21 @@ use tokio_util::sync::CancellationToken;
 use super::{READERS, Repairs};
 
 impl Repairs {
+    /// Payload bytes a backup embeds: only repairs the live catalog references.
+    pub async fn backup_bytes(&self) -> Result<u64> {
+        let (mut after, mut bytes) = (None, 0u64);
+        loop {
+            let patches = self.db.repair_files(after).await?;
+            let Some(last) = patches.last() else {
+                return Ok(bytes);
+            };
+            after = Some(last.id);
+            for patch in &patches {
+                bytes = bytes.saturating_add(patch.source.range.len());
+            }
+        }
+    }
+
     pub async fn backup_into(
         self: &Arc<Self>,
         path: &Path,
