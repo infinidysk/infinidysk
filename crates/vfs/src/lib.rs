@@ -204,6 +204,7 @@ impl Deleted {
     fn hide(&self, path: &str, now: Instant) -> u64 {
         let hide = self.hides.fetch_add(1, Ordering::Relaxed);
         let mut all = self.hidden.lock().unwrap_or_else(PoisonError::into_inner);
+        all.retain(|_, (until, _)| *until > now);
         all.insert(path.to_owned(), (now + DELETE_HIDE, hide));
         hide
     }
@@ -547,6 +548,9 @@ impl Vfs {
         }
         let now = Instant::now();
         let hide = self.deleted.hide(&item.path, now);
+        if !self.db.listings_heard() {
+            return true;
+        }
         self.db
             .listing_changed(|| ListingChange::Link(item.path.clone()));
         let (deleted, db, path) = (

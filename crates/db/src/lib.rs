@@ -1241,9 +1241,15 @@ impl Db {
         self.listings.subscribe()
     }
 
+    /// Whether anyone receives [`Self::subscribe_listings`].
+    #[must_use]
+    pub fn listings_heard(&self) -> bool {
+        self.listings.receiver_count() != 0
+    }
+
     /// Announces a listing change; `make` runs only when someone listens.
     pub fn listing_changed(&self, make: impl FnOnce() -> ListingChange) {
-        if self.listings.receiver_count() != 0 {
+        if self.listings_heard() {
             let _ = self.listings.send(make());
         }
     }
