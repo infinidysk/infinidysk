@@ -31,8 +31,6 @@ const CHECK_CONCURRENCY: usize = 64;
 const MEMORY_BYTES: usize = 256_000_000;
 const TRANSFER_BYTES: u64 = 100_000_000_000;
 const TIMEOUT: Duration = Duration::from_hours(1);
-/// Room for one stored file's descriptor and framing; descriptors are at most 8 KB.
-const HEADER_RESERVE: u64 = 16_384;
 
 const AVAILABLE: &str =
     "Articles are available. Body spot checks passed; full byte integrity was not checked.";
@@ -783,10 +781,9 @@ impl Repairs {
         tokio::task::spawn_blocking(move || -> Result<_> {
             let _staging = staging;
             let store = repairs.store(capacity)?;
-            let needed = patches
-                .iter()
-                .map(|(_, bytes)| bytes.len() as u64 + HEADER_RESERVE)
-                .sum();
+            let needed = patches.iter().try_fold(0u64, |sum, (patch, _)| {
+                Ok::<_, patch::Error>(sum.saturating_add(patch::Store::charge(patch)?))
+            })?;
             match store.evict(
                 needed,
                 |id| {

@@ -1827,13 +1827,13 @@ async fn staging_evicts_the_least_recently_read_repair_to_make_room() {
     let (stale, used) = two_read_repairs(&f, &repairs).await;
     let mut next = f.patch.clone();
     next.id = PatchId::new();
-    // Room for the new article plus its header reserve once either file goes, not before.
+    // Room for the new article once either file goes, not before.
     // The repair being staged belongs to another NZB.
     let receipts = repairs
         .stage(
             vec![(next.clone(), DATA.to_vec())],
             BlobId::new(),
-            DATA.len() as u64 + 16_384 + used - 1,
+            Store::charge(&next).unwrap() + used - 1,
             &tokio_util::sync::CancellationToken::new(),
         )
         .await
@@ -1861,12 +1861,13 @@ async fn staging_never_evicts_repairs_the_same_nzb_still_needs() {
     let mut next = f.patch.clone();
     next.id = PatchId::new();
     next.source.message_id = Some("next@loopback".into());
+    let needed = Store::charge(&next).unwrap();
     let error = repairs
         .stage(
             vec![(next, DATA.to_vec())],
             f.source.nzb(),
             // Room only through eviction.
-            used + 1,
+            needed + used - 1,
             &tokio_util::sync::CancellationToken::new(),
         )
         .await
@@ -1955,12 +1956,13 @@ async fn staging_keeps_every_repair_while_an_older_database_is_retained() {
     std::fs::write(f.root.join(crate::database::PRE_POSTGRES), b"").unwrap();
     let mut next = f.patch.clone();
     next.id = PatchId::new();
+    let needed = Store::charge(&next).unwrap();
     let error = repairs
         .stage(
             vec![(next, DATA.to_vec())],
             BlobId::new(),
             // Room only through eviction.
-            used + 1,
+            needed + used - 1,
             &tokio_util::sync::CancellationToken::new(),
         )
         .await

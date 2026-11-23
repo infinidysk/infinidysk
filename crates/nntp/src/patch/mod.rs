@@ -242,6 +242,11 @@ impl Store {
         Ok(Durable(patch.clone(), Arc::clone(&self.0)))
     }
 
+    /// The bytes [`write`](Self::write) charges against the quota for this repair.
+    pub fn charge(patch: &Patch) -> Result<u64, Error> {
+        Ok(descriptor(patch)?.len() as u64 + patch.source.range.len())
+    }
+
     /// Store already verified original posted bytes. Retries of the same immutable
     /// descriptor are idempotent, including after a previous uncertain directory sync.
     pub fn write(
