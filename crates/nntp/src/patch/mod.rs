@@ -53,9 +53,12 @@ impl From<nix::errno::Errno> for Error {
 /// Issued only after both file data and directory entries have been synced.
 /// SQL visibility and ownership still belong to the publishing transaction.
 #[derive(Debug)]
-pub struct Durable(Patch, Arc<Inner>);
+pub struct Durable(Patch, Arc<Inner>, Option<PatchId>);
 
 impl Durable {
+    pub const fn replaces(&self) -> Option<PatchId> {
+        self.2
+    }
     pub const fn patch(&self) -> &Patch {
         &self.0
     }
@@ -97,6 +100,45 @@ impl Drop for Inner {
 }
 
 impl Store {
+    /// Discard only a verified damaged payload. Its catalog ID must remain unreadable until publication.
+    pub fn prepare_replacement(&self, patch: &Patch) -> Result<bool, Error> {
+        let mut state = self.0.used.lock().map_err(|_| Error::Recovery)?;
+        let name = format!("{}.patch", patch.id);
+        match open_file(&self.0.dir, &name, nix::fcntl::OFlag::O_RDONLY) {
+            Ok(mut file) => match validate_file(&mut file, patch, None) {
+                Ok(()) => return Ok(false),
+                Err(Error::Integrity("repair checksum" | "truncated repair payload")) => {
+                    nix::unistd::unlinkat(
+                        &self.0.dir,
+                        name.as_str(),
+                        nix::unistd::UnlinkatFlags::NoRemoveDir,
+                    )?;
+                    self.0.dir.sync_all()?;
+                }
+                Err(error) => return Err(error),
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        *state = Some(scan(&self.0.dir, false)?);
+        drop(state);
+        Ok(true)
+    }
+
+    pub fn write_replacement(
+        &self,
+        old: &Patch,
+        data: &[u8],
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Durable, Error> {
+        let fresh = Patch {
+            id: PatchId::new(),
+            ..old.clone()
+        };
+        let mut receipt = self.write(&fresh, data, cancelled)?;
+        receipt.2 = Some(old.id);
+        Ok(receipt)
+    }
     /// A checked backup can heal a checksum failure after the stored header matched.
     /// Preserve other identity conflicts so a restore cannot destroy an undo's data.
     pub fn restore(
@@ -106,7 +148,7 @@ impl Store {
         cancelled: impl Fn() -> bool,
     ) -> Result<Durable, Error> {
         match self.write(patch, data, &cancelled) {
-            Err(Error::Integrity("repair checksum")) => {}
+            Err(Error::Integrity("repair checksum" | "truncated repair payload")) => {}
             result => return result,
         }
         {
@@ -115,7 +157,7 @@ impl Store {
             let mut file = open_file(&self.0.dir, &name, nix::fcntl::OFlag::O_RDONLY)?;
             match validate_file(&mut file, patch, None) {
                 Ok(()) => {}
-                Err(Error::Integrity("repair checksum")) => {
+                Err(Error::Integrity("repair checksum" | "truncated repair payload")) => {
                     check(&cancelled)?;
                     nix::unistd::unlinkat(
                         &self.0.dir,
@@ -165,6 +207,7 @@ impl Store {
     pub fn evict<G>(
         &self,
         needed: u64,
+        eligible: impl Fn(PatchId) -> Result<bool, Error>,
         remove: impl Fn(PatchId) -> Result<Option<G>, Error>,
         cancelled: impl Fn() -> bool,
     ) -> Result<u64, Error> {
@@ -188,8 +231,9 @@ impl Store {
                     .lock()
                     .map_err(|_| Error::Recovery)?
                     .contains_key(&id);
-                if pinned { Ok(None) } else { remove(id) }
+                if pinned { Ok(false) } else { eligible(id) }
             },
+            remove,
             &cancelled,
         );
         *state = scan(&self.0.dir, false).ok();
@@ -239,7 +283,7 @@ impl Store {
         let count = pins.entry(patch.id).or_default();
         *count = count.checked_add(1).ok_or(Error::Capacity)?;
         drop(pins);
-        Ok(Durable(patch.clone(), Arc::clone(&self.0)))
+        Ok(Durable(patch.clone(), Arc::clone(&self.0), None))
     }
 
     /// The bytes [`write`](Self::write) charges against the quota for this repair.

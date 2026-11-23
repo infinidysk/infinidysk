@@ -99,7 +99,14 @@ fn restore_heals_a_corrupt_payload_without_overwriting_a_different_valid_identit
     assert_eq!(store.read(&patch).unwrap().data.as_ref(), b"bytes");
     let mut conflicting = patch.clone();
     conflicting.sha256 = Sha256::digest(b"other").into();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(root.join("repairs").join(format!("{}.patch", patch.id)))
+        .unwrap();
+    file.set_len(file.metadata().unwrap().len() - 1).unwrap();
     assert!(store.restore(&conflicting, b"other", || false).is_err());
+    assert!(store.read(&patch).is_err());
+    store.restore(&patch, b"bytes", || false).unwrap();
     assert_eq!(store.read(&patch).unwrap().data.as_ref(), b"bytes");
     drop(store);
     fs::remove_dir_all(root).unwrap();
@@ -167,17 +174,33 @@ fn eviction_frees_the_least_recently_read_unpinned_repairs() {
         Err(Error::Capacity)
     ));
     assert!(matches!(
-        store.evict(3 * length + 1, remove, || false),
+        store.evict(3 * length + 1, |_| Ok(true), remove, || false),
         Err(Error::Capacity)
     ));
     assert!(removed.borrow().is_empty());
-    assert_eq!(store.evict(length, remove, || false).unwrap(), 1);
+    assert!(matches!(
+        store.evict(2 * length, |id| Ok(id != ids[0]), remove, || false),
+        Err(Error::Capacity)
+    ));
+    assert!(removed.borrow().is_empty());
+    assert_eq!(
+        store.evict(length, |_| Ok(true), remove, || false).unwrap(),
+        1
+    );
     assert_eq!(*removed.borrow(), [ids[1]]);
     assert!(store.read(&patches[1].0).is_err());
-    let refuse_first = |id| Ok((id != ids[0]).then_some(()));
-    assert_eq!(store.evict(2 * length, refuse_first, || false).unwrap(), 0);
+    let refuse_first = |id| Ok(id != ids[0]);
+    assert!(matches!(
+        store.evict(2 * length, refuse_first, remove, || false),
+        Err(Error::Capacity)
+    ));
     drop(pin);
-    assert_eq!(store.evict(2 * length, refuse_first, || false).unwrap(), 1);
+    assert_eq!(
+        store
+            .evict(2 * length, refuse_first, remove, || false)
+            .unwrap(),
+        1
+    );
     assert!(store.read(&patches[2].0).is_err());
     assert_eq!(store.read(&patches[0].0).unwrap().data.as_ref(), b"first!");
     store
@@ -449,6 +472,7 @@ fn integrity_reads_keep_eviction_order_and_a_store_with_room_evicts_nothing() {
     let evicted = store
         .evict(
             1_000,
+            |_| Ok(true),
             |_| -> Result<Option<()>, Error> { panic!("a store with room evicts nothing") },
             || false,
         )

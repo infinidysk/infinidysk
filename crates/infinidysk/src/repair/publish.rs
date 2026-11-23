@@ -226,8 +226,12 @@ impl Publisher {
     ) -> Result<bool> {
         let db = &self.repairs.db;
         if !patches.is_empty() {
+            let replacements = receipts
+                .iter()
+                .filter_map(|receipt| receipt.replaces().map(|old| (receipt.patch().id, old)))
+                .collect();
             return db
-                .publish_repair(receipts, source, patches, metadata)
+                .publish_replacements(receipts, source, patches, metadata, replacements)
                 .await
                 .context("repair references could not be published");
         }

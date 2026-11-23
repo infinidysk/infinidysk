@@ -167,6 +167,7 @@ pub(super) fn evict<G>(
     dir: &File,
     mut used: u64,
     room: impl Fn(u64) -> bool,
+    eligible: impl Fn(PatchId) -> Result<bool, Error>,
     remove: impl Fn(PatchId) -> Result<Option<G>, Error>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<u64, Error> {
@@ -195,15 +196,25 @@ pub(super) fn evict<G>(
         files.push(((metadata.st_mtime, metadata.st_mtime_nsec), name, id, size));
     }
     files.sort_unstable_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-    let mut removed = 0;
+    let mut plan = Vec::new();
     for (_, name, id, size) in files {
         if room(used) {
             break;
         }
         check(cancelled)?;
+        if eligible(id)? {
+            plan.push((id, name));
+            used = used.saturating_sub(size);
+        }
+    }
+    if !room(used) {
+        return Err(Error::Capacity);
+    }
+    let mut removed = 0;
+    for (id, name) in plan {
+        check(cancelled)?;
         if let Some(_guard) = remove(id)? {
             unlinkat(dir, name.as_str(), UnlinkatFlags::NoRemoveDir)?;
-            used = used.saturating_sub(size);
             removed += 1;
         }
     }
@@ -294,14 +305,18 @@ pub(super) fn validate_file(
     let mut prefix = [0; PREFIX_LEN];
     exact(file, &mut prefix)?;
     let length = header_length(&prefix)?;
-    if metadata.len() != length as u64 + expected.source.range.len() {
-        return Err(Error::Integrity("repair file length"));
-    }
     let mut header = vec![0; length];
     header[..PREFIX_LEN].copy_from_slice(&prefix);
     exact(file, &mut header[PREFIX_LEN..])?;
     if Patch::decode(&header)? != *expected {
         return Err(Error::Integrity("repair identity"));
+    }
+    let expected_length = length as u64 + expected.source.range.len();
+    if metadata.len() < expected_length {
+        return Err(Error::Integrity("truncated repair payload"));
+    }
+    if metadata.len() != expected_length {
+        return Err(Error::Integrity("repair file length"));
     }
     let mut remaining = expected.source.range.len();
     let mut hash = Sha256::new();

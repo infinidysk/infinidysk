@@ -1903,12 +1903,12 @@ async fn staging_never_evicts_repairs_the_same_nzb_still_needs() {
 }
 
 #[tokio::test]
-async fn a_published_repair_whose_file_is_missing_or_damaged_is_rebuilt_under_its_id() {
+async fn a_rebuilt_copy_is_unreadable_until_publication() {
     let f = Fixture::new().await;
     f.publish().await;
-    let client = Client::new([]);
-    let repairs = install(&client, f.db.clone(), f.root.join("repairs"));
-    let path = f.root.join("repairs").join(format!("{}.patch", f.patch.id));
+    let (repairs, vfs, _reader) = delivery(&f).await;
+    let publisher = Publisher::new(Arc::clone(&repairs), vfs).unwrap();
+    let mut current = f.patch.clone();
     for damage in [
         Box::new(|path: &std::path::Path| std::fs::remove_file(path).unwrap())
             as Box<dyn Fn(&std::path::Path)>,
@@ -1918,7 +1918,7 @@ async fn a_published_repair_whose_file_is_missing_or_damaged_is_rebuilt_under_it
             std::fs::write(path, corrupt).unwrap();
         }),
     ] {
-        damage(&path);
+        damage(&f.root.join("repairs").join(format!("{}.patch", current.id)));
         let mut rebuilt = f.patch.clone();
         rebuilt.id = PatchId::new();
         let kept = repairs
@@ -1927,7 +1927,7 @@ async fn a_published_repair_whose_file_is_missing_or_damaged_is_rebuilt_under_it
             .unwrap();
         assert_eq!(
             kept.iter().map(|(patch, _)| patch).collect::<Vec<_>>(),
-            [&f.patch],
+            [&current],
             "the published descriptor is staged again"
         );
         let receipts = repairs
@@ -1939,18 +1939,32 @@ async fn a_published_repair_whose_file_is_missing_or_damaged_is_rebuilt_under_it
             )
             .await
             .unwrap();
-        // Publishing the same descriptor again is idempotent.
+        assert!(repairs.store(u64::MAX).unwrap().read(&current).is_err());
+        assert_eq!(
+            f.db.article_repairs("repair@loopback").await.unwrap(),
+            [current]
+        );
+        current = receipts[0].patch().clone();
         assert!(
-            f.db.publish_patches((), &f.source, std::slice::from_ref(&f.patch))
+            publisher
+                .publish(
+                    f.source.clone(),
+                    receipts,
+                    None,
+                    &tokio_util::sync::CancellationToken::new()
+                )
                 .await
                 .unwrap()
         );
-        drop(receipts);
+        assert_eq!(
+            f.db.article_repairs("repair@loopback").await.unwrap(),
+            [current.clone()]
+        );
         assert_eq!(
             repairs
                 .store(u64::MAX)
                 .unwrap()
-                .read(&f.patch)
+                .read(&current)
                 .unwrap()
                 .data
                 .as_ref(),
@@ -1991,7 +2005,8 @@ async fn replacing_a_damaged_repair_evicts_nothing_for_its_own_bytes() {
         [stale]
     );
     let store = repairs.store(u64::MAX).unwrap();
-    assert_eq!(store.read(&f.patch).unwrap().data.as_ref(), DATA);
+    assert!(store.read(&f.patch).is_err());
+    assert_eq!(store.read(receipts[0].patch()).unwrap().data.as_ref(), DATA);
     drop((receipts, store, repairs));
     f.close().await;
 }

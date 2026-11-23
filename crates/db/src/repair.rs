@@ -510,6 +510,18 @@ impl Db {
         patches: &[Patch],
         metadata: Option<&[u8]>,
     ) -> Result<bool, Error> {
+        self.publish_replacements(guard, source, patches, metadata, Vec::new())
+            .await
+    }
+
+    pub async fn publish_replacements(
+        &self,
+        guard: impl Send + 'static,
+        source: &Source,
+        patches: &[Patch],
+        metadata: Option<&[u8]>,
+        replacements: Vec<(infinidysk_core::PatchId, infinidysk_core::PatchId)>,
+    ) -> Result<bool, Error> {
         if patches.is_empty() || patches.len() > MAX_PATCHES {
             return Err(Error::RepairBounds("batch size"));
         }
@@ -517,7 +529,7 @@ impl Db {
         let metadata = metadata.map(<[u8]>::to_vec);
         owned(tokio::spawn(async move {
             let result = db
-                .write_patches(&source, &patches, metadata.as_deref())
+                .write_patches(&source, &patches, metadata.as_deref(), &replacements)
                 .await;
             drop(guard);
             result
@@ -530,6 +542,7 @@ impl Db {
         source: &Source,
         patches: &[Patch],
         metadata: Option<&[u8]>,
+        replacements: &[(infinidysk_core::PatchId, infinidysk_core::PatchId)],
     ) -> Result<bool, Error> {
         let encoded: Vec<_> = patches
             .iter()
@@ -597,6 +610,11 @@ impl Db {
             let mut inserted = false;
             for (patch, descriptor) in patches.iter().zip(&encoded) {
                 let s = &patch.source;
+                if let Some((_, old)) = replacements.iter().find(|(new, _)| *new == patch.id) {
+                    let previous = Patch { id: *old, ..patch.clone() }.encode()?;
+                    sqlx::query("DELETE FROM repair_patches WHERE id = $1 AND descriptor = $2 AND nzb_blob = $3 AND generation = $4")
+                        .bind(old.0).bind(previous).bind(source.nzb.0).bind(source.generation).execute(&mut *tx).await?;
+                }
                 let start = i64::try_from(s.range.start).expect("validated SQL offset");
                 let end = i64::try_from(s.range.end).expect("validated SQL offset");
                 let existing: Vec<(Uuid, i64, Vec<u8>)> = sqlx::query_as(

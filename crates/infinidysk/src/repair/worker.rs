@@ -798,25 +798,30 @@ impl Repairs {
         tokio::task::spawn_blocking(move || -> Result<_> {
             let _staging = staging;
             let store = repairs.store(capacity)?;
-            let needed = patches.iter().try_fold(0u64, |sum, (patch, _)| {
-                // Restore swaps a damaged file of the same length, so it needs no new room.
-                if matches!(
-                    store.read_untouched(patch),
-                    Err(patch::Error::Integrity("repair checksum"))
-                ) {
-                    return Ok(sum);
+            let mut replacements = std::collections::HashSet::new();
+            let mut needed = 0u64;
+            for (patch, _) in &patches {
+                anyhow::ensure!(!stopped.is_cancelled(), "repair stopped before staging");
+                if runtime.block_on(repairs.db.patch_nzb(patch.id))?.is_some() {
+                    if !store.prepare_replacement(patch)? {
+                        continue;
+                    }
+                    replacements.insert(patch.id);
                 }
-                Ok::<_, patch::Error>(sum.saturating_add(patch::Store::charge(patch)?))
-            })?;
+                needed = needed.saturating_add(patch::Store::charge(patch)?);
+            }
             match store.evict(
                 needed,
                 |id| {
                     if retained {
-                        Ok(None)
-                    } else {
-                        repairs.evict(&runtime, id, nzb, &stopped)
+                        return Ok(false);
                     }
+                    runtime
+                        .block_on(repairs.db.patch_nzb(id))
+                        .map(|owner| owner != Some(nzb))
+                        .map_err(|_| patch::Error::Integrity("repair references cannot be read"))
                 },
+                |id| repairs.evict(&runtime, id, nzb, &stopped),
                 || stopped.is_cancelled(),
             ) {
                 Err(patch::Error::Capacity) => return Err(full()),
@@ -825,13 +830,15 @@ impl Repairs {
             patches
                 .into_iter()
                 .map(|(patch, bytes)| {
-                    // Restore replaces a damaged file left by an earlier publication.
-                    store
-                        .restore(&patch, &bytes, || stopped.is_cancelled())
-                        .map_err(|error| match error {
-                            patch::Error::Capacity => full(),
-                            error => error.into(),
-                        })
+                    let write = if replacements.contains(&patch.id) {
+                        store.write_replacement(&patch, &bytes, || stopped.is_cancelled())
+                    } else {
+                        store.write(&patch, &bytes, || stopped.is_cancelled())
+                    };
+                    write.map_err(|error| match error {
+                        patch::Error::Capacity => full(),
+                        error => error.into(),
+                    })
                 })
                 .collect()
         })
