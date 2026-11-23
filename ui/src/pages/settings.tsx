@@ -1173,20 +1173,23 @@ export function Settings() {
                     checked={draft.rclone_rc.enabled}
                     onChange={(enabled) => patch("rclone_rc", { enabled })}
                   />
+                  {/* Saving checks the URL even when off, so a rejected one stays editable. */}
+                  {(draft.rclone_rc.enabled || invalid("rclone_rc.url")) && (
+                    <Field id="rclone-rc-url" label={label("RC URL", "rclone_rc.url")} error={invalid("rclone_rc.url")}>
+                      <Input
+                        id="rclone-rc-url"
+                        type="url"
+                        required={draft.rclone_rc.enabled}
+                        autoComplete="off"
+                        placeholder="https://rclone.example:5572/"
+                        disabled={locked("rclone_rc.url")}
+                        value={draft.rclone_rc.url}
+                        onChange={(e) => patch("rclone_rc", { url: e.target.value })}
+                      />
+                    </Field>
+                  )}
                   {draft.rclone_rc.enabled && (
                     <>
-                      <Field id="rclone-rc-url" label={label("RC URL", "rclone_rc.url")} error={invalid("rclone_rc.url")}>
-                        <Input
-                          id="rclone-rc-url"
-                          type="url"
-                          required
-                          autoComplete="off"
-                          placeholder="https://rclone.example:5572/"
-                          disabled={locked("rclone_rc.url")}
-                          value={draft.rclone_rc.url}
-                          onChange={(e) => patch("rclone_rc", { url: e.target.value })}
-                        />
-                      </Field>
                       <Field id="rclone-rc-fs" layout="row" label={label("VFS name (optional)", "rclone_rc.fs")} error={invalid("rclone_rc.fs")}>
                         <Input
                           id="rclone-rc-fs"
