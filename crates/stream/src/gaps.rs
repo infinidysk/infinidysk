@@ -84,6 +84,14 @@ impl Gaps {
         state.repaired.insert(index);
     }
 
+    /// A provider served this hole, so later reads ask providers again.
+    pub(crate) fn served(&self, index: usize) {
+        let mut state = self.lock();
+        state.known.remove(&index);
+        state.found.remove(&index);
+        state.filled.remove(&index);
+    }
+
     /// The reader moved onto a good segment.
     pub(crate) fn good(&self) {
         let mut state = self.lock();

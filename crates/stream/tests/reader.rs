@@ -1181,6 +1181,46 @@ fn setup_timed(
 }
 
 #[tokio::test]
+async fn a_provider_copy_after_a_damaged_repair_skips_a_bad_cache_and_clears_the_hole() {
+    let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
+    let server = LoopbackServer::start(corpus.articles.iter().cloned())
+        .await
+        .unwrap();
+    let (client, layout) = setup(&corpus, &server);
+    let damaged = corpus.articles[MISSING].message_id.clone();
+    let cache = Arc::new(Cache::new(true, 1_000_000));
+    cache.insert(&damaged, bytes::Bytes::from(vec![9; 2]));
+    client.set_repairs(Box::new(move |id| {
+        if !matches!(id, infinidysk_nntp::RepairKey::Article(id) if id == damaged) {
+            return None;
+        }
+        Some(Box::pin(async {
+            Err(infinidysk_nntp::Error::Repair(
+                "stored article is missing or corrupt",
+            ))
+        }))
+    }));
+    let gaps = Arc::new(Gaps::default());
+    gaps.refresh([MISSING].into_iter().collect(), true);
+
+    let mut reader = SegmentReader::new(Arc::clone(&client), Arc::clone(&layout), 3)
+        .with_cache(cache)
+        .with_gaps(Arc::clone(&gaps));
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).await.unwrap();
+    assert_eq!(bytes, corpus.data, "a wrong-size cache entry is not served");
+
+    client.set_repairs(Box::new(|_| None));
+    let mut reader = SegmentReader::new(client, layout, 3).with_gaps(gaps);
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).await.unwrap();
+    assert_eq!(
+        bytes, corpus.data,
+        "a hole a provider served is asked again"
+    );
+}
+
+#[tokio::test]
 async fn a_damaged_local_repair_falls_back_to_providers_and_reports_only_when_they_miss() {
     let corpus = Corpus::generate(1025, 12, ARTICLE_SIZE);
     for provider_has_it in [true, false] {

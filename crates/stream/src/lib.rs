@@ -1242,6 +1242,7 @@ async fn fetch(
     } else {
         Workload::Stream
     };
+    let cached = matches!(source, Source::Shared(_) | Source::Hedge(Some(_)));
     let body = if id.is_empty() {
         Err(Arc::new(Error::NotFound))
     } else {
@@ -1264,34 +1265,31 @@ async fn fetch(
                 .map_err(Arc::new),
         }
     };
-    if let Some(local) = local
-        && body.is_err()
-    {
-        return Err(local);
+    if let Some(local) = local {
+        // A wrong-size cache entry must not stand in for a provider's copy of a repair.
+        let body = match body {
+            Ok(data) if cached && data.len() != size => client
+                .provider_body_with(id, workload, probe, None, begin)
+                .await
+                .map(|body| body.data)
+                .map_err(Arc::new),
+            body => body,
+        };
+        let Ok(data) = body else {
+            return Err(local);
+        };
+        if data.len() == size {
+            // A later read whose repair is gone must ask providers, not fill.
+            if let Some(gaps) = &hole.gaps {
+                gaps.served(hole.index);
+            }
+            return Ok((data, false));
+        }
+        return sized(&data, segment, size, hole, strict);
     }
     match body {
         Ok(data) if data.len() == size => Ok((data, false)),
-        Ok(_) if strict => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "decoded size differs from layout",
-        )),
-        Ok(data) => {
-            if let Some(suppressed) = hole.gaps.as_ref().map_or(Some(0), |gaps| gaps.log()) {
-                tracing::warn!(
-                    message_id = %segment.message_id,
-                    size,
-                    decoded = data.len(),
-                    reason = "decoded size differs from layout",
-                    suppressed,
-                    "aligning segment to layout size"
-                );
-            }
-            // ponytail: with a known `begin` a wrong part already failed over; a size
-            // that still disagrees is padded or cut with a warning.
-            let mut data = data.to_vec();
-            data.resize(size, 0);
-            Ok((data.into(), false))
-        }
+        Ok(data) => sized(&data, segment, size, hole, strict),
         Err(error)
             if !strict
                 && matches!(
@@ -1323,6 +1321,37 @@ async fn fetch(
         }
         Err(error) => Err(io::Error::other(error)),
     }
+}
+
+/// A provider body whose size disagrees with the layout: strict reads fail, playback aligns it.
+fn sized(
+    data: &[u8],
+    segment: &Segment,
+    size: usize,
+    hole: &Hole,
+    strict: bool,
+) -> io::Result<(Bytes, bool)> {
+    if strict {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "decoded size differs from layout",
+        ));
+    }
+    if let Some(suppressed) = hole.gaps.as_ref().map_or(Some(0), |gaps| gaps.log()) {
+        tracing::warn!(
+            message_id = %segment.message_id,
+            size,
+            decoded = data.len(),
+            reason = "decoded size differs from layout",
+            suppressed,
+            "aligning segment to layout size"
+        );
+    }
+    // ponytail: with a known `begin` a wrong part already failed over; a size
+    // that still disagrees is padded or cut with a warning.
+    let mut data = data.to_vec();
+    data.resize(size, 0);
+    Ok((data.into(), false))
 }
 
 #[cfg(test)]
