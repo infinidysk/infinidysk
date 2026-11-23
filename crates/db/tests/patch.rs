@@ -1348,10 +1348,23 @@ async fn evicting_a_live_repair_rechecks_its_items_and_invalidates_caches() {
             .unwrap();
         let before = fixture.db.blob_epoch();
         let evicted = fixture.db.repair_epoch();
+        let observation = fixture.db.repair_observation(evicted).unwrap();
+        let writer = fixture.db.clone();
+        let eviction = tokio::spawn(async move { writer.evict_patch(repair.id).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while fixture.db.repair_observation(evicted).is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!eviction.is_finished());
+        drop(observation);
         assert_eq!(
-            fixture.db.evict_patch(repair.id).await.unwrap(),
+            eviction.await.unwrap().unwrap(),
             vec![(fixture.file.id, fixture.file.path.clone())]
         );
+        assert!(fixture.db.repair_observation(evicted).is_none());
         assert!(fixture.db.blob_epoch() > before);
         assert!(fixture.db.repair_epoch() > evicted);
         assert_eq!(

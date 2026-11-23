@@ -97,7 +97,8 @@ impl Repairs {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()?;
-        (epoch == self.db.repair_epoch()).then(|| ids.contains(id))
+        let _stable = self.db.repair_observation(epoch)?;
+        Some(ids.contains(id))
     }
 
     /// A missing article must not wait for a reader permit or a full catalog read.

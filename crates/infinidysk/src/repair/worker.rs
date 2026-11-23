@@ -49,7 +49,7 @@ fn unavailable(reason: impl Into<String>) -> Unavailable {
 /// One attempt's result. [`Outcome::finish`] alone decides state, retry and stored outcome.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Outcome {
-    Available,
+    Available(u64),
     Verified {
         hash_only: bool,
     },
@@ -89,7 +89,7 @@ impl Outcome {
         let hashes = |hash_only| if hash_only { HASH_ONLY } else { "" }.to_owned();
         let (state, reason, retry, outcome) = match self {
             Self::Escalated => return None,
-            Self::Available => (2, AVAILABLE.to_owned(), None, 0),
+            Self::Available(_) => (2, AVAILABLE.to_owned(), None, 0),
             Self::Verified { hash_only } => (2, hashes(hash_only), None, 0),
             Self::Repaired { hash_only } => (3, hashes(hash_only), None, 0),
             Self::Damaged => (
@@ -338,6 +338,10 @@ impl Repairs {
         } else {
             0
         };
+        let observed = match outcome {
+            Outcome::Available(epoch) => Some(epoch),
+            _ => None,
+        };
         let Some(finish) = outcome.finish(job.attempts, now_ms()) else {
             return;
         };
@@ -357,21 +361,28 @@ impl Repairs {
                     .update_availability_progress(claim, checked, total)
                     .await?;
                 let (transferred, stored) = progress.counters(job);
-                if finish.yielded {
+                let stable = observed.and_then(|epoch| self.db.repair_observation(epoch));
+                let stale = observed.is_some() && stable.is_none();
+                if finish.yielded || stale {
                     // One statement, so a failed save cannot defer without the refund.
                     return self
                         .db
                         .yield_par2(
                             claim,
                             job.attempts,
-                            &finish.reason,
+                            if stale {
+                                "repair catalog changed during check"
+                            } else {
+                                &finish.reason
+                            },
                             transferred,
                             stored,
                             now_ms(),
                         )
                         .await;
                 }
-                self.db
+                let saved = self
+                    .db
                     .finish_par2(
                         claim,
                         finish.state,
@@ -382,7 +393,9 @@ impl Repairs {
                         finish.retry,
                         finish.outcome,
                     )
-                    .await
+                    .await;
+                drop(stable);
+                saved
             }
             .await;
             match saved {
@@ -409,6 +422,7 @@ impl Repairs {
             unavailable("availability source changed")
         );
         progress.phase("Checking article availability");
+        let epoch = self.db.repair_epoch();
         let result = health
             .check_availability(
                 id,
@@ -434,7 +448,7 @@ impl Repairs {
             Availability::Available { .. } | Availability::Damaged { .. } if !current => {
                 Err(unavailable("availability source changed").into())
             }
-            Availability::Available { .. } => Ok(Outcome::Available),
+            Availability::Available { .. } => Ok(Outcome::Available(epoch)),
             Availability::Damaged { .. } if job.repair_on_failure && job.nzb_blob.is_some() => {
                 progress.phase("Queuing repair");
                 progress.save(&self.db, job).await;

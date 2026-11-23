@@ -279,6 +279,7 @@ impl Db {
         &self,
         id: infinidysk_core::PatchId,
     ) -> Result<Vec<(ItemId, String)>, Error> {
+        let _commit = self.repair_commits.write().await;
         let items: Vec<(Uuid, String)> = on!(self, pool => {
             let mut tx = pool.begin_with(self.begin_write()).await?;
             let nzb: Option<Uuid> = sqlx::query_scalar("DELETE FROM repair_patches WHERE id = $1 RETURNING nzb_blob")
@@ -539,6 +540,7 @@ impl Db {
                 Ok(patch.encode()?)
             })
             .collect::<Result<_, Error>>()?;
+        let _commit = self.repair_commits.write().await;
         let postgres = matches!(self.pool, Pool::Postgres(_));
         on!(self, pool => {
             // Never return a connection with a changed durability setting to the pool,
