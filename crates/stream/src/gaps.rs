@@ -31,8 +31,8 @@ struct State {
     found: BTreeSet<usize>,
     /// Recorded holes playback filled, counted even when a repair may still fill them.
     filled: BTreeSet<usize>,
-    /// Holes a committed repair filled for this read version; metadata still lists them.
-    repaired: BTreeSet<usize>,
+    /// Recorded holes served by a repair or provider for this read version.
+    served: BTreeSet<usize>,
     /// Damage is capped as health caps a `degraded` file.
     budget: bool,
     in_a_row: Vec<Instant>,
@@ -47,7 +47,7 @@ impl Gaps {
     pub fn refresh(&self, mut known: BTreeSet<usize>, budget: bool) {
         let mut state = self.lock();
         state.expire();
-        known.retain(|i| !state.repaired.contains(i));
+        known.retain(|i| !state.served.contains(i));
         let State { found, filled, .. } = &mut *state;
         filled.extend(found.intersection(&known));
         filled.retain(|i| known.contains(i));
@@ -58,9 +58,8 @@ impl Gaps {
 
     /// Nothing happened for so long that the state may be dropped.
     pub fn stale(&self) -> bool {
-        self.lock()
-            .last_event
-            .is_none_or(|at| at.elapsed() >= EXPIRY)
+        let state = self.lock();
+        state.served.is_empty() && state.last_event.is_none_or(|at| at.elapsed() >= EXPIRY)
     }
 
     /// A hole providers need not be asked about again.
@@ -77,16 +76,15 @@ impl Gaps {
     }
 
     pub(crate) fn repaired(&self, index: usize) {
-        let mut state = self.lock();
-        state.known.remove(&index);
-        state.found.remove(&index);
-        state.filled.remove(&index);
-        state.repaired.insert(index);
+        self.served(index);
     }
 
     /// A provider served this hole, so later reads ask providers again.
     pub(crate) fn served(&self, index: usize) {
         let mut state = self.lock();
+        if state.known.contains(&index) || state.found.contains(&index) {
+            state.served.insert(index);
+        }
         state.known.remove(&index);
         state.found.remove(&index);
         state.filled.remove(&index);
@@ -189,6 +187,16 @@ mod tests {
     use super::*;
 
     const SIZES: fn() -> Vec<u64> = || vec![10; 10_000];
+
+    #[test]
+    fn reopening_does_not_restore_a_provider_served_hole() {
+        let gaps = Gaps::default();
+        gaps.refresh([5].into(), false);
+        gaps.served(5);
+        assert!(!gaps.stale());
+        gaps.refresh([5].into(), false);
+        assert!(!gaps.is_hole(5));
+    }
 
     #[tokio::test(start_paused = true)]
     async fn fails_fills_in_a_row_until_a_good_read_or_expiry() {

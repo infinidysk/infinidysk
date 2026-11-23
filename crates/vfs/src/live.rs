@@ -171,7 +171,10 @@ fn gaps(
     if !version.is_none_or(ReadVersion::is_current) {
         return Arc::default();
     }
-    all.retain(|_, (_, gaps)| Arc::strong_count(gaps) > 1 || !gaps.stale());
+    all.retain(|_, (saved, gaps)| {
+        Arc::strong_count(gaps) > 1
+            || (saved.as_ref().is_none_or(ReadVersion::is_current) && !gaps.stale())
+    });
     let (saved, gaps) = all
         .entry(item.id)
         .or_insert_with(|| (version.cloned(), Arc::default()));
