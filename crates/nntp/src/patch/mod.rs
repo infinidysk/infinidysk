@@ -113,7 +113,11 @@ impl Store {
                         name.as_str(),
                         nix::unistd::UnlinkatFlags::NoRemoveDir,
                     )?;
-                    self.0.dir.sync_all()?;
+                    if let Err(error) = self.0.dir.sync_all() {
+                        // The file is gone either way; `None` makes the next use rescan.
+                        *state = scan(&self.0.dir, false).ok();
+                        return Err(error.into());
+                    }
                 }
                 Err(error) => return Err(error),
             },

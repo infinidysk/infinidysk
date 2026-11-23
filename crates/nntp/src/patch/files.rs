@@ -196,26 +196,36 @@ pub(super) fn evict<G>(
         files.push(((metadata.st_mtime, metadata.st_mtime_nsec), name, id, size));
     }
     files.sort_unstable_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let mut files = files.into_iter();
     let mut plan = Vec::new();
-    for (_, name, id, size) in files {
+    let mut planned = used;
+    while !room(planned) {
+        let Some((_, name, id, size)) = files.next() else {
+            return Err(Error::Capacity);
+        };
+        check(cancelled)?;
+        if eligible(id)? {
+            plan.push(Ok((id, name, size)));
+            planned = planned.saturating_sub(size);
+        }
+    }
+    // Later files stand in for planned ones that `remove` declines.
+    let reserve = files.filter_map(|(_, name, id, size)| match eligible(id) {
+        Ok(true) => Some(Ok((id, name, size))),
+        Ok(false) => None,
+        Err(error) => Some(Err(error)),
+    });
+    let mut removed = 0;
+    for candidate in plan.into_iter().chain(reserve) {
         if room(used) {
             break;
         }
         check(cancelled)?;
-        if eligible(id)? {
-            plan.push((id, name));
-            used = used.saturating_sub(size);
-        }
-    }
-    if !room(used) {
-        return Err(Error::Capacity);
-    }
-    let mut removed = 0;
-    for (id, name) in plan {
-        check(cancelled)?;
+        let (id, name, size) = candidate?;
         if let Some(_guard) = remove(id)? {
             unlinkat(dir, name.as_str(), UnlinkatFlags::NoRemoveDir)?;
             removed += 1;
+            used = used.saturating_sub(size);
         }
     }
     dir.sync_all()?;
