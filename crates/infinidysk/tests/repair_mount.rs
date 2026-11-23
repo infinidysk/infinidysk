@@ -19,6 +19,25 @@ use tokio_util::sync::CancellationToken;
 /// Removes the fixture directory last, after an assertion failure too.
 struct Scratch(PathBuf);
 
+async fn mounted_io<T>(
+    phase: &str,
+    cancel: &CancellationToken,
+    mut task: tokio::task::JoinHandle<T>,
+) -> T {
+    match tokio::time::timeout(Duration::from_secs(15), &mut task).await {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => {
+            cancel.cancel();
+            panic!("{phase} failed: {error}");
+        }
+        Err(_) => {
+            cancel.cancel();
+            let _ = task.await;
+            panic!("{phase} timed out");
+        }
+    }
+}
+
 impl Drop for Scratch {
     fn drop(&mut self) {
         // Best effort: a failed test may still hold the mount busy.
@@ -166,18 +185,21 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
         .unwrap();
     let path = mount.join("content/source.bin");
     let ids = mount.join(item.id.ids_path());
-    let (first, alias, path, ids) = tokio::task::spawn_blocking(move || {
-        let first = std::fs::File::open(&path).unwrap();
-        let alias = std::fs::File::open(&ids).unwrap();
-        let mut bytes = [0; ARTICLE];
-        for file in [&first, &alias] {
-            std::os::unix::fs::FileExt::read_exact_at(file, &mut bytes, 0).unwrap();
-            assert_eq!(&bytes, &damaged[..ARTICLE]);
-        }
-        (first, alias, path, ids)
-    })
-    .await
-    .unwrap();
+    let (first, alias, path, ids) = mounted_io(
+        "initial mounted read",
+        &cancel,
+        tokio::task::spawn_blocking(move || {
+            let first = std::fs::File::open(&path).unwrap();
+            let alias = std::fs::File::open(&ids).unwrap();
+            let mut bytes = [0; ARTICLE];
+            for file in [&first, &alias] {
+                std::os::unix::fs::FileExt::read_exact_at(file, &mut bytes, 0).unwrap();
+                assert_eq!(&bytes, &damaged[..ARTICLE]);
+            }
+            (first, alias, path, ids)
+        }),
+    )
+    .await;
     let patch = Patch {
         id: PatchId::new(),
         source: Posted {
@@ -199,24 +221,34 @@ async fn committed_repairs_replace_cached_pages_for_both_open_aliases() {
         .unwrap()
         .write(&patch, &data[..ARTICLE], || false)
         .unwrap();
-    let published = publisher
-        .publish(source, vec![receipt], None, &CancellationToken::new())
-        .await;
-    let checked = tokio::task::spawn_blocking(move || {
-        let mut bytes = vec![0; data.len()];
-        for file in [&first, &alias] {
-            std::os::unix::fs::FileExt::read_exact_at(file, &mut bytes, 0).unwrap();
-            assert_eq!(bytes, data);
-        }
-        drop((first, alias));
-        for path in [path, ids] {
-            assert_eq!(std::fs::read(path).unwrap(), data);
-        }
-    })
+    let published = tokio::time::timeout(
+        Duration::from_secs(15),
+        publisher.publish(source, vec![receipt], None, &cancel),
+    )
+    .await;
+    let Ok(published) = published else {
+        cancel.cancel();
+        task.await.unwrap();
+        panic!("mounted publication timed out");
+    };
+    mounted_io(
+        "post-publication mounted read",
+        &cancel,
+        tokio::task::spawn_blocking(move || {
+            let mut bytes = vec![0; data.len()];
+            for file in [&first, &alias] {
+                std::os::unix::fs::FileExt::read_exact_at(file, &mut bytes, 0).unwrap();
+                assert_eq!(bytes, data);
+            }
+            drop((first, alias));
+            for path in [path, ids] {
+                assert_eq!(std::fs::read(path).unwrap(), data);
+            }
+        }),
+    )
     .await;
     cancel.cancel();
     task.await.unwrap();
     assert!(published.unwrap());
-    checked.unwrap();
     db.close().await;
 }
