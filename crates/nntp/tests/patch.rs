@@ -236,10 +236,11 @@ fn eviction_moves_past_a_repair_whose_removal_is_declined() {
     }
     let declined = patches[0].0.id;
     let remove = |id| Ok((id != declined).then_some(()));
-    assert_eq!(
-        store.evict(length, |_| Ok(true), remove, || false).unwrap(),
-        1
-    );
+    let eligible = |id| {
+        assert_ne!(id, patches[2].0.id, "already made room");
+        Ok(true)
+    };
+    assert_eq!(store.evict(length, eligible, remove, || false).unwrap(), 1);
     assert!(
         store.read(&patches[0].0).is_ok(),
         "a declined removal keeps its file"

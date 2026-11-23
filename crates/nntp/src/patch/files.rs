@@ -216,11 +216,12 @@ pub(super) fn evict<G>(
         Err(error) => Some(Err(error)),
     });
     let mut removed = 0;
-    for candidate in plan.into_iter().chain(reserve) {
-        if room(used) {
-            break;
-        }
+    let mut candidates = plan.into_iter().chain(reserve);
+    while !room(used) {
         check(cancelled)?;
+        let Some(candidate) = candidates.next() else {
+            break;
+        };
         let (id, name, size) = candidate?;
         if let Some(_guard) = remove(id)? {
             unlinkat(dir, name.as_str(), UnlinkatFlags::NoRemoveDir)?;
