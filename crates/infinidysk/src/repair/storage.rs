@@ -54,13 +54,12 @@ impl Repairs {
                     };
                     // Startup keeps an embedded payload it could not move into the live store,
                     // so the copied catalog may still hold it. Keep it only if its bytes match.
-                    if let Some(data) = snapshot.repair_payload(patch.id).await?
-                        && snapshot
-                            .set_repair_payload(&patch, Some(&data))
-                            .await
-                            .is_ok()
-                    {
-                        continue;
+                    if let Some(data) = snapshot.repair_payload(patch.id).await? {
+                        match snapshot.set_repair_payload(&patch, Some(&data)).await {
+                            Ok(()) => continue,
+                            Err(infinidysk_db::Error::Corrupt(_)) => {}
+                            Err(error) => return Err(error.into()),
+                        }
                     }
                     // A restore has no live store, so the backup drops the reference
                     // as eviction would, and its files are checked again after restore.
