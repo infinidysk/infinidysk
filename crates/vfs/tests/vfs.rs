@@ -11,7 +11,8 @@ use infinidysk_core::{
     Segment, Segments, blob,
 };
 use infinidysk_db::{
-    Db, HealthState, HealthStatus, HistoryEntry, Item, JobStatus, QueueEntry, Recheck,
+    Db, HealthState, HealthStatus, HistoryEntry, Item, JobStatus, ListingChange, QueueEntry,
+    Recheck,
 };
 use infinidysk_nntp::{Client, Downloads, Endpoint, Pool, PoolConfig, Provider, TlsMode};
 use infinidysk_stream::{Budget, Cache, Fault};
@@ -575,6 +576,12 @@ async fn deleted_completed_links_hide_without_changing_what_is_stored() {
         )
     };
     let vfs = start();
+    let mut listings = db.subscribe_listings();
+    let mut hidden = || match listings.try_recv() {
+        Ok(ListingChange::Link(path)) => Some(path),
+        Ok(other) => panic!("unexpected {other:?}"),
+        Err(_) => None,
+    };
     let node = |path: &'static str| {
         let vfs = &vfs;
         async move { vfs.lookup(path).await.unwrap() }
@@ -583,6 +590,8 @@ async fn deleted_completed_links_hide_without_changing_what_is_stored() {
     // Moving a link out: the app links the new path, then deletes the old one.
     let link = node("/completed-symlinks/tv/job/a.mkv").await.unwrap();
     assert!(vfs.delete_link(&link));
+    assert_eq!(hidden().as_deref(), Some("/content/tv/job/a.mkv"));
+    assert_eq!(hidden(), None);
     assert_eq!(node("/completed-symlinks/tv/job/a.mkv").await, None);
     assert_eq!(
         names(&vfs, "/completed-symlinks/tv/job").await,
@@ -595,6 +604,7 @@ async fn deleted_completed_links_hide_without_changing_what_is_stored() {
     // Then the job folder; everything below it goes with it.
     let folder = node("/completed-symlinks/tv/job").await.unwrap();
     assert!(vfs.delete_link(&folder));
+    assert_eq!(hidden().as_deref(), Some("/content/tv/job"));
     assert_eq!(node("/completed-symlinks/tv/job").await, None);
     assert_eq!(node("/completed-symlinks/tv/job/b.mkv").await, None);
     assert_eq!(node("/completed-symlinks//tv/job/sub/c.mkv").await, None);
@@ -610,6 +620,7 @@ async fn deleted_completed_links_hide_without_changing_what_is_stored() {
     ] {
         assert!(!vfs.delete_link(&node(path).await.unwrap()), "{path}");
     }
+    assert_eq!(hidden(), None, "a refused delete hides nothing");
     assert!(node("/completed-symlinks/tv").await.is_some());
 
     // A restart shows them again, until the history row goes.

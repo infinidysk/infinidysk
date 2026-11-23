@@ -371,6 +371,15 @@ pub async fn serve(
     db.set_nzb_retention_days(settings.queue.nzb_retention_days);
     let cleanup = Arc::new(Notify::new());
     set_rules(&queue, &settings);
+    // Subscribed before anything is added, so the first forget covers it.
+    let remote = if settings.rclone_rc.enabled {
+        Some((
+            crate::rclone_rc::RcClient::new(&settings.rclone_rc)?,
+            db.subscribe_listings(),
+        ))
+    } else {
+        None
+    };
     add_categories(&queue, &settings).await;
 
     let (arr_tx, arr_rx) = watch::channel(arr_instances(&settings.arr_instances));
@@ -588,6 +597,7 @@ pub async fn serve(
         tuning,
         default_cache_dir,
         experiments: settings.experiments.clone(),
+        rclone_rc: settings.rclone_rc.clone(),
         handoff: Arc::clone(&handoff),
     };
     let config = Arc::new(RwLock::new(store));
@@ -666,7 +676,12 @@ pub async fn serve(
         tokio::spawn(async move {
             tokio::join!(
                 discovery.run(instances),
-                discovery.notify(),
+                async {
+                    match remote {
+                        None => discovery.notify().await,
+                        Some((rc, listings)) => discovery.notify_remote(rc, listings).await,
+                    }
+                },
                 discovery.apply_events(events),
                 discovery.manage_queues()
             )
@@ -897,6 +912,8 @@ pub struct Live {
     /// The disk cache folder when none is saved: `cache` in the config folder.
     default_cache_dir: String,
     experiments: Vec<String>,
+    /// The rclone RC client is built at startup.
+    rclone_rc: config::RcloneRc,
     handoff: Arc<crate::handoff::Writer>,
 }
 
@@ -980,6 +997,8 @@ impl Live {
             || tuning.fuse_max_readahead_kb != self.tuning.fuse_max_readahead_kb
             || tuning.fuse_max_background != self.tuning.fuse_max_background
             || settings.experiments != self.experiments
+            || ((settings.rclone_rc.enabled || self.rclone_rc.enabled)
+                && settings.rclone_rc != self.rclone_rc)
     }
 
     pub const fn cache(&self) -> &Arc<Cache> {

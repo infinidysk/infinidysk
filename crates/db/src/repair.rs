@@ -172,6 +172,7 @@ impl Db {
             true
         });
         if changed {
+            self.listing_changed(|| crate::ListingChange::Nzbs);
             self.notify(crate::Change::Queue);
         }
         Ok(changed.then_some(replacement))

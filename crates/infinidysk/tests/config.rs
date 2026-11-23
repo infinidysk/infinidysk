@@ -1,5 +1,6 @@
 use infinidysk::config::{
-    ArrInstance, ArrProfile, ConfigStore, Error, LibraryDir, MASK, Provider, Secret, Settings,
+    ArrInstance, ArrProfile, ConfigStore, Error, LibraryDir, MASK, Provider, RcloneRc, Secret,
+    Settings,
 };
 use infinidysk_db::Db;
 
@@ -12,6 +13,11 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
         .expect("connect");
     let env = [
         ("INFINIDYSK__SAB__API_KEY".to_owned(), "123".to_owned()),
+        ("INFINIDYSK__RCLONE_RC__USER".to_owned(), "rc".to_owned()),
+        (
+            "INFINIDYSK__RCLONE_RC__PASSWORD".to_owned(),
+            "rc-env-secret".to_owned(),
+        ),
         ("UNRELATED".to_owned(), "x".to_owned()),
     ];
     let mut store = ConfigStore::load(db.clone(), env.clone())
@@ -22,7 +28,12 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
         Secret("123".into()),
         "string fields stay verbatim"
     );
-    assert_eq!(store.locked().collect::<Vec<_>>(), ["sab.api_key"]);
+    let mut locked: Vec<_> = store.locked().collect();
+    locked.sort();
+    assert_eq!(
+        locked,
+        ["rclone_rc.password", "rclone_rc.user", "sab.api_key"]
+    );
 
     let mut settings = store.settings().clone();
     settings.providers.push(Provider {
@@ -47,8 +58,10 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
     let mut masked = store.settings().masked();
     assert_eq!(masked.providers[0].password, Secret(MASK.into()));
     assert_eq!(masked.auth.oidc.client_secret, Secret(MASK.into()));
+    assert_eq!(masked.rclone_rc.password, Secret(MASK.into()));
     assert!(!format!("{:?}", store.settings()).contains("pw"));
     assert!(!format!("{:?}", store.settings()).contains("sso-secret"));
+    assert!(!format!("{:?}", store.settings()).contains("rc-env-secret"));
     masked.providers[0].priority = 1;
     store.save(masked.clone()).await.expect("save");
     assert_eq!(store.settings().providers[0].password, Secret("pw".into()));
@@ -56,7 +69,15 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
         store.settings().auth.oidc.client_secret,
         Secret("sso-secret".into())
     );
+    assert_eq!(
+        store.settings().rclone_rc.password,
+        Secret("rc-env-secret".into())
+    );
     assert_eq!(store.settings().providers[0].priority, 1);
+
+    let mut renamed = masked.clone();
+    renamed.rclone_rc.user = "someone-else".into();
+    assert!(matches!(store.save(renamed).await, Err(Error::Locked(p)) if p == "rclone_rc.user"));
 
     masked.sab.api_key = Secret("changed".into());
     assert!(matches!(store.save(masked).await, Err(Error::Locked(p)) if p == "sab.api_key"));
@@ -76,6 +97,301 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
     let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
     assert_eq!(reloaded.settings().sab.api_key, Secret::default());
     assert_eq!(reloaded.settings().providers, store.settings().providers);
+
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
+async fn rclone_rc_is_off_until_explicitly_enabled() {
+    let path =
+        std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    // Settings saved before the section existed.
+    db.write_config(&[("webdav", r#"{"user":"admin"}"#)], &[])
+        .await
+        .expect("legacy settings");
+    let mut store = ConfigStore::load(db.clone(), []).await.expect("load");
+    store.generate_missing_secrets().await.expect("secrets");
+    assert_eq!(store.settings().rclone_rc, RcloneRc::default());
+    assert!(!store.settings().rclone_rc.enabled);
+
+    let base = store.settings().clone();
+    let with = |rc: RcloneRc| {
+        let mut settings = base.clone();
+        settings.rclone_rc = rc;
+        settings
+    };
+    let on = RcloneRc {
+        enabled: true,
+        url: " http://127.0.0.1:5572/rc/ ".into(),
+        fs: "library:".into(),
+        user: "rc".into(),
+        password: Secret("rc-secret".into()),
+    };
+
+    for url in [
+        "https://rc-user:rc-pass@rc.example/",
+        "https://rc-user@rc.example/",
+        "https://:rc-pass@rc.example/",
+        "https://rc.example/?token=tok-123",
+        "https://rc.example/#secret-anchor",
+        "http://rc.example/",
+        "not a url",
+    ] {
+        let error = store
+            .save(with(RcloneRc {
+                url: url.into(),
+                ..on.clone()
+            }))
+            .await
+            .expect_err(url);
+        assert_eq!(error.path(), Some("rclone_rc.url"), "{url}");
+        let message = error.to_string();
+        for leak in [
+            "rc-user",
+            "rc-pass",
+            "tok-123",
+            "secret-anchor",
+            "rc.example",
+        ] {
+            assert!(!message.contains(leak), "{message}");
+        }
+    }
+    let missing = store
+        .save(with(RcloneRc {
+            url: String::new(),
+            ..on.clone()
+        }))
+        .await
+        .expect_err("on needs a URL");
+    assert_eq!(missing.path(), Some("rclone_rc.url"));
+    let user_only = store
+        .save(with(RcloneRc {
+            password: Secret::default(),
+            ..on.clone()
+        }))
+        .await
+        .expect_err("user without password");
+    assert_eq!(user_only.path(), Some("rclone_rc.password"));
+    let password_only = store
+        .save(with(RcloneRc {
+            user: String::new(),
+            ..on.clone()
+        }))
+        .await
+        .expect_err("password without user");
+    assert_eq!(password_only.path(), Some("rclone_rc.user"));
+    // Off, a half-filled form is kept for later.
+    store
+        .save(with(RcloneRc {
+            enabled: false,
+            password: Secret::default(),
+            ..on.clone()
+        }))
+        .await
+        .expect("off");
+
+    store.save(with(on.clone())).await.expect("on");
+    let saved = &store.settings().rclone_rc;
+    assert_eq!(saved.url, "http://127.0.0.1:5572/rc/", "URL prefix kept");
+    assert_eq!(saved.password, Secret("rc-secret".into()));
+
+    // A masked password follows the same server, never a new one.
+    let masked = store.settings().masked();
+    let mut moved = masked.clone();
+    moved.rclone_rc.url = "https://rc.example/rc/".into();
+    let error = store.save(moved).await.expect_err("new origin");
+    assert_eq!(error.path(), Some("rclone_rc.password"));
+    let mut same = masked;
+    same.rclone_rc.url = "http://127.0.0.1:5572/other/".into();
+    store.save(same).await.expect("same origin");
+    assert_eq!(
+        store.settings().rclone_rc.password,
+        Secret("rc-secret".into())
+    );
+
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
+async fn rclone_rc_env_url_never_carries_a_password_to_another_server() {
+    let path =
+        std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let env_url = |url: &str| ("INFINIDYSK__RCLONE_RC__URL".to_owned(), url.to_owned());
+    let env_password = || {
+        (
+            "INFINIDYSK__RCLONE_RC__PASSWORD".to_owned(),
+            "rc-env-secret".to_owned(),
+        )
+    };
+    let on = RcloneRc {
+        enabled: true,
+        url: "http://127.0.0.1:5572/rc/".into(),
+        fs: "library:".into(),
+        user: "rc".into(),
+        password: Secret("rc-secret".into()),
+    };
+    let mut store = ConfigStore::load(db.clone(), []).await.expect("load");
+    let mut settings = store.settings().clone();
+    settings.rclone_rc = on.clone();
+    store.save(settings).await.expect("save");
+
+    let error = ConfigStore::load(db.clone(), [env_url("https://rc.example/rc/")])
+        .await
+        .err()
+        .expect("saved password, env URL elsewhere");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    assert!(!error.to_string().contains("rc-secret"));
+    let same = ConfigStore::load(db.clone(), [env_url("http://127.0.0.1:5572/other/")])
+        .await
+        .expect("same origin");
+    assert_eq!(same.settings().rclone_rc.password, on.password);
+    let both = ConfigStore::load(
+        db.clone(),
+        [env_url("https://rc.example/rc/"), env_password()],
+    )
+    .await
+    .expect("env password goes with the env URL");
+    assert_eq!(
+        both.settings().rclone_rc.password,
+        Secret("rc-env-secret".into())
+    );
+
+    // A password entered under an env URL is stored with that URL.
+    let mut cleared = store.settings().clone();
+    cleared.rclone_rc.enabled = false;
+    cleared.rclone_rc.user = String::new();
+    cleared.rclone_rc.password = Secret::default();
+    store.save(cleared).await.expect("clear");
+    let mut store = ConfigStore::load(db.clone(), [env_url("https://rc.example/rc/")])
+        .await
+        .expect("no saved password");
+    let mut entered = store.settings().masked();
+    entered.rclone_rc.user = "rc".into();
+    entered.rclone_rc.password = Secret("new-secret".into());
+    store.save(entered).await.expect("enter password");
+    let reloaded = ConfigStore::load(db.clone(), [env_url("https://rc.example/rc/")])
+        .await
+        .expect("password belongs to the env URL");
+    assert_eq!(
+        reloaded.settings().rclone_rc.password,
+        Secret("new-secret".into())
+    );
+
+    // An env password only follows a URL that env sets.
+    db.write_config(&[], &["rclone_rc"]).await.expect("reset");
+    let mut store = ConfigStore::load(db.clone(), [env_password()])
+        .await
+        .expect("env password");
+    let mut first = store.settings().masked();
+    first.rclone_rc.url = "https://rc.example/rc/".into();
+    let error = store
+        .save(first)
+        .await
+        .expect_err("UI URL for env password");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    let mut typed = store.settings().masked();
+    typed.rclone_rc.url = "https://rc.example/rc/".into();
+    typed.rclone_rc.password = Secret("rc-env-secret".into());
+    let error = store
+        .save(typed)
+        .await
+        .expect_err("UI URL for the typed env password");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    let mut same = store.settings().masked();
+    same.rclone_rc.fs = "library:".into();
+    store.save(same).await.expect("same-origin edit");
+
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
+async fn rclone_rc_env_overrides_never_rebind_what_is_saved() {
+    let path =
+        std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let env = |key: &str, value: &str| (format!("INFINIDYSK__RCLONE_RC__{key}"), value.to_owned());
+    let saved = RcloneRc {
+        enabled: true,
+        url: "http://127.0.0.1:5572/rc/".into(),
+        fs: String::new(),
+        user: "rc".into(),
+        password: Secret("rc-secret".into()),
+    };
+    let mut store = ConfigStore::load(db.clone(), []).await.expect("load");
+    let mut settings = store.settings().clone();
+    settings.rclone_rc = saved.clone();
+    store.save(settings).await.expect("save");
+
+    // Filling missing secrets at startup enters no RC password, so it keeps the saved URL.
+    let mut store = ConfigStore::load(db.clone(), [env("URL", "http://127.0.0.1:5572/other/")])
+        .await
+        .expect("env URL, same origin");
+    assert_eq!(store.settings().sab.api_key.0, "");
+    store.generate_missing_secrets().await.expect("secrets");
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_ne!(reloaded.settings().sab.api_key.0, "");
+    assert_eq!(reloaded.settings().rclone_rc, saved);
+
+    // Env blanks the credentials; a new URL would leave the saved password beside it.
+    let mut store = ConfigStore::load(db.clone(), [env("USER", ""), env("PASSWORD", "")])
+        .await
+        .expect("blanked credentials");
+    let mut moved = store.settings().masked();
+    assert_eq!(moved.rclone_rc.password, Secret::default());
+    moved.rclone_rc.url = "https://rc.example/rc/".into();
+    let error = store
+        .save(moved)
+        .await
+        .expect_err("saved password, new URL");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    assert!(!error.to_string().contains("rc-secret"));
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(reloaded.settings().rclone_rc, saved);
+
+    // Entering the env password does not bind the hidden saved one to a new URL.
+    let mut store = ConfigStore::load(db.clone(), [env("PASSWORD", "rc-env-secret")])
+        .await
+        .expect("env password");
+    let mut moved = store.settings().masked();
+    moved.rclone_rc.url = "https://rc.example/rc/".into();
+    moved.rclone_rc.password = Secret("rc-env-secret".into());
+    let error = store
+        .save(moved)
+        .await
+        .expect_err("hidden saved password, new URL");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(reloaded.settings().rclone_rc, saved);
+
+    // An unrelated save under a passwordless env URL stores nothing of it.
+    db.write_config(&[], &["rclone_rc"]).await.expect("reset");
+    let env_on = [env("ENABLED", "true"), env("URL", "https://rc.example/rc/")];
+    let mut store = ConfigStore::load(db.clone(), env_on.clone())
+        .await
+        .expect("env URL");
+    let mut other = store.settings().masked();
+    other.sab.manual_category = "manual".into();
+    store.save(other).await.expect("unrelated save");
+    let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(reloaded.settings().rclone_rc, RcloneRc::default());
+    assert_eq!(reloaded.settings().sab.manual_category, "manual");
 
     db.close().await;
     for suffix in ["", "-wal", "-shm"] {

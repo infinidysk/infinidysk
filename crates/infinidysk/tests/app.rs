@@ -4,8 +4,8 @@
 
 use std::net::SocketAddr;
 use std::process::Stdio;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Json;
@@ -52,6 +52,14 @@ async fn start() -> (SocketAddr, CancellationToken, Server, String) {
 
 /// Like [`start`], beside a C# `/config` whose `db.sqlite` holds `csharp_db`.
 async fn start_from(csharp_db: Option<&[u8]>) -> (SocketAddr, CancellationToken, Server, String) {
+    start_with(csharp_db, []).await
+}
+
+/// Like [`start_from`], with more environment variables.
+async fn start_with(
+    csharp_db: Option<&[u8]>,
+    extra: impl IntoIterator<Item = (&str, String)>,
+) -> (SocketAddr, CancellationToken, Server, String) {
     let path = std::env::temp_dir().join(format!("infinidysk-app-{}.sqlite", ItemId::new()));
     if let Some(data) = csharp_db {
         std::fs::create_dir_all(path.with_extension("config")).unwrap();
@@ -80,7 +88,10 @@ async fn start_from(csharp_db: Option<&[u8]>) -> (SocketAddr, CancellationToken,
             "adminkey".to_owned(),
         ),
         ("INFINIDYSK__SAB__API_KEY".to_owned(), "sabkey".to_owned()),
-    ];
+    ]
+    .into_iter()
+    .chain(extra.into_iter().map(|(k, v)| (k.to_owned(), v)))
+    .collect::<Vec<_>>();
     let cancel = CancellationToken::new();
     let database_url = boot.database_url.clone();
     let server = tokio::spawn({
@@ -570,6 +581,34 @@ async fn serves_every_api_on_one_port_and_applies_settings_live() {
         "mount.dir"
     );
 
+    // A remote rclone mount is told of changes only after a restart turned it on.
+    let rc_calls = Arc::new(AtomicUsize::new(0));
+    let rc_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rc = rc_listener.local_addr().unwrap();
+    tokio::spawn({
+        let rc_calls = Arc::clone(&rc_calls);
+        let recorder = axum::Router::new().fallback(move || {
+            rc_calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({ "forgotten": [] })) }
+        });
+        async move { axum::serve(rc_listener, recorder).await }
+    });
+    let restart_required = |settings: &Value| {
+        let settings = settings.clone();
+        async move {
+            let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
+            assert_eq!(status(addr, &put).await, "HTTP/1.1 200 OK");
+            let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+            serde_json::from_str::<Value>(&body).unwrap()["restart_required"].clone()
+        }
+    };
+    let mut remote = settings.clone();
+    remote["rclone_rc"] = json!({ "enabled": false, "url": format!("http://{rc}/") });
+    assert_eq!(restart_required(&remote).await, false, "off stays off");
+    remote["rclone_rc"]["enabled"] = true.into();
+    assert_eq!(restart_required(&remote).await, true);
+    assert_eq!(restart_required(&settings).await, false);
+
     // Keys can be revealed; passwords cannot.
     let (code, body) = send(
         addr,
@@ -703,6 +742,11 @@ async fn serves_every_api_on_one_port_and_applies_settings_live() {
     cancel.cancel();
     server.await.unwrap().unwrap();
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    assert_eq!(
+        rc_calls.load(Ordering::SeqCst),
+        0,
+        "an off install never calls RC"
+    );
 }
 
 #[tokio::test]
@@ -1073,6 +1117,231 @@ async fn discovers_which_arr_download_clients_are_this_installation() {
 
     webhooks(addr, &found, &database_url).await;
     queue_management(addr, &database_url).await;
+
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+}
+
+/// What the rclone RC server and the Arr of
+/// [`rclone_forget_finishes_before_the_owning_arr_is_told`] saw.
+#[derive(Default)]
+struct RcOrder {
+    forgets: AtomicUsize,
+    /// Answer 401 from now on.
+    fail: AtomicBool,
+    /// Holds the next forget below `content/` until `release`.
+    gate: AtomicBool,
+    arrived: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    released: AtomicBool,
+    /// For each Arr refresh: whether the held forget had been answered.
+    told: Mutex<Vec<bool>>,
+}
+
+async fn rc_forget(
+    State(order): State<Arc<RcOrder>>,
+    Json(body): Json<serde_json::Map<String, Value>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    order.forgets.fetch_add(1, Ordering::SeqCst);
+    if order.fail.load(Ordering::SeqCst) {
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+    }
+    let dirs: Vec<Value> = body
+        .iter()
+        .filter(|(k, _)| k.starts_with("dir"))
+        .map(|(_, v)| v.clone())
+        .collect();
+    let below_content = dirs
+        .iter()
+        .any(|d| d.as_str().is_some_and(|d| d.starts_with("content/")));
+    if below_content && order.gate.swap(false, Ordering::SeqCst) {
+        order.arrived.notify_one();
+        order.release.notified().await;
+        order.released.store(true, Ordering::SeqCst);
+    }
+    Json(json!({ "forgotten": dirs })).into_response()
+}
+
+/// A Sonarr whose one SAB client holds our key and owns `tv`.
+async fn rc_arr(
+    State((app, order)): State<(SocketAddr, Arc<RcOrder>)>,
+    req: Request,
+) -> Json<Value> {
+    Json(match req.uri().path() {
+        "/s/api" => json!({ "current": "v3", "deprecated": [] }),
+        "/s/api/v3/system/status" => json!({ "appName": "Sonarr", "version": "4.0.0" }),
+        "/s/api/v3/downloadclient" => json!([{
+            "id": 1, "name": "sab", "enable": true, "implementation": "Sabnzbd",
+            "fields": [
+                { "name": "host", "value": "127.0.0.1" },
+                { "name": "port", "value": app.port() },
+                { "name": "useSsl", "value": false },
+                { "name": "urlBase", "value": "/sab" },
+                { "name": "apiKey", "value": "sabkey" },
+                { "name": "tvCategory", "value": "tv" },
+            ],
+        }]),
+        "/s/api/v3/notification" if req.method() == axum::http::Method::GET => json!([]),
+        "/s/api/v3/notification" => json!({ "id": 9 }),
+        "/s/api/v3/queue" => json!({ "records": [] }),
+        "/s/api/v3/command" => {
+            let released = order.released.load(Ordering::SeqCst);
+            order.told.lock().unwrap().push(released);
+            json!({})
+        }
+        _ => json!({}),
+    })
+}
+
+/// A one-file NZB of a small MKV, with the articles that hold it.
+fn clip_nzb(prefix: &str) -> (Vec<infinidysk_testkit::Article>, String) {
+    use std::fmt::Write as _;
+
+    let mut clip = vec![7u8; 4000];
+    clip[..4].copy_from_slice(&[0x1A, 0x45, 0xDF, 0xA3]);
+    let articles = infinidysk_testkit::post(prefix, "Clip.mkv", &clip, 1000);
+    let mut segments = String::new();
+    for (number, article) in articles.iter().enumerate() {
+        let (number, id) = (number + 1, &article.message_id);
+        write!(
+            segments,
+            "<segment bytes=\"1021\" number=\"{number}\">{id}</segment>"
+        )
+        .unwrap();
+    }
+    let nzb = format!(
+        "<?xml version=\"1.0\"?><nzb><file poster=\"p\" date=\"0\" subject=\"Clip.mkv\">\
+         <groups><group>a.b</group></groups><segments>{segments}</segments></file></nzb>"
+    );
+    (articles, nzb)
+}
+
+#[tokio::test]
+async fn rclone_forget_finishes_before_the_owning_arr_is_told() {
+    let (mut articles, first) = clip_nzb("first");
+    let (more, second) = clip_nzb("second");
+    articles.extend(more);
+    let provider = infinidysk_testkit::LoopbackServer::start(articles)
+        .await
+        .unwrap();
+    let order = Arc::new(RcOrder::default());
+    let rc_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rc = rc_listener.local_addr().unwrap();
+    let recorder = axum::Router::new()
+        .route("/rc/vfs/forget", axum::routing::post(rc_forget))
+        .with_state(Arc::clone(&order));
+    tokio::spawn(async move { axum::serve(rc_listener, recorder).await });
+    let (addr, cancel, server, _) = start_with(
+        None,
+        [
+            ("INFINIDYSK__RCLONE_RC__ENABLED", "true".to_owned()),
+            ("INFINIDYSK__RCLONE_RC__URL", format!("http://{rc}/rc")),
+        ],
+    )
+    .await;
+    let arr_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let arr = arr_listener.local_addr().unwrap();
+    let fake = axum::Router::new()
+        .fallback(rc_arr)
+        .with_state((addr, Arc::clone(&order)));
+    tokio::spawn(async move { axum::serve(arr_listener, fake).await });
+
+    let wait = |what: &'static str, done: Box<dyn Fn() -> bool + Send>| async move {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    // Startup forgets every root once, whatever changed while we were down.
+    wait("startup forget", {
+        let order = Arc::clone(&order);
+        Box::new(move || order.forgets.load(Ordering::SeqCst) > 0)
+    })
+    .await;
+
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+    let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
+    settings["arr_instances"] = json!([
+        { "name": "series", "profile": "sonarr", "url": format!("http://{arr}/s"), "api_key": "k" },
+    ]);
+    settings["providers"] = json!([{
+        "hostname": "127.0.0.1", "port": provider.addr().port(), "tls": false,
+    }]);
+    let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
+    assert_eq!(status(addr, &put).await, "HTTP/1.1 200 OK");
+    let request = admin_request("GET", "/api/v1/arr/status", "");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let (_, body) = send(addr, &request).await;
+        let found: Value = serde_json::from_str(&body).unwrap();
+        if found["categories"]
+            .as_array()
+            .is_some_and(|c| c.iter().any(|c| c["category"] == "tv"))
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{found}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let add = |name: &str, nzb: &str| {
+        let multipart = format!(
+            "--b\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"{name}.nzb\"\r\n\r\n{nzb}\r\n--b--\r\n"
+        );
+        format!(
+            "POST /api?mode=addfile&cat=tv&apikey=sabkey HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\
+             Content-Type: multipart/form-data; boundary=b\r\nContent-Length: {}\r\n\r\n{multipart}",
+            multipart.len()
+        )
+    };
+
+    // The forget for a finished job's files is answered before its Arr hears of it.
+    order.gate.store(true, Ordering::SeqCst);
+    send(addr, &add("first", &first)).await;
+    tokio::time::timeout(Duration::from_secs(20), order.arrived.notified())
+        .await
+        .expect("the Arr-bound forget arrives");
+    assert!(order.told.lock().unwrap().is_empty(), "Arr told too early");
+    order.release.notify_one();
+    wait("first refresh", {
+        let order = Arc::clone(&order);
+        Box::new(move || !order.told.lock().unwrap().is_empty())
+    })
+    .await;
+    assert_eq!(*order.told.lock().unwrap(), [true]);
+
+    // A job that made no files changes no listing, so nothing is forgotten for it.
+    let before = order.forgets.load(Ordering::SeqCst);
+    send(addr, &add("bad", "not xml")).await;
+    wait("refused refresh", {
+        let order = Arc::clone(&order);
+        Box::new(move || order.told.lock().unwrap().len() == 2)
+    })
+    .await;
+    assert_eq!(order.forgets.load(Ordering::SeqCst), before);
+
+    // A failed forget never holds the Arr back.
+    order.fail.store(true, Ordering::SeqCst);
+    send(addr, &add("second", &second)).await;
+    wait("second refresh", {
+        let order = Arc::clone(&order);
+        Box::new(move || order.told.lock().unwrap().len() == 3)
+    })
+    .await;
+    assert!(order.forgets.load(Ordering::SeqCst) > before);
+
+    // The next Arr refresh first retries the missed forget, also with no listing change.
+    order.fail.store(false, Ordering::SeqCst);
+    let before = order.forgets.load(Ordering::SeqCst);
+    send(addr, &add("bad again", "still not xml")).await;
+    wait("recovering refresh", {
+        let order = Arc::clone(&order);
+        Box::new(move || order.told.lock().unwrap().len() == 4)
+    })
+    .await;
+    assert!(order.forgets.load(Ordering::SeqCst) > before);
 
     cancel.cancel();
     server.await.unwrap().unwrap();

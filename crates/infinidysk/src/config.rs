@@ -155,6 +155,7 @@ pub struct Settings {
     pub sab: Sab,
     pub auth: Auth,
     pub webdav: WebDav,
+    pub rclone_rc: RcloneRc,
     pub mount: Mount,
     pub performance: Performance,
     pub providers: Vec<Provider>,
@@ -765,6 +766,92 @@ impl Default for WebDav {
     }
 }
 
+/// The RC server of an external rclone mount of the `WebDAV` root, told to forget cached
+/// directory listings when they change. Applies after a restart.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct RcloneRc {
+    pub enabled: bool,
+    /// Base URL of the RC server: `https://`, or `http://` on loopback.
+    pub url: String,
+    /// The mounted VFS as rclone names it (e.g. `library:`); empty when it serves one.
+    pub fs: String,
+    pub user: String,
+    pub password: Secret,
+}
+
+impl RcloneRc {
+    /// The `vfs/forget` endpoint below [`Self::url`].
+    pub(crate) fn forget_url(&self) -> Result<reqwest::Url, Error> {
+        let bad = || {
+            invalid(
+                "rclone_rc.url",
+                "Enter the RC base URL: HTTPS, or HTTP on loopback, without credentials, \
+                 query, or fragment"
+                    .to_owned(),
+            )
+        };
+        let mut url = reqwest::Url::parse(&self.url).map_err(|_| bad())?;
+        let host = url.host_str().ok_or_else(bad)?;
+        if !crate::oidc::secure(url.scheme(), host)
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(bad());
+        }
+        url.path_segments_mut()
+            .map_err(|()| bad())?
+            .pop_if_empty()
+            .push("vfs")
+            .push("forget");
+        Ok(url)
+    }
+
+    fn validate(&mut self) -> Result<(), Error> {
+        for field in [&mut self.url, &mut self.fs, &mut self.user] {
+            *field = field.trim().to_owned();
+        }
+        if !self.url.is_empty() {
+            self.forget_url()?;
+        }
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.url.is_empty() {
+            self.forget_url()?;
+        }
+        if self.user.contains(':') {
+            return Err(invalid(
+                "rclone_rc.user",
+                "RC username must not contain a colon".to_owned(),
+            ));
+        }
+        if self.user.is_empty() != self.password.0.is_empty() {
+            let path = if self.user.is_empty() {
+                "rclone_rc.user"
+            } else {
+                "rclone_rc.password"
+            };
+            return Err(invalid(
+                path,
+                "Enter both an RC username and password, or neither".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Scheme, host and port of a parseable RC URL.
+    fn origin(url: &str) -> Option<reqwest::Url> {
+        let mut url = reqwest::Url::parse(url.trim()).ok()?;
+        url.set_path("");
+        url.set_query(None);
+        url.set_fragment(None);
+        Some(url)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct Mount {
@@ -1101,6 +1188,7 @@ impl Settings {
         out.auth.oidc.client_secret = out.auth.oidc.client_secret.masked();
         out.webdav.password = out.webdav.password.masked();
         out.webdav.download_key = out.webdav.download_key.masked();
+        out.rclone_rc.password = out.rclone_rc.password.masked();
         out.imports.strm_key = out.imports.strm_key.masked();
         for p in &mut out.providers {
             p.password = p.password.masked();
@@ -1124,6 +1212,7 @@ impl Settings {
         self.webdav
             .download_key
             .restore(&current.webdav.download_key);
+        self.rclone_rc.password.restore(&current.rclone_rc.password);
         self.imports.strm_key.restore(&current.imports.strm_key);
         for p in &mut self.providers {
             if let Some(c) = current.providers.iter().find(|c| c.id == p.id) {
@@ -1263,6 +1352,7 @@ impl Settings {
                 "WebDAV user must not be empty".to_owned(),
             ));
         }
+        self.rclone_rc.validate()?;
         if self.sab.manual_category.trim().is_empty() {
             return Err(invalid(
                 "sab.manual_category",
@@ -1681,6 +1771,10 @@ impl ConfigStore {
             }
         }
         if changed {
+            // An unchanged RC password is not entered, so it binds no env URL.
+            if !next.rclone_rc.password.0.is_empty() {
+                next.rclone_rc.password = Secret(MASK.to_owned());
+            }
             self.save(next).await?;
         }
         Ok(())
@@ -1691,8 +1785,71 @@ impl ConfigStore {
         self.env.iter().map(|o| o.path.join("."))
     }
 
+    fn env_sets(&self, path: [&str; 2]) -> bool {
+        env_sets(&self.env, path)
+    }
+
+    /// The RC password about to be stored stays with the server it was stored for, also
+    /// when environment variables hide either of them.
+    fn check_stored_rc(&self, tree: &Value, password_entered: bool) -> Result<(), Error> {
+        let stored = Value::Object(self.stored.clone());
+        let text = |tree: &Value, path: [&str; 2]| {
+            let path = path.map(str::to_owned);
+            lookup(tree, &path)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let password = text(tree, RC_PASSWORD);
+        let replaced = password_entered && !self.env_sets(RC_PASSWORD);
+        if password.is_empty()
+            || replaced
+            || password != text(&stored, RC_PASSWORD)
+            || RcloneRc::origin(&text(tree, RC_URL)) == RcloneRc::origin(&text(&stored, RC_URL))
+        {
+            return Ok(());
+        }
+        Err(if self.env_sets(RC_PASSWORD) {
+            invalid(
+                "rclone_rc.url",
+                "INFINIDYSK__RCLONE_RC__PASSWORD hides a saved RC password that belongs to \
+                 the saved RC URL. Keep that URL, or remove the variable and clear the \
+                 saved password first"
+                    .to_owned(),
+            )
+        } else {
+            invalid(
+                "rclone_rc.password",
+                "The RC URL points somewhere new: enter its password, or clear it".to_owned(),
+            )
+        })
+    }
+
     /// Validates and persists `new`. [`MASK`] secrets keep their current value.
     pub async fn save(&mut self, mut new: Settings) -> Result<(), Error> {
+        let (rc, current_rc) = (&new.rclone_rc, &self.settings.rclone_rc);
+        let rc_password_entered = rc.password.0 != MASK && !rc.password.0.is_empty();
+        // An env password goes wherever the URL points, however the request sends it.
+        if (rc.password.0 == MASK || self.env_sets(RC_PASSWORD))
+            && !current_rc.password.0.is_empty()
+            && !rc.url.trim().is_empty()
+            && RcloneRc::origin(&rc.url) != RcloneRc::origin(&current_rc.url)
+        {
+            return Err(if self.env_sets(RC_PASSWORD) {
+                invalid(
+                    "rclone_rc.url",
+                    "The RC password comes from INFINIDYSK__RCLONE_RC__PASSWORD, so it \
+                     only goes to the current RC server. Set INFINIDYSK__RCLONE_RC__URL \
+                     to point it somewhere new"
+                        .to_owned(),
+                )
+            } else {
+                invalid(
+                    "rclone_rc.password",
+                    "The RC URL points somewhere new: enter its password, or clear it".to_owned(),
+                )
+            });
+        }
         new.restore_secrets(&self.settings);
         new.validate_in(&self.default_cache_dir)?;
         let mut tree = serde_json::to_value(&new)?;
@@ -1707,6 +1864,13 @@ impl ConfigStore {
                 None => remove(&mut tree, &o.path),
             }
         }
+        // A password entered for an env-set URL is stored with that URL, so a later
+        // startup sends it only there.
+        if rc_password_entered && self.env_sets(RC_URL) && !self.env_sets(RC_PASSWORD) {
+            let path = RC_URL.map(str::to_owned);
+            set(&mut tree, &path, Value::String(new.rclone_rc.url.clone()));
+        }
+        self.check_stored_rc(&tree, rc_password_entered)?;
 
         let defaults = serde_json::to_value(Settings::default())?;
         let mut next = Map::new();
@@ -1757,7 +1921,42 @@ fn effective(
     let mut settings: Settings = serde_json::from_value(tree)?;
     settings.reset_invalid();
     settings.validate_in(default_cache_dir)?;
+    check_rc_url_override(stored, env, &settings.rclone_rc)?;
     Ok(settings)
+}
+
+const RC_URL: [&str; 2] = ["rclone_rc", "url"];
+const RC_PASSWORD: [&str; 2] = ["rclone_rc", "password"];
+
+fn env_sets(env: &[Override], path: [&str; 2]) -> bool {
+    env.iter().any(|o| o.path == path)
+}
+
+/// The saved RC password belongs to the saved RC URL; an env URL for another server
+/// stops startup instead of sending it there.
+fn check_rc_url_override(
+    stored: &Map<String, Value>,
+    env: &[Override],
+    rc: &RcloneRc,
+) -> Result<(), Error> {
+    if !env_sets(env, RC_URL) || env_sets(env, RC_PASSWORD) || rc.password.0.is_empty() {
+        return Ok(());
+    }
+    let saved = stored
+        .get("rclone_rc")
+        .and_then(|section| section.get("url"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if RcloneRc::origin(saved) == RcloneRc::origin(&rc.url) {
+        return Ok(());
+    }
+    Err(invalid(
+        "rclone_rc.url",
+        "INFINIDYSK__RCLONE_RC__URL points to another server than the saved RC URL, so \
+         the saved RC password is not sent there. Set INFINIDYSK__RCLONE_RC__PASSWORD \
+         too, or remove INFINIDYSK__RCLONE_RC__URL and clear the saved password"
+            .to_owned(),
+    ))
 }
 
 /// Readarr support was dropped; an instance left from before stops startup with what

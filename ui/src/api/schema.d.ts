@@ -3898,6 +3898,28 @@ export interface components {
         };
         /** @enum {string} */
         QuotaPeriod: "monthly" | "block";
+        /**
+         * @description The RC server of an external rclone mount of the `WebDAV` root, told to forget cached
+         *     directory listings when they change. Applies after a restart.
+         */
+        RcloneRc: {
+            /** @default false */
+            enabled: boolean;
+            /**
+             * @description The mounted VFS as rclone names it (e.g. `library:`); empty when it serves one.
+             * @default
+             */
+            fs: string;
+            /** @default  */
+            password: components["schemas"]["Secret"];
+            /**
+             * @description Base URL of the RC server: `https://`, or `http://` on loopback.
+             * @default
+             */
+            url: string;
+            /** @default  */
+            user: string;
+        };
         ReadView: {
             /** @description Process, pid and uid/gid (FUSE), or user agent and address (`WebDAV`). Best effort. */
             client: string;
@@ -4383,6 +4405,16 @@ export interface components {
             queue: components["schemas"]["Queue"];
             /**
              * @default {
+             *       "enabled": false,
+             *       "fs": "",
+             *       "password": "",
+             *       "url": "",
+             *       "user": ""
+             *     }
+             */
+            rclone_rc: components["schemas"]["RcloneRc"];
+            /**
+             * @default {
              *       "api_key": "",
              *       "categories": [
              *         "audio",
@@ -4412,7 +4444,7 @@ export interface components {
             locked: string[];
             /**
              * @description Saved changes that apply only after a restart (mount directory, built-in FUSE
-             *     mount on or off, read-ahead memory, FUSE tuning, experiments).
+             *     mount on or off, read-ahead memory, FUSE tuning, experiments, remote rclone mount).
              */
             restart_required: boolean;
             /** @description Secrets are masked; send the mask back to keep them. */

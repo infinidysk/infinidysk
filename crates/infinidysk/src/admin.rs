@@ -487,7 +487,7 @@ struct SettingsView {
     /// Dotted paths fixed by environment variables.
     locked: Vec<String>,
     /// Saved changes that apply only after a restart (mount directory, built-in FUSE
-    /// mount on or off, read-ahead memory, FUSE tuning, experiments).
+    /// mount on or off, read-ahead memory, FUSE tuning, experiments, remote rclone mount).
     restart_required: bool,
     /// What `settings.experiments` may name.
     experiments: &'static [config::Experiment],
