@@ -790,7 +790,7 @@ impl Repairs {
                     if retained {
                         Ok(None)
                     } else {
-                        repairs.evict(&runtime, id, nzb)
+                        repairs.evict(&runtime, id, nzb, &stopped)
                     }
                 },
                 || stopped.is_cancelled(),
@@ -822,6 +822,7 @@ impl Repairs {
         runtime: &tokio::runtime::Handle,
         id: PatchId,
         keep: BlobId,
+        cancel: &CancellationToken,
     ) -> Result<Option<OwnedSemaphorePermit>, patch::Error> {
         runtime.block_on(async {
             let owner = self
@@ -832,10 +833,17 @@ impl Repairs {
             if owner == Some(keep) {
                 return Ok(None);
             }
-            let readers = Arc::clone(&self.readers)
-                .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32"))
-                .await
-                .map_err(|_| patch::Error::Recovery)?;
+            let readers = tokio::select! {
+                readers = Arc::clone(&self.readers)
+                    .acquire_many_owned(u32::try_from(READERS).expect("32 readers fit u32")) => {
+                    readers.map_err(|_| patch::Error::Recovery)?
+                }
+                () = cancel.cancelled() => return Err(patch::Error::Cancelled),
+            };
+            // A cancelled attempt writes nothing, so it must not drop a repair for room.
+            if cancel.is_cancelled() {
+                return Err(patch::Error::Cancelled);
+            }
             let items = self
                 .db
                 .evict_patch(id)
