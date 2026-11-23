@@ -30,7 +30,7 @@ const STALE_AFTER_MS: i64 = 3 * DAY_MS;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const NOTE_MAX: usize = 500;
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
-pub const POSTGRES: &str = "Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy the repair directory in your config folder (/config/repairs by default) as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.";
+pub const POSTGRES: &str = "Built-in backup and restore supports SQLite only. For PostgreSQL, stop infinidysk, take a database dump with pg_dump and copy the repair directory in your config folder (/config/repairs by default) as a matched pair. To restore, load the dump into a new, empty database, check that the import finished without errors, then put that database and the matching repair directory back in place before restarting infinidysk. A dump alone cannot recover the repair bytes. Startup flags missing repairs for recheck.";
 const CHANGED: &str = "The file changed since it was made (checksum differs); it may be damaged.";
 const STAGED_CHANGED: &str =
     "The backup file changed since it was made (checksum differs); it may be damaged.";
@@ -598,7 +598,7 @@ impl Backups {
         let size_now = || std::fs::metadata(&path).map_or(0, |m| m.len());
         match self.tracked(written, size_now).await {
             Ok(()) => {}
-            Err(_) if cancel.is_cancelled() => return Err(Stop::Cancelled),
+            // A full folder is reported even when a cancel raced it; the operator must act.
             Err(e)
                 if e.downcast_ref::<DbError>()
                     .is_some_and(|e| matches!(e, DbError::DiskFull)) =>
@@ -607,6 +607,7 @@ impl Backups {
                     "The backup folder ran out of space.".to_owned(),
                 ));
             }
+            Err(_) if cancel.is_cancelled() => return Err(Stop::Cancelled),
             Err(e) => return Err(Stop::Reason(format!("Could not write the backup: {e}"))),
         }
         let size = files::blocking(move || {
