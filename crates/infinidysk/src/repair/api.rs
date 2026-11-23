@@ -123,13 +123,33 @@ async fn request(admin: &Admin, id: Uuid, verify: bool) -> Result<StatusCode, Fa
             "Enable PAR2 repair in Settings → Experiments and restart first.".into(),
         ));
     }
+    let full = |error: infinidysk_db::Error| -> Fail {
+        match error {
+            infinidysk_db::Error::RepairQueueFull => Fail::Conflict(
+                "The repair queue is full. Wait for a job to finish or cancel a pending one."
+                    .into(),
+            ),
+            error => error.into(),
+        }
+    };
     let now = infinidysk_db::now_ms();
-    let Some(job) = admin.queue.db().request_par2(owner, verify, now).await? else {
+    let Some(job) = admin
+        .queue
+        .db()
+        .request_par2(owner, verify, now)
+        .await
+        .map_err(full)?
+    else {
         return Err(Fail::Conflict(
             "The file has no original NZB needed for reconstruction.".into(),
         ));
     };
-    admin.queue.db().restart_par2(job, now).await?;
+    admin
+        .queue
+        .db()
+        .restart_par2(job, now)
+        .await
+        .map_err(full)?;
     Ok(StatusCode::ACCEPTED)
 }
 
