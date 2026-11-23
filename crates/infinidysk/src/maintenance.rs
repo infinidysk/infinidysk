@@ -136,20 +136,46 @@ struct MaintenanceState {
 
 /// The running job, for the live view.
 #[derive(Default)]
-pub struct Tracker(Mutex<Option<LiveMaintenance>>);
+pub struct Tracker(Mutex<TrackedJob>);
+
+#[derive(Default)]
+struct TrackedJob {
+    running: Option<LiveMaintenance>,
+    generation: u64,
+}
 
 impl Tracker {
     #[must_use]
     pub fn get(&self) -> Option<LiveMaintenance> {
-        self.lock().clone()
+        self.lock().running.clone()
     }
 
-    fn lock(&self) -> MutexGuard<'_, Option<LiveMaintenance>> {
+    pub(crate) fn sample(&self, previous: &mut u64) -> (Option<LiveMaintenance>, bool) {
+        let job = self.lock();
+        let started = std::mem::replace(previous, job.generation) != job.generation;
+        (job.running.clone(), started)
+    }
+
+    fn start(&self, run: &Order) {
+        let mut job = self.lock();
+        job.generation = job.generation.wrapping_add(1);
+        job.running = Some(LiveMaintenance {
+            job: run.job,
+            dry_run: run.dry_run,
+            trigger: run.trigger,
+            step: "Starting",
+            done: 0,
+            total: None,
+            started_ms: now_ms(),
+        });
+    }
+
+    fn lock(&self) -> MutexGuard<'_, TrackedJob> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(crate) fn step(&self, step: &'static str, total: Option<u64>) {
-        if let Some(live) = self.lock().as_mut() {
+        if let Some(live) = self.lock().running.as_mut() {
             live.step = step;
             live.done = 0;
             live.total = total;
@@ -157,7 +183,7 @@ impl Tracker {
     }
 
     pub(crate) fn done(&self, done: u64) {
-        if let Some(live) = self.lock().as_mut() {
+        if let Some(live) = self.lock().running.as_mut() {
             live.done = done;
         }
     }
@@ -310,8 +336,8 @@ pub(crate) struct Slot(Arc<Maintenance>);
 
 impl Drop for Slot {
     fn drop(&mut self) {
+        self.0.parts.live.lock().running = None;
         self.0.lock().cancel = None;
-        *self.0.parts.live.lock() = None;
     }
 }
 
@@ -415,15 +441,7 @@ impl Maintenance {
         let cancel = CancellationToken::new();
         state.cancel = Some(cancel.clone());
         drop(state);
-        *self.parts.live.lock() = Some(LiveMaintenance {
-            job: run.job,
-            dry_run: run.dry_run,
-            trigger: run.trigger,
-            step: "Starting",
-            done: 0,
-            total: None,
-            started_ms: now_ms(),
-        });
+        self.parts.live.start(run);
         Ok((Slot(Arc::clone(self)), cancel))
     }
 
@@ -1541,6 +1559,31 @@ pub async fn delete_report(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn completed_maintenance_is_seen_once_between_samples() {
+        let tracker = super::Tracker::default();
+        let mut generation = 0;
+        let sample = |previous: &mut u64| {
+            let (running, started) = tracker.sample(previous);
+            (running.is_some(), started)
+        };
+        let dry_run = super::Order {
+            job: super::MaintenanceJob::RemoveUnlinked,
+            dry_run: true,
+            trigger: super::RunTrigger::Manual,
+            only: None,
+        };
+        assert_eq!(sample(&mut generation), (false, false));
+        tracker.start(&dry_run);
+        tracker.lock().running = None;
+        assert!(tracker.get().is_none());
+        assert_eq!(sample(&mut generation), (false, true));
+        assert_eq!(sample(&mut generation), (false, false));
+        tracker.start(&dry_run);
+        assert_eq!(sample(&mut generation), (true, true));
+        assert_eq!(sample(&mut generation), (true, false));
+    }
+
     use std::os::unix::fs::symlink;
 
     use super::*;

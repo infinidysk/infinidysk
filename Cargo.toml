@@ -71,6 +71,7 @@ zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2
 zstd = "0.14.2"
 
 infinidysk = { path = "crates/infinidysk" }
+infinidysk-allocator = { path = "crates/allocator" }
 infinidysk-archive = { path = "crates/archive" }
 infinidysk-arr = { path = "crates/arr" }
 infinidysk-core = { path = "crates/core" }

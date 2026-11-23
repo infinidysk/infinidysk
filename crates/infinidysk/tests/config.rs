@@ -539,6 +539,22 @@ fn library_dirs_stored_as_plain_paths_still_load() {
 }
 
 #[test]
+fn idle_memory_trim_is_opt_in_and_survives_a_settings_round_trip() {
+    let enabled = |settings: &Settings| {
+        settings
+            .experiments
+            .iter()
+            .any(|name| name == "idle-memory-trim")
+    };
+    assert!(!enabled(&Settings::default()));
+    assert!(!enabled(&serde_json::from_str("{}").expect("old settings")));
+    let settings: Settings =
+        serde_json::from_str(r#"{"experiments":["idle-memory-trim"]}"#).expect("opt in");
+    let saved = serde_json::to_vec(&settings).expect("save");
+    assert!(enabled(&serde_json::from_slice(&saved).expect("reload")));
+}
+
+#[test]
 fn retired_experiments_are_dropped_on_load() {
     let settings: Settings =
         serde_json::from_str(r#"{"experiments": ["retired", "win-floor", "win-floor"]}"#)

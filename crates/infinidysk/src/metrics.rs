@@ -35,6 +35,9 @@ use uuid::Uuid;
 
 use crate::admin::{Admin, Fail};
 
+mod idle_trim;
+use idle_trim::IdleTrim;
+
 const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 const SAMPLES_PER_MINUTE: usize = 30;
 /// Swap and `/proc/self/status` are read this often, not every sample.
@@ -92,6 +95,7 @@ struct Sampled {
     /// Counters since start at the last sample.
     last: HashMap<String, u64>,
     last_at: Option<Instant>,
+    maintenance_generation: u64,
     /// Providers whose breaker is open, by key.
     open: HashMap<String, Outage>,
     /// Bytes served per open read at the last sample.
@@ -923,12 +927,19 @@ impl Metrics {
         let mut minute = now_ms() / MINUTE_MS;
         self.state().pending_minute = minute * MINUTE_MS;
         let mut pruned = None;
+        let mut idle_trim = (infinidysk_allocator::SUPPORTED
+            && infinidysk_core::experiment(crate::config::IDLE_MEMORY_TRIM))
+        .then(IdleTrim::default);
         loop {
             tokio::select! {
                 () = cancel.cancelled() => break,
                 _ = tick.tick() => {}
             }
-            self.sample();
+            if let Some(sampled_at) = self.sample(idle_trim.as_mut())
+                && !idle_trim::release(sampled_at, cancel.clone()).await
+            {
+                idle_trim = Some(IdleTrim::AfterWork);
+            }
             let now = now_ms();
             if now / MINUTE_MS == minute {
                 continue;
@@ -951,7 +962,7 @@ impl Metrics {
                 }
             }
         }
-        self.sample();
+        let _ = self.sample(None);
         self.end_outages();
         self.write(minute * MINUTE_MS).await;
         if let Some(store) = self.store.get() {
@@ -1023,7 +1034,7 @@ impl Metrics {
         t
     }
 
-    fn sample(&self) {
+    fn sample(&self, idle_trim: Option<&mut IdleTrim>) -> Option<Instant> {
         let now = Instant::now();
         let at = now_ms();
         let providers = self.sources.client.stats();
@@ -1272,6 +1283,7 @@ impl Metrics {
             .iter()
             .map(|d| get(&format!("served.{}", d.label())))
             .sum();
+        let interval_work = idle_trim.is_some() && (!ended.is_empty() || !deltas.is_empty());
         state.last = totals;
         if state.minute.len() == SAMPLES_PER_MINUTE {
             state.minute.pop_front();
@@ -1298,6 +1310,10 @@ impl Metrics {
             budget_waiters,
             now,
         );
+        let (maintenance, maintenance_started) = self
+            .sources
+            .maintenance
+            .sample(&mut state.maintenance_generation);
         let view = LiveView {
             at,
             read_bps,
@@ -1324,7 +1340,7 @@ impl Metrics {
                         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
                 })
                 .collect(),
-            maintenance: self.sources.maintenance.get(),
+            maintenance,
             providers: live_providers,
             permits_free: self.sources.client.free_permits(),
             resources,
@@ -1332,7 +1348,22 @@ impl Metrics {
             writer_error: state.error.clone(),
         };
         drop(guard);
+        let trim_due = idle_trim.is_some_and(|idle| {
+            let busy = interval_work
+                || maintenance_started
+                || !view.reads.is_empty()
+                || !view.imports.is_empty()
+                || view.maintenance.is_some()
+                || view.article_bytes != 0
+                || view.budget_waiters != 0
+                || view
+                    .providers
+                    .iter()
+                    .any(|p| p.busy != 0 || p.connecting != 0);
+            idle.sample(now, busy)
+        });
         self.live.send_replace(Arc::new(view));
+        trim_due.then_some(now)
     }
 
     /// Writes what is pending as the minute starting at `minute_ms`; on failure keeps it
