@@ -56,6 +56,27 @@ async fn an_omitted_repair_must_match_its_exact_posted_range_and_file_length() {
 }
 
 #[tokio::test]
+async fn damaged_local_bytes_do_not_mask_a_definitive_health_miss() {
+    let server = LoopbackServer::start([]).await.unwrap();
+    let client = Client::new([provider(server.addr().port(), 0, None, &Downloads::new(1))]);
+    client.set_repairs(Box::new(|_| {
+        Some(Box::pin(async { Err(Error::DamagedRepair) }))
+    }));
+    assert!(matches!(
+        client.body("missing@test", Workload::Health, None).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        client.stat("missing@test", Workload::Health, None).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        client.body("missing@test", Workload::Stream, None).await,
+        Err(Error::DamagedRepair)
+    ));
+}
+
+#[tokio::test]
 async fn repaired_bodies_and_effective_stat_use_no_provider_or_download_permit() {
     let server = LoopbackServer::start([]).await.unwrap();
     let downloads = Downloads::new(1);

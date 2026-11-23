@@ -530,9 +530,13 @@ impl Client {
             Err(error) => Some(error),
         };
         // A damaged local repair must not hide a provider's copy; report it if none has one.
+        let health = tag.workload == Workload::Health;
         self.provider_body_tagged(message_id, tag)
             .await
-            .map_err(|error| local.unwrap_or(error))
+            .map_err(|error| match local {
+                Some(Error::DamagedRepair) if health => error,
+                other => other.unwrap_or(error),
+            })
     }
 
     async fn provider_body_tagged(&self, message_id: &str, tag: Tag) -> Result<Body, Error> {
@@ -555,8 +559,11 @@ impl Client {
         workload: Workload,
         probe: Option<&Probe>,
     ) -> Result<(), Error> {
-        if self.repaired(message_id, None).await?.is_some() {
-            return Ok(());
+        match self.repaired(message_id, None).await {
+            Ok(Some(_)) => return Ok(()),
+            Err(Error::DamagedRepair) if workload == Workload::Health => {}
+            Err(error) => return Err(error),
+            Ok(None) => {}
         }
         self.provider_stat(message_id, workload, probe).await
     }

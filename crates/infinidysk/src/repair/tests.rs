@@ -1308,16 +1308,16 @@ async fn missing_corrupt_and_stale_repairs_cannot_count_as_effective_availabilit
     std::fs::write(&path, corrupt).unwrap();
     assert!(matches!(
         client.body("repair@loopback", Workload::Stream, None).await,
-        Err(Error::Repair(_))
+        Err(Error::DamagedRepair)
     ));
     assert!(matches!(
         client.stat("repair@loopback", Workload::Health, None).await,
-        Err(Error::Repair(_))
+        Err(Error::Unavailable)
     ));
     std::fs::remove_file(&path).unwrap();
     assert!(matches!(
         client.stat("repair@loopback", Workload::Health, None).await,
-        Err(Error::Repair(_))
+        Err(Error::Unavailable)
     ));
     std::fs::write(&path, original).unwrap();
     assert!(
@@ -2071,7 +2071,7 @@ async fn a_damaged_local_repair_falls_back_to_a_provider_copy() {
     std::fs::write(&path, corrupt).unwrap();
     assert!(matches!(
         client.repaired("repair@loopback", None).await,
-        Err(Error::Repair(_))
+        Err(Error::DamagedRepair)
     ));
     // The provider's copy wins; the local error surfaces only when no provider has one.
     assert_eq!(

@@ -297,7 +297,7 @@ impl Health {
                                                 result = Some(Probe::Present);
                                                 Some(repair.data.len())
                                             }
-                                            Ok(None) => Some(0),
+                                            Ok(None) | Err(SourceError::DamagedRepair) => Some(0),
                                             Err(error) => {
                                                 result = Some(Probe::Inconclusive(error));
                                                 None
