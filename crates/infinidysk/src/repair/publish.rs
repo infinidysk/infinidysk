@@ -101,19 +101,23 @@ impl Publisher {
             () = stopped.cancelled() => anyhow::bail!("repair stopped before publication"),
         };
         let repairs = Arc::clone(&self.repairs);
-        let permit = Arc::clone(&repairs.readers).acquire_owned().await?;
-        let (patches, receipts) = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            let store = repairs.store(u64::MAX)?;
-            let mut patches = Vec::with_capacity(receipts.len());
-            for receipt in &receipts {
-                store.read(receipt.patch())?;
-                patches.push(receipt.patch().clone());
-            }
-            Ok::<_, infinidysk_nntp::patch::Error>((patches, receipts))
-        })
-        .await
-        .context("repair file verification stopped")??;
+        let (patches, receipts) = if receipts.is_empty() {
+            (Vec::new(), receipts)
+        } else {
+            let permit = Arc::clone(&repairs.readers).acquire_owned().await?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let store = repairs.store(u64::MAX)?;
+                let mut patches = Vec::with_capacity(receipts.len());
+                for receipt in &receipts {
+                    store.read(receipt.patch())?;
+                    patches.push(receipt.patch().clone());
+                }
+                Ok::<_, infinidysk_nntp::patch::Error>((patches, receipts))
+            })
+            .await
+            .context("repair file verification stopped")??
+        };
         anyhow::ensure!(!stopped.is_cancelled(), "repair stopped before publication");
 
         let refused = || anyhow::anyhow!("repair stopped before publication");
