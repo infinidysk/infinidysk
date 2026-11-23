@@ -994,7 +994,8 @@ async fn listing_changes_follow_committed_writes(db: &Db) {
             .expect("set health");
         let sent = match listings.try_recv() {
             Ok(ListingChange::Items(items)) => items.first().cloned(),
-            _ => None,
+            Err(TryRecvError::Empty) => None,
+            other => panic!("{state:?}: unexpected {other:?}"),
         };
         assert_eq!(
             sent,
@@ -1017,6 +1018,19 @@ async fn listing_changes_follow_committed_writes(db: &Db) {
         panic!("imported items are announced");
     };
     assert_eq!(items.as_ref(), [(imported.path.clone(), None)]);
+    assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
+
+    let imported = HistoryEntry {
+        id: JobId::new(),
+        download_dir: Some(imported.id),
+        nzb_blob: None,
+        ..history
+    };
+    db.import_history(&[imported])
+        .await
+        .expect("import history");
+    assert!(matches!(listings.try_recv(), Ok(ListingChange::Completed)));
+    db.import_history(&[]).await.expect("import nothing");
     assert!(matches!(listings.try_recv(), Err(TryRecvError::Empty)));
 }
 

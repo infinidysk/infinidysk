@@ -1502,6 +1502,9 @@ impl Db {
             }
             tx.commit().await?;
         });
+        if !entries.is_empty() {
+            self.listing_changed(|| ListingChange::Completed);
+        }
         self.notify(Change::History);
         Ok(())
     }
