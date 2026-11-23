@@ -1829,7 +1829,8 @@ impl ConfigStore {
     pub async fn save(&mut self, mut new: Settings) -> Result<(), Error> {
         let (rc, current_rc) = (&new.rclone_rc, &self.settings.rclone_rc);
         let rc_password_entered = rc.password.0 != MASK && !rc.password.0.is_empty();
-        if rc.password.0 == MASK
+        // An env password goes wherever the URL points, however the request sends it.
+        if (rc.password.0 == MASK || self.env_sets(RC_PASSWORD))
             && !current_rc.password.0.is_empty()
             && !rc.url.trim().is_empty()
             && RcloneRc::origin(&rc.url) != RcloneRc::origin(&current_rc.url)

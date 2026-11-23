@@ -136,6 +136,8 @@ async fn rclone_rc_is_off_until_explicitly_enabled() {
 
     for url in [
         "https://rc-user:rc-pass@rc.example/",
+        "https://rc-user@rc.example/",
+        "https://:rc-pass@rc.example/",
         "https://rc.example/?token=tok-123",
         "https://rc.example/#secret-anchor",
         "http://rc.example/",
@@ -299,6 +301,17 @@ async fn rclone_rc_env_url_never_carries_a_password_to_another_server() {
         .await
         .expect_err("UI URL for env password");
     assert_eq!(error.path(), Some("rclone_rc.url"));
+    let mut typed = store.settings().masked();
+    typed.rclone_rc.url = "https://rc.example/rc/".into();
+    typed.rclone_rc.password = Secret("rc-env-secret".into());
+    let error = store
+        .save(typed)
+        .await
+        .expect_err("UI URL for the typed env password");
+    assert_eq!(error.path(), Some("rclone_rc.url"));
+    let mut same = store.settings().masked();
+    same.rclone_rc.fs = "library:".into();
+    store.save(same).await.expect("same-origin edit");
 
     db.close().await;
     for suffix in ["", "-wal", "-shm"] {
