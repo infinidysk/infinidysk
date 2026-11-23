@@ -269,10 +269,11 @@ impl Db {
         Ok(())
     }
 
-    pub async fn par2_cancelled(&self, id: Uuid) -> Result<bool, Error> {
-        let state: Option<i16> = on!(self, pool => sqlx::query_scalar("SELECT state FROM repair_jobs WHERE id = $1")
-            .bind(id).fetch_optional(pool).await?);
-        Ok(state.is_none_or(|state| state == 6))
+    /// A restart after a cancel requeues the job under a new claim, so this claim stays stopped.
+    pub async fn par2_cancelled(&self, claim: Claim) -> Result<bool, Error> {
+        let row: Option<(i16, i64)> = on!(self, pool => sqlx::query_as("SELECT state, claim_generation FROM repair_jobs WHERE id = $1")
+            .bind(claim.id).fetch_optional(pool).await?);
+        Ok(row.is_none_or(|(state, generation)| state == 6 || generation != claim.generation))
     }
     pub async fn par2_scan_boundary(&self) -> Result<Option<ItemId>, Error> {
         let id: Option<Uuid> = on!(self, pool => sqlx::query_scalar("SELECT id FROM items WHERE kind <> 1 AND meta_blob IS NOT NULL ORDER BY id DESC LIMIT 1")

@@ -316,7 +316,7 @@ impl Repairs {
             () = async {
                 loop {
                     tokio::select! { () = cancel.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(2)) => {} }
-                    if self.db.par2_cancelled(job.id).await.unwrap_or(false) { break; }
+                    if self.db.par2_cancelled(job.claim()).await.unwrap_or(false) { break; }
                     progress.save(&self.db, job).await;
                 }
             } => { stopped.cancel(); work.await },
