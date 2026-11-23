@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 
 use infinidysk_core::trace::{Outcome, Probe, Reason, Step};
 use tokio::sync::{Notify, mpsc, oneshot};
-use tokio::time::timeout;
 
 use crate::article::Body;
 use crate::client::BodySink;
@@ -46,8 +45,8 @@ pub struct PoolConfig {
     pub max_connections: usize,
     /// BODY requests in flight per connection.
     pub pipeline_depth: usize,
-    /// Connections with nothing to do for this long are closed, down to
-    /// `min_connections`; those are kept alive with keepalives instead.
+    /// Connections with nothing to do for this long are closed with QUIT, down to
+    /// `min_connections`; those stay open and silent until the provider drops them.
     pub idle_timeout: Duration,
     /// Warm floor: idle connections are not closed below this many while the quota
     /// lasts. [`Client::warm`](crate::Client::warm) reopens the ones that die.
@@ -400,6 +399,11 @@ impl Pool {
         self.lock()
             .workers
             .retain(|w| !w.tx.is_closed() && w.load.load(Ordering::Relaxed) > 0);
+    }
+
+    /// Lets go of every connection: each says QUIT once its requests are answered.
+    pub(crate) fn close(&self) {
+        self.lock().workers.clear();
     }
 
     pub(crate) const fn max_connections(&self) -> usize {
@@ -936,9 +940,18 @@ impl Drop for Live {
     }
 }
 
+/// What ended an idle wait.
+enum Idle {
+    /// The request channel yielded; `None` means the pool let go of the connection.
+    Received,
+    HungUp,
+    TimedOut,
+}
+
 /// Owns one connection: keeps up to `pipeline_depth` requests in flight and answers
-/// them in order. Exits on idle timeout above the warm floor, pool drop or a
-/// connection-level error; any requests still queued are dropped, which callers see
+/// them in order. On idle timeout above the warm floor or when the pool lets go of it,
+/// it says QUIT and exits; it also exits when the provider hangs up or on a
+/// connection-level error. Any requests still queued are dropped, which callers see
 /// as unanswered and retry.
 async fn run(
     mut conn: Connection,
@@ -952,22 +965,42 @@ async fn run(
     loop {
         if in_flight.is_empty() {
             conn.link().set(Phase::Idle);
-            match timeout(config.idle_timeout, rx.recv()).await {
-                Ok(Some(request)) => enqueue(&mut conn, &mut in_flight, request),
-                Ok(None) => return,
-                Err(_)
-                    if live.retire(if usage.as_ref().is_some_and(|u| u.exhausted()) {
+            let mut received = None;
+            let idle = tokio::select! {
+                biased;
+                request = rx.recv() => {
+                    received = request;
+                    Idle::Received
+                }
+                () = conn.hung_up() => Idle::HungUp,
+                () = tokio::time::sleep(config.idle_timeout) => Idle::TimedOut,
+            };
+            match idle {
+                Idle::Received => match received {
+                    Some(request) => enqueue(&mut conn, &mut in_flight, request),
+                    None => return conn.quit().await,
+                },
+                Idle::HungUp => {
+                    let reason = conn.hang_up_reason().await;
+                    tracing::debug!(
+                        host = host.as_str(),
+                        %reason,
+                        "provider closed an idle connection"
+                    );
+                    return;
+                }
+                Idle::TimedOut => {
+                    let floor = if usage.as_ref().is_some_and(|u| u.exhausted()) {
                         0
                     } else {
                         config.min_connections
-                    }) =>
-                {
-                    return;
-                }
-                Err(_) => {
-                    if conn.keepalive().await.is_err() {
-                        return;
+                    };
+                    if live.retire(floor) {
+                        // Closed before QUIT, so no request is sent to this connection.
+                        drop(rx);
+                        return conn.quit().await;
                     }
+                    // A warm connection waits on, silent like a downloader's.
                     continue;
                 }
             }

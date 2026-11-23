@@ -410,6 +410,19 @@ impl Client {
         .await;
     }
 
+    /// Lets go of every connection at shutdown: each says QUIT once its requests are
+    /// answered. Waits up to `wait` for them to close.
+    pub async fn close(&self, wait: Duration) {
+        let providers = self.snapshot();
+        for entry in providers.iter() {
+            entry.provider.pool.close();
+        }
+        let deadline = Instant::now() + wait;
+        while providers.iter().any(|e| e.provider.pool.live() > 0) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     /// Fetches and decodes one body (message-id without angle brackets); `probe` traces
     /// each provider attempt.
     ///

@@ -10,7 +10,7 @@ use rustls::crypto::aws_lc_rs;
 use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, sleep_until};
 use tokio_rustls::TlsAcceptor;
@@ -67,6 +67,7 @@ pub struct LoopbackServer {
     peak: Arc<AtomicUsize>,
     bodies: Arc<AtomicUsize>,
     stats: Arc<AtomicUsize>,
+    quits: Arc<AtomicUsize>,
 }
 
 /// Per message-id: BODY replies still to stall, for how long, and how many were.
@@ -88,8 +89,10 @@ struct Acceptor {
     peak: Arc<AtomicUsize>,
     bodies: Arc<AtomicUsize>,
     stats: Arc<AtomicUsize>,
+    quits: Arc<AtomicUsize>,
     stalls: Stalls,
     holds: Holds,
+    hang_up: Arc<watch::Sender<()>>,
 }
 
 impl Acceptor {
@@ -106,8 +109,10 @@ impl Acceptor {
                     rejected: now > self.behavior.max_connections,
                     bodies: Arc::clone(&self.bodies),
                     stats: Arc::clone(&self.stats),
+                    quits: Arc::clone(&self.quits),
                     stalls: Arc::clone(&self.stalls),
                     holds: Arc::clone(&self.holds),
+                    hang_up: self.hang_up.subscribe(),
                 };
                 // A failed connection only affects the test that owns it.
                 tokio::spawn(async move {
@@ -255,8 +260,10 @@ impl LoopbackServer {
             peak: Arc::default(),
             bodies: Arc::default(),
             stats: Arc::default(),
+            quits: Arc::default(),
             stalls: Arc::default(),
             holds: Arc::default(),
+            hang_up: Arc::new(watch::Sender::new(())),
         };
         Ok(Self {
             addr,
@@ -265,6 +272,7 @@ impl LoopbackServer {
             peak: Arc::clone(&acceptor.peak),
             bodies: Arc::clone(&acceptor.bodies),
             stats: Arc::clone(&acceptor.stats),
+            quits: Arc::clone(&acceptor.quits),
             acceptor,
         })
     }
@@ -305,6 +313,18 @@ impl LoopbackServer {
 
     pub fn stat_commands(&self) -> usize {
         self.stats.load(Ordering::SeqCst)
+    }
+
+    /// QUIT commands received across all connections.
+    #[must_use]
+    pub fn quit_commands(&self) -> usize {
+        self.quits.load(Ordering::SeqCst)
+    }
+
+    /// Closes every open connection with `400 idle timeout`, like a provider dropping
+    /// idle clients. New connections are unaffected.
+    pub fn hang_up(&self) {
+        self.acceptor.hang_up.send_replace(());
     }
 
     /// Holds the next BODY reply until released; returns its arrival and release signals.
@@ -381,8 +401,10 @@ struct Limit {
     rejected: bool,
     bodies: Arc<AtomicUsize>,
     stats: Arc<AtomicUsize>,
+    quits: Arc<AtomicUsize>,
     stalls: Stalls,
     holds: Holds,
+    hang_up: watch::Receiver<()>,
 }
 
 async fn delay(duration: Duration) {
@@ -394,7 +416,7 @@ async fn delay(duration: Duration) {
 async fn serve<S: AsyncRead + AsyncWrite>(
     stream: S,
     articles: Arc<HashMap<String, Vec<u8>>>,
-    limit: Limit,
+    mut limit: Limit,
 ) -> io::Result<()> {
     let (mut read, mut write) = tokio::io::split(stream);
     if limit.rejected && limit.behavior.hang {
@@ -411,7 +433,17 @@ async fn serve<S: AsyncRead + AsyncWrite>(
     delay(impairment.handshake_delay).await;
     write.write_all(b"200 loopback ready\r\n").await?;
 
-    while let Some(line) = lines.next_line().await? {
+    loop {
+        let line = tokio::select! {
+            line = lines.next_line() => match line? {
+                Some(line) => line,
+                None => break,
+            },
+            _ = limit.hang_up.changed() => {
+                write.write_all(b"400 idle timeout\r\n").await?;
+                break;
+            }
+        };
         let (command, arg) = line.split_once(' ').unwrap_or((line.as_str(), ""));
         match command.to_ascii_uppercase().as_str() {
             "AUTHINFO" => {
@@ -498,6 +530,7 @@ async fn serve<S: AsyncRead + AsyncWrite>(
             }
             "DATE" => write.write_all(b"111 20261013000000\r\n").await?,
             "QUIT" => {
+                limit.quits.fetch_add(1, Ordering::SeqCst);
                 write.write_all(b"205 closing connection\r\n").await?;
                 break;
             }

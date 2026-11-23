@@ -35,6 +35,9 @@ const OTHER_PART: Error = Error::Yenc("article is another part of the file");
 /// Longest TCP connect to an address with another one after it; also at most half the
 /// time left, so a silent address cannot use up the connect deadline.
 const ADDRESS_WAIT: Duration = Duration::from_secs(5);
+/// Longest goodbye: QUIT, its reply and the close. A provider that is slow to answer
+/// only loses the reply.
+const QUIT_WAIT: Duration = Duration::from_secs(2);
 
 type Stream = Either<TcpStream, TlsStream<TcpStream>>;
 
@@ -534,17 +537,39 @@ impl Connection {
         Ok(())
     }
 
-    /// Cheap round trip that keeps an idle connection alive and proves it still works.
-    pub async fn keepalive(&mut self) -> Result<(), Error> {
+    /// Waits silently on an idle connection until the provider closes it or sends
+    /// something unasked (an idle-timeout notice); either way the connection is done.
+    /// Sends nothing, since downloaders never ping idle connections. Cancel safe: it
+    /// consumes no bytes, so a request may still use the connection if this loses a race.
+    pub(crate) async fn hung_up(&mut self) {
+        let _ = self.stream.fill_buf().await;
+    }
+
+    /// After [`hung_up`](Self::hung_up): why the provider ended the connection.
+    pub(crate) async fn hang_up_reason(&mut self) -> Error {
+        match timeout(QUIT_WAIT, self.read_status()).await {
+            Ok(Ok(code)) => self.unexpected(code),
+            Ok(Err(error)) => error,
+            Err(_) => Error::Timeout,
+        }
+    }
+
+    /// Ends the connection the way downloaders do: QUIT, the 205 reply, then a clean
+    /// close. Best effort within [`QUIT_WAIT`]. With replies still owed it only closes,
+    /// since QUIT would queue behind them.
+    pub async fn quit(mut self) {
         if self.pending > 0 {
-            return Err(Error::InvalidArgument("requests pending"));
+            return;
         }
-        self.write_buf.extend_from_slice(b"DATE\r\n");
-        self.flush().await?;
-        match self.read_status().await? {
-            111 => Ok(()),
-            code => Err(self.unexpected(code)),
-        }
+        self.write_buf.clear();
+        self.write_buf.extend_from_slice(b"QUIT\r\n");
+        let _ = timeout(QUIT_WAIT, async {
+            self.flush().await?;
+            self.read_status().await?;
+            self.stream.get_mut().shutdown().await?;
+            Ok::<(), Error>(())
+        })
+        .await;
     }
 
     /// Sends all queued commands in one write.

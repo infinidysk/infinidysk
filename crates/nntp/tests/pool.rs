@@ -120,9 +120,11 @@ async fn pool_prewarms_up_to_its_limit_and_keeps_its_warm_floor() {
     fetch_all(&pool, &corpus).await;
     assert_eq!(server.peak_connections(), 4);
 
-    // Past several idle timeouts the floor survives on keepalives and still serves.
+    // Past several idle timeouts the floor stays open, silent, and still serves; the
+    // connections above it said QUIT.
     tokio::time::sleep(config.idle_timeout * 5).await;
     assert_eq!(server.open_connections(), 2);
+    assert_eq!(server.quit_commands(), 2);
     pool.stat(&corpus.articles[0].message_id).await.unwrap();
     assert!(matches!(
         pool.stat("missing@test").await,
@@ -132,6 +134,40 @@ async fn pool_prewarms_up_to_its_limit_and_keeps_its_warm_floor() {
     // A used-up quota releases the floor.
     usage.set_cap(Some(1));
     tokio::time::sleep(config.idle_timeout * 3).await;
+    assert_eq!(server.open_connections(), 0);
+    assert_eq!(server.quit_commands(), 4);
+}
+
+#[tokio::test]
+async fn a_warm_connection_the_provider_hangs_up_on_is_replaced_and_dropping_the_pool_quits() {
+    let corpus = Arc::new(Corpus::generate(1025, 2, ARTICLE_SIZE));
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    let downloads = Downloads::new(DOWNLOADS);
+    let config = PoolConfig {
+        max_connections: 2,
+        pipeline_depth: 2,
+        idle_timeout: Duration::from_secs(30),
+        min_connections: 1,
+    };
+    let pool = pool(&server, config, &downloads);
+    pool.prewarm(1).await;
+    assert_eq!(server.open_connections(), 1);
+
+    // Noticed right away, well before any idle timeout, so prewarm opens a new one.
+    server.hang_up();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(server.open_connections(), 0);
+    pool.prewarm(1).await;
+    assert_eq!(server.open_connections(), 1);
+    pool.stat(&corpus.articles[0].message_id).await.unwrap();
+    assert_eq!(server.peak_connections(), 1);
+    assert_eq!(server.quit_commands(), 0);
+
+    drop(pool);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(server.quit_commands(), 1);
     assert_eq!(server.open_connections(), 0);
 }
 
