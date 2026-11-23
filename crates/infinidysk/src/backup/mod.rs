@@ -573,7 +573,14 @@ impl Backups {
             .sqlite_stats()
             .await?
             .ok_or_else(|| Stop::Reason(POSTGRES.to_owned()))?;
-        let estimate = stats.size_bytes.saturating_sub(stats.free_bytes);
+        // The copy embeds every stored repair's bytes next to the database pages.
+        let repairs = self.parts.repairs.used_bytes().await.map_err(|error| {
+            Stop::Reason(format!("Could not measure the stored repairs: {error}"))
+        })?;
+        let estimate = stats
+            .size_bytes
+            .saturating_sub(stats.free_bytes)
+            .saturating_add(repairs);
         files::room(
             infinidysk_stream::free_space(&dir),
             estimate,
