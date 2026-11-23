@@ -101,6 +101,23 @@ impl Db {
         Ok(())
     }
 
+    /// Disable the legacy catalog only if its last use, read now, is at or before `cutoff`.
+    pub async fn disable_legacy_repairs(&self, cutoff: i64, now: i64) -> Result<bool, Error> {
+        Ok(on!(self, pool => {
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let disabled = sqlx::query("DELETE FROM config WHERE key = 'legacy.repair.enabled' AND COALESCE(\
+                (SELECT CAST(value AS BIGINT) FROM config WHERE key = 'legacy.repair.last_used_ms'), \
+                (SELECT CAST(value AS BIGINT) FROM config WHERE key = 'legacy.repair.staged_at_ms')) <= $1")
+                .bind(cutoff).execute(&mut *tx).await?.rows_affected() == 1;
+            if disabled {
+                sqlx::query("INSERT INTO config (key, value) VALUES ('legacy.repair.retired_at_ms', $1) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+                    .bind(now.to_string()).execute(&mut *tx).await?;
+            }
+            tx.commit().await?;
+            disabled
+        }))
+    }
+
     /// The importer decodes its temporary header format; unknown extents stay retained.
     pub async fn retire_legacy_repairs(
         &self,

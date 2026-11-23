@@ -238,25 +238,10 @@ pub async fn finish_rewrite(db: &Db, full_pass: bool) -> Result<(), infinidysk_d
     {
         return Ok(());
     }
-    let last = config
-        .iter()
-        .find(|(key, _)| key == "legacy.repair.last_used_ms")
-        .or_else(|| {
-            config
-                .iter()
-                .find(|(key, _)| key == "legacy.repair.staged_at_ms")
-        })
-        .and_then(|(_, value)| value.parse::<i64>().ok());
-    if last.is_some_and(|last| infinidysk_db::now_ms().saturating_sub(last) >= 7 * 86_400_000) {
-        db.write_config(
-            &[(
-                "legacy.repair.retired_at_ms",
-                &infinidysk_db::now_ms().to_string(),
-            )],
-            &["legacy.repair.enabled"],
-        )
+    // A read may record a use after `config` was loaded, so the database checks it again.
+    let now = infinidysk_db::now_ms();
+    db.disable_legacy_repairs(now.saturating_sub(7 * 86_400_000), now)
         .await?;
-    }
     Ok(())
 }
 
@@ -603,6 +588,33 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|(k, v)| k == "legacy.repair.retired_at_ms" && v == "1")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_use_recorded_after_the_config_read_keeps_the_catalog() {
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        db.write_config(
+            &[
+                ("legacy.repair.enabled", "1"),
+                ("legacy.repair.last_used_ms", "0"),
+            ],
+            &[],
+        )
+        .await
+        .unwrap();
+        let now = infinidysk_db::now_ms();
+        // The caller saw the old, quiet value; a read then records a use.
+        db.legacy_repair_used(&"A".repeat(64), "used@test", now)
+            .await
+            .unwrap();
+        assert!(!db.disable_legacy_repairs(now - 1, now).await.unwrap());
+        assert!(
+            db.config()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(k, _)| k == "legacy.repair.enabled")
         );
     }
 }
