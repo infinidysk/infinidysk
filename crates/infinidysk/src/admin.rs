@@ -12,7 +12,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use futures_util::{Stream, stream};
+use futures_util::stream;
 use infinidysk_core::JobId;
 use infinidysk_core::trace::Summary;
 use infinidysk_db::{
@@ -1313,9 +1313,7 @@ async fn get_rejected_releases(
 /// [`metrics::LiveView`] as JSON every 2 s.
 #[utoipa::path(get, path = "/api/v1/events", tag = "events",
     responses((status = 200, content_type = "text/event-stream", body = String)))]
-async fn get_events(
-    State(admin): State<Arc<Admin>>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+async fn get_events(State(admin): State<Arc<Admin>>) -> impl IntoResponse {
     let state = (
         admin.queue.db().subscribe(),
         admin.metrics.subscribe(),
@@ -1328,7 +1326,7 @@ async fn get_events(
                 changed.ok()?;
                 let data = serde_json::to_string(&*live.borrow_and_update()).ok()?;
                 let event = Event::default().event("live").data(data);
-                return Some((Ok(event), (changes, live, cancel)));
+                return Some((Ok::<_, Infallible>(event), (changes, live, cancel)));
             }
             change = changes.recv() => match change {
                 Ok(Change::Queue) => "queue",
@@ -1342,7 +1340,11 @@ async fn get_events(
         let event = Event::default().event(name).data(name);
         Some((Ok(event), (changes, live, cancel)))
     });
-    Sse::new(events).keep_alive(KeepAlive::default())
+    // nginx-style proxies otherwise hold events back until their buffer fills.
+    (
+        [("x-accel-buffering", "no")],
+        Sse::new(events).keep_alive(KeepAlive::default()),
+    )
 }
 
 #[derive(Serialize, ToSchema)]
