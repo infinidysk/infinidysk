@@ -78,7 +78,7 @@ Open `http://<host>:3000`, create the admin account, then add your providers. Do
 | **Port** | `3000`, shared by the UI, the SABnzbd API and WebDAV |
 | **Mount** | The library is mounted at `/mnt/infinidysk` |
 | **Image** | `ghcr.io/infinidysk/infinidysk-next`, for Linux x64 and arm64 |
-| **Tags** | `edge` is the newest 2.x release. Every release also has its own `v2.x.y` tag. There is no `latest` tag until 2.0 ships. |
+| **Tags** | `edge` is the newest 2.x release. Every release also has its own `v2.x.y` tag. `nightly` is built from `main` every day; it is unreleased and shows no update notice. There is no `latest` tag until 2.0 ships. |
 
 Next steps in the docs:
 

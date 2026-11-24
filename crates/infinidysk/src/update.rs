@@ -140,6 +140,7 @@ fn next_page(headers: &HeaderMap) -> Option<String> {
 /// The newest release tag past `current`, only for a build the registry published as `sha-<commit>`.
 /// A stable build is not offered prereleases. Comparing versions is enough because the release
 /// workflow only pushes an image together with a new version tag; `edge` never moves on its own.
+/// The nightly workflow pushes no `sha-<commit>` tag, so a nightly build never checks.
 fn update(commit: &str, current: &Version, tags: &[String]) -> Option<Update> {
     let own = format!("sha-{}", commit.get(..12)?);
     if !tags.contains(&own) {
