@@ -29,8 +29,6 @@ This is infinidysk **2.0**, rewritten in Rust and now in **beta**. On 1.x? See [
 > [!WARNING]
 > **Moving from 1.x to 2.x is a breaking change.** Changing the image name alone is not an upgrade. Follow [Upgrade from 1.x](https://www.infinidysk.com/v2/upgrade/), and check [what is not in 2.x yet](https://www.infinidysk.com/v2/whats-new/#feature-comparison).
 
-When staging saved 1.x repair data, unusable candidates are reported and kept in the original directory. Valid candidates still migrate. Previously staged copies are checked and kept if their originals become unusable. Retries replace corrupt saved copies from usable originals. Saved bytes become repairs only after complete PAR2 verification.
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/overview-dark.png" />
   <img src=".github/assets/overview-light.png" alt="The infinidysk Overview page: files being read right now, download activity for the last 24 hours, and summary tiles for reads, stalls, provider misses, imports, health checks and cache" />
@@ -95,19 +93,26 @@ Next steps in the docs:
 
 **In 2.x now**
 
-- Streaming over the FUSE mount and WebDAV
-- SABnzbd API for Arr apps, with symlink import
-- NZBs with plain files, multipart files and stored RAR4, RAR5 and 7z members
-- PAR2 verify and repair, health checks and scheduled repair
-- SQLite and PostgreSQL
-- Accounts and sign-in
+- Streaming over the built-in FUSE mount and WebDAV, with one memory and disk segment cache shared by both
+- SABnzbd API for Sonarr, Radarr, Lidarr, Whisparr, Sportarr and Chaptarr
+- Symlink or STRM import: symlinks for Plex and other apps on the mount host, STRM files for Emby, Jellyfin and Kodi without the mount
+- NZBs with plain files, multipart files and stored RAR4, RAR5 and 7z members, including encrypted members when the NZB name or metadata carries the password
+- Providers picked from a built-in catalog with backbones, priority levels, a download speed limit and per-provider quotas
+- Health checks with media analysis, replacement through the Arr, and PAR2 repair as an experiment
+- Arr queue management, webhooks and a daily library reconciliation
+- SQLite and PostgreSQL, with a move from SQLite to PostgreSQL in the UI
+- Accounts, single sign-on (OIDC) and optional sign-in bypass for local networks
+- Backup and restore for SQLite, scheduled maintenance jobs and Prometheus metrics
+- Read traces and support packs for playback problems
 - A one-time import of your 1.x config, library and history
 
 **Not in 2.x yet**
 
-Some 1.x features are still missing. The [feature comparison](https://www.infinidysk.com/v2/whats-new/#feature-comparison) lists them.
+Addon routes are not in 2.x yet. Search, indexers, Prowlarr, Watchtower, Preflight and Warden are not planned. The [feature comparison](https://www.infinidysk.com/v2/whats-new/#feature-comparison) has the full list.
 
 Compressed archives cannot be streamed. infinidysk detects them and fails the import with a clear reason.
+
+### PAR2 repair
 
 PAR2 repair is an experiment: enable it in **Settings → Experiments**, then restart. It has no other settings. Replacement through the Arr comes first. PAR2 repair is the fallback when no replacement is found, and files that health checks find degraded are repaired before they fail. Health lists pending jobs and the latest 20 results; cancel pending jobs there. Explorer file details offer **Check availability** and **Repair with PAR2**, separately from **Repair via Arr**. The scheduled health checks cover the existing library, so there is no library-wide scan.
 
@@ -118,6 +123,8 @@ Limits are fixed. One repair runs at a time, with 256 MB working memory, 100 GB 
 Saved repair articles live in `repairs/` inside your config folder (`/config/repairs` by default), up to 4 GB. When a new repair needs room, the least recently read repairs are removed and their files go back to health checks. Built-in backup and restore supports SQLite only; those backups include verified repair bytes and pending C# repair candidates. For PostgreSQL, stop infinidysk, take a database dump with `pg_dump` and copy that repair directory as a matched pair. Restore both before restarting infinidysk. A dump alone cannot recover the repair bytes; missing repairs trigger health rechecks. To move an install, stop infinidysk and copy the whole config directory, including `repairs/`. Back up config before upgrading.
 
 Repairs for articles omitted from an NZB require a saved PAR2 recovery-set identity and trusted byte ranges. Repair recovers missing proofs from the original NZB when possible. C# repair files are preserved as candidates and become normal saved repairs only after full PAR2 verification. The importer retires its old reader after a complete rewrite pass and seven days without use; original C# files are retained.
+
+When staging saved 1.x repair data, unusable candidates are reported and kept in the original directory. Valid candidates still migrate. Previously staged copies are checked and kept if their originals become unusable. Retries replace corrupt saved copies from usable originals. Saved bytes become repairs only after complete PAR2 verification.
 
 ## Reporting problems
 
@@ -139,7 +146,7 @@ With `/dev/fuse` and mount permission, run `cargo test -p infinidysk --test repa
 
 With `par2` installed, run `cargo run --release --locked -p infinidysk-bench -- --scenario par2-` to measure playback with idle, active, cancelled, and failed repairs on loopback NNTP. The benchmark uses `par2` to generate the fixture before timing.
 
-The workspace is a set of crates under [`crates/`](crates/). The product binary is [`crates/infinidysk`](crates/infinidysk); it embeds the web UI from `ui/dist`. The other crates are libraries (NNTP, yEnc, streaming, archives, PAR2, queue, health, VFS, FUSE, WebDAV, database), and dependencies point downward only.
+The workspace is a set of crates under [`crates/`](crates/). The product binary is [`crates/infinidysk`](crates/infinidysk); it embeds the web UI from `ui/dist`. The other crates are libraries (NNTP, yEnc, streaming, archives, PAR2, queue, health, Arr client, VFS, FUSE, WebDAV, database, 1.x importer), and dependencies point downward only.
 
 To work on the UI, run the backend and the Vite dev server side by side. Vite proxies API calls to `http://127.0.0.1:3000`; set `BACKEND_URL` to point it elsewhere.
 
