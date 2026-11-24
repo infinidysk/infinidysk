@@ -1283,7 +1283,15 @@ impl Metrics {
             .iter()
             .map(|d| get(&format!("served.{}", d.label())))
             .sum();
-        let interval_work = idle_trim.is_some() && (!ended.is_empty() || !deltas.is_empty());
+        // Only counters that moved bytes are work: an ended read that served and fetched
+        // nothing (a metadata probe the kernel page cache answered) is not, and neither
+        // is a health or queue counter ticking without a fetch.
+        let interval_work = idle_trim.is_some()
+            && deltas.keys().any(|k| {
+                k.starts_with("served.")
+                    || (k.starts_with("p.") && k.rsplit('.').next() == Some("bytes"))
+                    || matches!(*k, "cache.memory_hits" | "cache.disk_hits" | "cache.joined")
+            });
         state.last = totals;
         if state.minute.len() == SAMPLES_PER_MINUTE {
             state.minute.pop_front();
