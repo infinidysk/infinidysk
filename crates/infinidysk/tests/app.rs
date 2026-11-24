@@ -658,11 +658,14 @@ async fn serves_every_api_on_one_port_and_applies_settings_live() {
     events.write_all(subscribe.as_bytes()).await.unwrap();
     let mut seen = Vec::new();
     let mut buf = [0; 4096];
-    while !String::from_utf8_lossy(&seen).contains("text/event-stream") {
+    while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
         let n = events.read(&mut buf).await.unwrap();
+        assert_ne!(n, 0, "stream ended early");
         seen.extend_from_slice(&buf[..n]);
     }
-    assert!(String::from_utf8_lossy(&seen).contains("x-accel-buffering: no"));
+    let head = String::from_utf8_lossy(&seen);
+    assert!(head.contains("text/event-stream"));
+    assert!(head.contains("x-accel-buffering: no"));
     let multipart = format!(
         "--b\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"job.nzb\"\r\n\r\n{NZB}\r\n--b--\r\n"
     );
