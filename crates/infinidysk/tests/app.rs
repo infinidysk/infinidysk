@@ -662,6 +662,7 @@ async fn serves_every_api_on_one_port_and_applies_settings_live() {
         let n = events.read(&mut buf).await.unwrap();
         seen.extend_from_slice(&buf[..n]);
     }
+    assert!(String::from_utf8_lossy(&seen).contains("x-accel-buffering: no"));
     let multipart = format!(
         "--b\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"job.nzb\"\r\n\r\n{NZB}\r\n--b--\r\n"
     );
