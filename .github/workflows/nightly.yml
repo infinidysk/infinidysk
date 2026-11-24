@@ -1,0 +1,123 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The newest trigger wins; an older build never overwrites a newer `nightly`.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/infinidysk/infinidysk-next
+
+jobs:
+  # A scheduled run skips a commit `nightly` already carries; a manual run always builds.
+  changed:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: check
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != schedule ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          published=$(docker buildx imagetools inspect --raw "$IMAGE:nightly" 2>/dev/null \
+            | jq -r '.annotations["org.opencontainers.image.revision"] // empty' || true)
+          if [[ "$published" == "$GITHUB_SHA" ]]; then
+            echo "nightly already carries $GITHUB_SHA"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: changed
+    if: needs.changed.outputs.build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-26.04
+            platform: linux/amd64
+          - runner: ubuntu-26.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            COMMIT=${{ github.sha }}
+            VERSION=nightly
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # Same scope as the release build: both build `main`, so they warm each other's cache.
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+      - run: echo "${{ steps.build.outputs.digest }}" > "digest-${{ strategy.job-index }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: digest-${{ strategy.job-index }}
+          retention-days: 1
+
+  image-manifest:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          set -euo pipefail
+          # Only `nightly`: a `sha-<12>` or version tag would make the server's update check treat this build as a release.
+          mapfile -t refs < <(sed "s|^|$IMAGE@|" digest-*)
+          annotations=(
+            --annotation "index:org.opencontainers.image.source=https://github.com/infinidysk/infinidysk"
+            --annotation "index:org.opencontainers.image.description=Usenet-backed virtual filesystem with a SABnzbd-compatible API, FUSE and WebDAV"
+            --annotation "index:org.opencontainers.image.licenses=MIT"
+            --annotation "index:org.opencontainers.image.revision=$GITHUB_SHA"
+            --annotation "index:org.opencontainers.image.version=nightly"
+          )
+          docker buildx imagetools create "${annotations[@]}" -t "$IMAGE:nightly" "${refs[@]}"
