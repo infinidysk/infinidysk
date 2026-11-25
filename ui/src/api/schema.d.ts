@@ -1407,7 +1407,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Changes only the given settings, if none changed since `revision` was read. */
+        patch: operations["patch_settings"];
         trace?: never;
     };
     "/api/v1/settings/keys/{name}": {
@@ -4549,6 +4550,18 @@ export interface components {
              */
             webdav: components["schemas"]["WebDav"];
         };
+        SettingsPatch: {
+            /**
+             * @description Settings to change, shaped like `settings`. Objects merge; values and lists
+             *     replace. A list entry that keeps its `id` keeps a secret it leaves out.
+             */
+            changes: Record<string, never>;
+            /**
+             * Format: uuid
+             * @description The `revision` of the settings the changes were made against.
+             */
+            revision: string;
+        };
         SettingsView: {
             /** @description Experiments `INFINIDYSK_EXPERIMENTS` switches on whatever the settings say. */
             env_experiments: string[];
@@ -4561,6 +4574,11 @@ export interface components {
              *     mount on or off, read-ahead memory, FUSE tuning, experiments, remote rclone mount).
              */
             restart_required: boolean;
+            /**
+             * Format: uuid
+             * @description Changes on every save and restart; send it with `PATCH` to write only these settings.
+             */
+            revision: string;
             /** @description Secrets are masked; send the mask back to keep them. */
             settings: components["schemas"]["Settings"];
         };
@@ -7491,6 +7509,47 @@ export interface operations {
             };
             /** @description Invalid or locked by the environment */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    patch_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsPatch"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsView"];
+                };
+            };
+            /** @description Invalid or locked by the environment */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The settings changed after `revision` */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

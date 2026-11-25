@@ -919,6 +919,203 @@ async fn healthz_answers_without_sign_in_and_the_probe_reads_it() {
     assert!(infinidysk::healthcheck::probe(addr).await.is_err());
 }
 
+/// A conditional partial write changes only what it names, keeps the secrets of list
+/// entries that stay, and refuses to land on settings it did not read.
+#[tokio::test]
+async fn settings_patch_preserves_omissions_and_rejects_stale_writes() {
+    const P1: &str = "0190f6c4-0000-7000-8000-0000000000e1";
+    const P2: &str = "0190f6c4-0000-7000-8000-0000000000e2";
+    const P3: &str = "0190f6c4-0000-7000-8000-0000000000e3";
+    const A1: &str = "0190f6c4-0000-7000-8000-0000000000e4";
+    const A2: &str = "0190f6c4-0000-7000-8000-0000000000e5";
+    let (addr, cancel, server, database_url) = start().await;
+    let get = async || -> Value {
+        let (code, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+        assert_eq!(code, "HTTP/1.1 200 OK", "{body}");
+        serde_json::from_str(&body).unwrap()
+    };
+    let patch = async |revision: &Value, changes: Value| -> (String, Value) {
+        let body = json!({"revision": revision, "changes": changes}).to_string();
+        let (code, body) = send(addr, &admin_request("PATCH", "/api/v1/settings", &body)).await;
+        (code, serde_json::from_str(&body).unwrap_or(Value::Null))
+    };
+    let ok = "HTTP/1.1 200 OK";
+    let conflict = "HTTP/1.1 409 Conflict";
+    let bad = "HTTP/1.1 400 Bad Request";
+    let stored = async |key: &str| -> Value {
+        let db = infinidysk_db::Db::connect(&database_url).await.unwrap();
+        let config = db.config().await.unwrap();
+        db.close().await;
+        config
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map_or(Value::Null, |(_, v)| serde_json::from_str(&v).unwrap())
+    };
+    let provider = |id: &str, password: Option<&str>| {
+        let mut p = json!({"id": id, "name": id, "hostname": "news.example", "enabled": false});
+        if let Some(password) = password {
+            p["password"] = password.into();
+        }
+        p
+    };
+    let arr = |id: &str, key: Option<&str>| {
+        let mut a = json!({"id": id, "name": id, "profile": "sonarr",
+            "url": "http://sonarr:8989", "enabled": false});
+        if let Some(key) = key {
+            a["api_key"] = key.into();
+        }
+        a
+    };
+
+    let first = get().await;
+    let (code, body) = patch(
+        &first["revision"],
+        json!({
+            "providers": [provider(P1, Some("pw-one")), provider(P2, Some("pw-two"))],
+            "arr_instances": [arr(A1, Some("arr-key"))],
+        }),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_ne!(body["revision"], first["revision"]);
+    let read = body["revision"].clone();
+
+    // Two clients read one revision; the second write is refused.
+    let (code, a) = patch(&read, json!({"queue": {"concurrency": 3}})).await;
+    assert_eq!(code, ok, "{a}");
+    let (code, _) = patch(&read, json!({"queue": {"concurrency": 4}})).await;
+    assert_eq!(code, conflict);
+    assert_eq!(get().await["settings"]["queue"]["concurrency"], 3);
+    let before_removal = a["revision"].clone();
+    let listed = a["settings"]["providers"].clone();
+    let (code, body) = patch(&before_removal, json!({"providers": [provider(P1, None)]})).await;
+    assert_eq!(code, ok, "{body}");
+    // Still stale, not a MASK on an id that is gone.
+    let (code, _) = patch(&before_removal, json!({"providers": listed})).await;
+    assert_eq!(code, conflict);
+
+    let current = get().await;
+    let revision = current["revision"].clone();
+    let path = |body: &Value| body["path"].as_str().unwrap_or_default().to_owned();
+    let (code, body) = patch(&revision, json!({"maintenance": {"scheduled": ["dust"]}})).await;
+    assert_eq!(
+        (code.as_str(), path(&body)),
+        (bad, "maintenance.scheduled[0]".into())
+    );
+    let (code, body) = patch(&revision, json!({"bogus": 1})).await;
+    assert_eq!((code.as_str(), path(&body)), (bad, "bogus".into()));
+    let (code, body) = patch(&revision, json!({"queue": []})).await;
+    assert_eq!((code.as_str(), path(&body)), (bad, "queue".into()));
+    let (code, body) = patch(&revision, json!({"webdav": {"password": "other"}})).await;
+    assert_eq!(
+        (code.as_str(), path(&body)),
+        (bad, "webdav.password".into())
+    );
+    let unknown = format!(
+        r#"{{"revision":"{}","changes":{{}},"extra":1}}"#,
+        revision.as_str().unwrap()
+    );
+    let (code, _) = send(addr, &admin_request("PATCH", "/api/v1/settings", &unknown)).await;
+    assert_eq!(code, bad);
+    let after = get().await;
+    assert_eq!(
+        after["revision"], revision,
+        "refused writes keep the revision"
+    );
+    assert_eq!(after["settings"]["queue"]["concurrency"], 3);
+
+    // Lists replaced by id keep secrets left out or masked.
+    let (code, body) = patch(
+        &revision,
+        json!({
+            "providers": [provider(P1, None)],
+            "arr_instances": [{"id": A1, "name": "renamed", "profile": "sonarr",
+                "url": "http://sonarr:8989", "enabled": false}],
+        }),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_eq!(stored("providers").await[0]["password"], "pw-one");
+    assert_eq!(stored("arr_instances").await[0]["api_key"], "arr-key");
+    assert_eq!(stored("arr_instances").await[0]["name"], "renamed");
+    let (code, body) = patch(
+        &body["revision"],
+        json!({"providers": [provider(P1, Some(infinidysk::config::MASK))],
+            "network": {"download_limit_mb_per_s": 100}}),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_eq!(stored("providers").await[0]["password"], "pw-one");
+    assert_eq!(body["settings"]["network"]["download_limit_mb_per_s"], 100);
+    let webdav = body["settings"]["webdav"].clone();
+    let (code, body) = patch(
+        &body["revision"],
+        json!({"providers": [provider(P1, Some(""))],
+            "network": {"download_limit_mb_per_s": null}}),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    let password = &stored("providers").await[0]["password"];
+    assert!(password.is_null() || password == "", "{password}");
+    assert_eq!(
+        body["settings"]["network"]["download_limit_mb_per_s"],
+        Value::Null
+    );
+    assert_eq!(body["settings"]["webdav"], webdav);
+    assert_eq!(body["settings"]["queue"]["concurrency"], 3);
+
+    let revision = body["revision"].clone();
+    let refused = [
+        (
+            json!({"providers": [{"name": "no-id", "hostname": "news.example"}]}),
+            "providers[0].id",
+        ),
+        (
+            json!({"providers": [provider(P3, Some(infinidysk::config::MASK))]}),
+            "providers[0].password",
+        ),
+        (
+            json!({"arr_instances": [arr(A2, None)]}),
+            "arr_instances[0]",
+        ),
+    ];
+    for (changes, want) in refused {
+        let (code, body) = patch(&revision, changes).await;
+        assert_eq!(code, bad, "{want}: {body}");
+        assert!(path(&body).starts_with(want), "{want}: {body}");
+    }
+
+    // A PUT changes a secret behind an identical mask; the old revision is stale.
+    let mut settings = get().await["settings"].clone();
+    settings["providers"][0]["password"] = "pw-put".into();
+    let (code, body) = send(
+        addr,
+        &admin_request("PUT", "/api/v1/settings", &settings.to_string()),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_eq!(stored("providers").await[0]["password"], "pw-put");
+    let (code, _) = patch(&revision, json!({"queue": {"concurrency": 5}})).await;
+    assert_eq!(code, conflict);
+    // PUT still replaces the whole document: what it leaves out returns to its default.
+    let mut settings = get().await["settings"].clone();
+    let sections = settings.as_object_mut().unwrap();
+    sections.remove("queue");
+    sections.remove("providers");
+    let (code, body) = send(
+        addr,
+        &admin_request("PUT", "/api/v1/settings", &settings.to_string()),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    let body: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["settings"]["queue"]["concurrency"], 2);
+    assert_eq!(body["settings"]["providers"], json!([]));
+
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn serves_every_api_on_one_port_and_applies_settings_live() {
     let (addr, cancel, server, database_url) = start().await;

@@ -2019,6 +2019,8 @@ pub struct ConfigStore {
     settings: Settings,
     /// The disk cache folder when none is saved; validation checks it against the mount.
     default_cache_dir: String,
+    /// Changes on every load and save, so a conditional write sees any write between.
+    revision: Uuid,
 }
 
 impl ConfigStore {
@@ -2065,7 +2067,13 @@ impl ConfigStore {
             env,
             settings,
             default_cache_dir,
+            revision: Uuid::new_v4(),
         })
+    }
+
+    /// The token of the settings as they are now; a successful save replaces it.
+    pub const fn revision(&self) -> Uuid {
+        self.revision
     }
 
     pub const fn settings(&self) -> &Settings {
@@ -2223,6 +2231,7 @@ impl ConfigStore {
         }
         self.settings = effective(&next, &self.env, &self.default_cache_dir)?;
         self.stored = next;
+        self.revision = Uuid::new_v4();
         Ok(())
     }
 }
@@ -2351,7 +2360,7 @@ fn remove(tree: &mut Value, path: &[String]) {
 }
 
 /// Objects merge key by key; anything else replaces.
-fn merge(base: &mut Value, over: Value) {
+pub(crate) fn merge(base: &mut Value, over: Value) {
     match (base, over) {
         (Value::Object(base), Value::Object(over)) => {
             for (key, value) in over {
