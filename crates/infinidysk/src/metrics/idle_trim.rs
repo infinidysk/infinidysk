@@ -1,3 +1,4 @@
+use std::io;
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
@@ -8,16 +9,14 @@ const IDLE_FOR: Duration = Duration::from_mins(2);
 
 pub(super) async fn release(sampled_at: Instant, cancel: CancellationToken) -> bool {
     tokio::task::spawn_blocking(move || {
+        let before = rss_bytes();
         if cancel.is_cancelled() || sampled_at.elapsed() >= SAMPLE_EVERY {
             return false;
         }
         let start = Instant::now();
         let released = infinidysk_allocator::trim();
-        tracing::info!(
-            released,
-            elapsed_ms = super::ms(start.elapsed()),
-            "idle memory trim"
-        );
+        let elapsed_ms = super::ms(start.elapsed());
+        log_trim(released, elapsed_ms, before, rss_bytes());
         true
     })
     .await
@@ -25,6 +24,31 @@ pub(super) async fn release(sampled_at: Instant, cancel: CancellationToken) -> b
         tracing::warn!(reason = %error, "idle memory trim did not finish");
         false
     })
+}
+
+fn rss_bytes() -> io::Result<u64> {
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    super::kb_field(&status, "VmRSS")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing or invalid VmRSS"))
+}
+
+fn log_trim(released: bool, elapsed_ms: u64, before: io::Result<u64>, after: io::Result<u64>) {
+    #[allow(clippy::cast_precision_loss)]
+    // A process's RSS is below the exact integer limit of f64.
+    let mb = |bytes: u64| bytes as f64 / 1_000_000.0;
+    match (before, after) {
+        (Ok(before), Ok(after)) => tracing::info!(
+            released,
+            rss_drop_mb = mb(before.saturating_sub(after)),
+            rss_before_mb = mb(before),
+            rss_after_mb = mb(after),
+            elapsed_ms,
+            "idle memory trim"
+        ),
+        (Err(error), _) | (_, Err(error)) => {
+            tracing::info!(released, elapsed_ms, rss_error = %error, "idle memory trim");
+        }
+    }
 }
 
 #[derive(Default)]
@@ -62,6 +86,37 @@ impl IdleTrim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_trim_event_reports_observed_rss_drop_or_read_error() {
+        use crate::logs::{Capture, LOGS, Level};
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let subscriber = tracing_subscriber::registry().with(Capture::MEMORY);
+        tracing::subscriber::with_default(subscriber, || {
+            let _span = tracing::info_span!("test", task = "trim-rss-test").entered();
+            log_trim(true, 21, Ok(12_000_000), Ok(9_500_000));
+            log_trim(true, 14, Ok(9_500_000), Ok(10_000_000));
+            log_trim(
+                false,
+                11,
+                Ok(10_000_000),
+                Err(io::Error::other("unavailable")),
+            );
+        });
+        let entries = LOGS.snapshot(Level::Info, Some("trim-rss-test"));
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].message, "idle memory trim");
+        assert_eq!(
+            entries[0].fields,
+            "released=true rss_drop_mb=2.5 rss_before_mb=12.0 rss_after_mb=9.5 elapsed_ms=21"
+        );
+        assert!(entries[1].fields.contains("rss_drop_mb=0.0 "));
+        assert_eq!(
+            entries[2].fields,
+            "released=false elapsed_ms=11 rss_error=unavailable"
+        );
+    }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     #[tokio::test]
