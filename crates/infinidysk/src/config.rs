@@ -186,7 +186,7 @@ pub const EXPERIMENTS: [Experiment; 4] = [
     Experiment {
         name: IDLE_MEMORY_TRIM,
         title: "Release unused memory when idle",
-        description: "On Linux, return unused memory to the OS after two minutes without playback or other work. Keeps the segment cache. The next playback may take slightly longer to start.",
+        description: "On Linux, return unused memory to the OS after two minutes without playback or other work. The log shows the observed drop in process memory in MB. Keeps the segment cache. The next playback may take slightly longer to start.",
     },
     Experiment {
         name: "par2-repair",
