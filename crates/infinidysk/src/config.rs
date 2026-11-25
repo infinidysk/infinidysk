@@ -707,10 +707,8 @@ impl Oidc {
         if !issuer_ok(&self.issuer) {
             return Err(invalid(
                 "auth.oidc.issuer",
-                format!(
-                    "Issuer {:?} must be an https:// address without a query (http:// only on this machine)",
-                    self.issuer
-                ),
+                "Issuer must be an https:// address without a query (http:// only on this machine)"
+                    .to_owned(),
             ));
         }
         if self.client_id.is_empty() {
@@ -728,10 +726,7 @@ impl Oidc {
         if !self.redirect_uri.is_empty() && !redirect_ok(&self.redirect_uri) {
             return Err(invalid(
                 "auth.oidc.redirect_uri",
-                format!(
-                    "Redirect URI {:?} must be an http:// or https:// address without a fragment",
-                    self.redirect_uri
-                ),
+                "Redirect URI must be an http:// or https:// address without a fragment".to_owned(),
             ));
         }
         Ok(())
@@ -1525,9 +1520,7 @@ impl Settings {
         {
             return Err(invalid(
                 "network.public_url",
-                format!(
-                    "Public URL {url:?} must be an http:// or https:// address without a query"
-                ),
+                "Public URL must be an http:// or https:// address without a query".to_owned(),
             ));
         }
         self.network.public_url = url.to_owned();
@@ -1724,6 +1717,53 @@ struct Named {
     name: String,
     path: Vec<String>,
     raw: String,
+    /// `raw` is the path of a file that holds the value.
+    file: bool,
+}
+
+/// The text of a startup input `name`, given directly or read from the file `name_FILE`
+/// names. A file loses one terminal LF or CRLF; errors never show the file's content.
+pub(crate) fn supplied_text(
+    name: &str,
+    direct: Option<String>,
+    file: Option<String>,
+) -> Result<Option<String>, Error> {
+    let bad = |reason| input(name, reason);
+    match (direct, file) {
+        (Some(_), Some(_)) => Err(bad("set the variable or its _FILE, not both")),
+        (direct, None) => Ok(direct),
+        (None, Some(path)) => {
+            if !std::path::Path::new(&path).is_absolute() {
+                return Err(bad("_FILE needs an absolute path"));
+            }
+            let mut text = std::fs::read_to_string(path)
+                .map_err(|_| bad("_FILE must be a readable UTF-8 file"))?;
+            if text.ends_with('\n') {
+                text.pop();
+                if text.ends_with('\r') {
+                    text.pop();
+                }
+            }
+            Ok(Some(text))
+        }
+    }
+}
+
+/// The setting path `rest` (a name without [`ENV_PREFIX`]) names, and whether it is the
+/// `_FILE` form. The exact name wins over the `_FILE` reading.
+fn setting_path(defaults: &Value, rest: &str) -> Option<(Vec<String>, bool)> {
+    let path =
+        |rest: &str| -> Vec<String> { rest.split("__").map(str::to_ascii_lowercase).collect() };
+    let exact = path(rest);
+    if lookup(defaults, &exact).is_some() {
+        return Some((exact, false));
+    }
+    let cut = rest.len().checked_sub("_FILE".len())?;
+    let stem = rest
+        .get(..cut)
+        .filter(|_| rest[cut..].eq_ignore_ascii_case("_FILE"))?;
+    let stem = path(stem);
+    lookup(defaults, &stem).is_some().then_some((stem, true))
 }
 
 /// Parses the `INFINIDYSK__…` variables in `vars`. A name that is not a setting, two
@@ -1739,11 +1779,15 @@ pub(crate) fn parse_overrides(
         let Some(rest) = name.strip_prefix(ENV_PREFIX) else {
             continue;
         };
-        let path: Vec<String> = rest.split("__").map(str::to_ascii_lowercase).collect();
-        if lookup(&defaults, &path).is_none() {
+        let Some((path, file)) = setting_path(&defaults, rest) else {
             return Err(input(name, "not a setting"));
-        }
-        named.push(Named { name, path, raw });
+        };
+        named.push(Named {
+            name,
+            path,
+            raw,
+            file,
+        });
     }
     named.sort_by(|a, b| (&a.path, &a.name).cmp(&(&b.path, &b.name)));
     // Compares paths, never string prefixes: `auth` is not a prefix of `authors`.
@@ -1751,15 +1795,28 @@ pub(crate) fn parse_overrides(
         .windows(2)
         .find(|pair| pair[1].path.starts_with(&pair[0].path))
     {
-        return Err(input(
-            pair[1].name.clone(),
-            "sets the same setting as another variable",
-        ));
+        let reason = if pair[0].path == pair[1].path && pair[0].file != pair[1].file {
+            "set the variable or its _FILE, not both"
+        } else {
+            "sets the same setting as another variable"
+        };
+        return Err(input(pair[1].name.clone(), reason));
     }
 
     let mut env = Vec::with_capacity(named.len());
     let mut tree = defaults.clone();
-    for Named { name, path, raw } in named {
+    for Named {
+        name,
+        path,
+        raw,
+        file,
+    } in named
+    {
+        let raw = if file {
+            supplied_text(&name, None, Some(raw))?.unwrap_or_default()
+        } else {
+            raw
+        };
         let default = lookup(&defaults, &path).unwrap_or(&Value::Null);
         let value = decode_text(&name, &path, default, raw)?;
         set(&mut tree, &path, value.clone());

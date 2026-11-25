@@ -673,6 +673,136 @@ async fn deployment_inputs_are_strict_but_stored_values_still_load() {
 }
 
 #[tokio::test]
+async fn file_overrides_round_trip_without_becoming_stored_settings() {
+    const SENTINEL: &str = "sentinel-secret-9b2e";
+    let dir = std::env::temp_dir().join(format!("infinidysk-files-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir(&dir).expect("dir");
+    let file = |name: &str, text: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, text).expect("write");
+        path.display().to_string()
+    };
+    let db = Db::connect(&format!("sqlite:{}", dir.join("db.sqlite").display()))
+        .await
+        .expect("connect");
+
+    let mut store = ConfigStore::load(db.clone(), []).await.expect("load");
+    let mut settings = store.settings().clone();
+    settings.sab.api_key = Secret("stored-sab-key".into());
+    settings.providers.push(Provider {
+        profile: Some("eweka".into()),
+        password: Secret("stored-pw".into()),
+        ..Provider::default()
+    });
+    store.save(settings).await.expect("save");
+    let stored = db.config().await.expect("query");
+
+    let providers = file(
+        "providers.json",
+        &format!(
+            "[\n  {{\"id\":\"0190f6c4-0000-7000-8000-0000000000b1\",\"name\":\"p\",\"hostname\":\"news.example\",\"password\":\"{SENTINEL}\"}}\n]\n"
+        ),
+    );
+    let arrs = file(
+        "arrs.json",
+        &format!(
+            r#"[{{"id":"0190f6c4-0000-7000-8000-0000000000b2","name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"{SENTINEL}"}}]"#
+        ),
+    );
+    let env = vec![
+        (
+            "INFINIDYSK__SAB__API_KEY_FILE".to_owned(),
+            file("sab", "0123\r\n"),
+        ),
+        ("INFINIDYSK__PROVIDERS_FILE".to_owned(), providers.clone()),
+        ("INFINIDYSK__ARR_INSTANCES_file".to_owned(), arrs),
+    ];
+    let mut store = ConfigStore::load(db.clone(), env).await.expect("files");
+    assert_eq!(store.settings().sab.api_key, Secret("0123".into()));
+    assert_eq!(
+        store.settings().providers[0].password,
+        Secret(SENTINEL.into())
+    );
+    assert_eq!(
+        store.settings().arr_instances[0].api_key,
+        Secret(SENTINEL.into())
+    );
+    let mut locked: Vec<_> = store.locked().collect();
+    locked.sort();
+    assert_eq!(locked, ["arr_instances", "providers", "sab.api_key"]);
+
+    let mut settings = store.settings().clone();
+    settings.sab.api_key = Secret(MASK.into());
+    settings.queue.concurrency = 3;
+    store.save(settings).await.expect("unrelated save");
+    let after = db.config().await.expect("query");
+    let text = format!("{after:?}");
+    assert!(!text.contains(SENTINEL) && !text.contains("0123"), "{text}");
+    for (key, value) in &stored {
+        let kept = after.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+        assert_eq!(kept, Some(value), "{key} kept");
+    }
+
+    let store = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(
+        store.settings().sab.api_key,
+        Secret("stored-sab-key".into())
+    );
+    assert_eq!(
+        store.settings().providers[0].password,
+        Secret("stored-pw".into())
+    );
+    assert_eq!(store.settings().queue.concurrency, 3);
+
+    let rejected = async |env: Vec<(&str, String)>| -> String {
+        let env = env.into_iter().map(|(k, v)| (k.to_owned(), v));
+        match ConfigStore::load(db.clone(), env).await {
+            Ok(_) => panic!("loaded"),
+            Err(error) => {
+                let text = error.to_string();
+                assert!(!text.contains(SENTINEL), "{text}");
+                error.path().expect("names the input").to_owned()
+            }
+        }
+    };
+    assert_eq!(
+        rejected(vec![
+            ("INFINIDYSK__PROVIDERS", String::new()),
+            ("INFINIDYSK__PROVIDERS_FILE", providers),
+        ])
+        .await,
+        "INFINIDYSK__PROVIDERS_FILE"
+    );
+    assert_eq!(
+        rejected(vec![(
+            "INFINIDYSK__SAB__API_KEY_FILE",
+            dir.join("absent").display().to_string()
+        )])
+        .await,
+        "INFINIDYSK__SAB__API_KEY_FILE"
+    );
+    assert_eq!(
+        rejected(vec![(
+            "INFINIDYSK__PROVIDERS_FILE",
+            file("broken.json", &format!("[{{\"password\":\"{SENTINEL}\""))
+        )])
+        .await,
+        "INFINIDYSK__PROVIDERS_FILE"
+    );
+    assert_eq!(
+        rejected(vec![(
+            "INFINIDYSK__NETWORK__PUBLIC_URL_FILE",
+            file("url", &format!("https://media.example/?token={SENTINEL}\n"))
+        )])
+        .await,
+        "network.public_url"
+    );
+
+    db.close().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn out_of_range_stored_values_load_as_defaults_but_never_save() {
     let path =
         std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));

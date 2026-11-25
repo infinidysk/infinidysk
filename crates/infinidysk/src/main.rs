@@ -63,7 +63,22 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     };
-    let boot = Boot::from_env(setting.as_deref())?;
+    let boot = match Boot::from_env(setting.as_deref()) {
+        Ok(boot) => boot,
+        // A bad variable is a known failure: one line, no backtrace.
+        Err(error)
+            if matches!(
+                error.downcast_ref(),
+                Some(infinidysk::config::Error::Input { .. })
+            ) =>
+        {
+            tracing_subscriber::fmt().init();
+            let reason = reason(&error);
+            tracing::warn!(%reason, "cannot use the environment; fix the variable named in the reason, then restart");
+            std::process::exit(1);
+        }
+        Err(error) => return Err(error),
+    };
     let (capture, unkept) = match Capture::persisted(&boot.log_dir, (boot.uid, boot.gid)) {
         Ok(capture) => (capture, None),
         Err(error) => (Capture::MEMORY, Some(error)),

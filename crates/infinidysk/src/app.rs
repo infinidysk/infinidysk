@@ -82,15 +82,20 @@ pub struct Boot {
 impl Boot {
     /// `setting` is `INFINIDYSK_CONFIG_DIR` as [`config_dir_from_env`] checked it; it sets
     /// [`Self::home`] and [`Self::config_dir`]. Also reads `INFINIDYSK_LISTEN`,
-    /// `INFINIDYSK_DATABASE_URL` (default: the URL in `<home>/database.toml`, else
+    /// `INFINIDYSK_DATABASE_URL` or `INFINIDYSK_DATABASE_URL_FILE` (default: the URL in `<home>/database.toml`, else
     /// `<home>/infinidysk.sqlite`), `PUID`, `PGID`, `INFINIDYSK_TRACE_MINUTES`,
     /// `INFINIDYSK_METRICS_PATH` (default: `metrics.sqlite` in `config_dir`),
     /// `INFINIDYSK_LOG_DIR` (default: `logs` in `config_dir`) and `INFINIDYSK_FFPROBE`
     /// (default: `ffprobe` on `PATH`).
     pub fn from_env(setting: Option<&Path>) -> anyhow::Result<Self> {
+        check_env_is_text()?;
         let home = setting.map_or_else(|| DEFAULT_HOME.into(), Path::to_path_buf);
-        let (_, database_url, database_source) =
-            crate::database::select(std::env::var("INFINIDYSK_DATABASE_URL").ok(), &home)?;
+        let url = config::supplied_text(
+            "INFINIDYSK_DATABASE_URL",
+            std::env::var("INFINIDYSK_DATABASE_URL").ok(),
+            std::env::var("INFINIDYSK_DATABASE_URL_FILE").ok(),
+        )?;
+        let (_, database_url, database_source) = crate::database::select(url, &home)?;
         let beside = base_dir(setting, &database_url);
         Ok(Self {
             listen: listen_from_env()?,
@@ -106,6 +111,19 @@ impl Boot {
             ffprobe: var("INFINIDYSK_FFPROBE", "ffprobe".to_owned())?,
         })
     }
+}
+
+/// `std::env::vars` panics on a variable that is not UTF-8 and prints its value.
+fn check_env_is_text() -> Result<(), config::Error> {
+    for (name, value) in std::env::vars_os() {
+        if name.to_str().is_none() || value.to_str().is_none() {
+            return Err(config::Error::Input {
+                path: name.to_string_lossy().into_owned(),
+                reason: "must be valid UTF-8",
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The base folder: `INFINIDYSK_CONFIG_DIR` (`setting`), else the folder of a `sqlite:`
