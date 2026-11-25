@@ -113,6 +113,61 @@ impl Boot {
     }
 }
 
+/// Checks what this environment means for a fresh installation, as `infinidysk config
+/// validate`: the variables startup reads, the settings they give and each enabled
+/// provider's endpoint. Creates no folder, database, log or socket and connects nowhere;
+/// it does not see saved settings or check the database URL past its scheme.
+pub fn validate_deployment() -> anyhow::Result<()> {
+    let home = home_from_env()?;
+    check_env_is_text()?;
+    let vars: Vec<(String, String)> = std::env::vars().collect();
+    let overrides = config::parse_overrides(vars.iter().cloned())?;
+    crate::auth::InitialAdmin::from_vars(&vars)?;
+    let url = config::supplied_text(
+        "INFINIDYSK_DATABASE_URL",
+        std::env::var("INFINIDYSK_DATABASE_URL").ok(),
+        std::env::var("INFINIDYSK_DATABASE_URL_FILE").ok(),
+    )?;
+    let known = |url: &str| {
+        ["sqlite:", "postgres:", "postgresql:"]
+            .iter()
+            .any(|scheme| url.starts_with(scheme))
+    };
+    if url.is_some_and(|url| !known(&url)) {
+        return Err(config::Error::Input {
+            path: "INFINIDYSK_DATABASE_URL".to_owned(),
+            reason: "expected a sqlite: or postgres: URL",
+        }
+        .into());
+    }
+    listen_from_env()?;
+    var("PUID", 1000_u32)?;
+    var("PGID", 1000_u32)?;
+    var("INFINIDYSK_TRACE_MINUTES", 0_u32)?;
+    let settings = config::fresh(&overrides, &home.join("cache").display().to_string())?;
+    check_endpoints(&settings.providers)
+}
+
+/// Builds each enabled provider's endpoint, as startup does, without connecting.
+fn check_endpoints(providers: &[config::Provider]) -> anyhow::Result<()> {
+    for (index, provider) in providers.iter().enumerate().filter(|(_, p)| p.enabled) {
+        match endpoint(provider) {
+            Ok(_) => {}
+            Err(infinidysk_nntp::Error::InvalidArgument(_)) => {
+                return Err(config::Error::Input {
+                    path: format!("providers[{index}].hostname"),
+                    reason: "not a valid server name",
+                }
+                .into());
+            }
+            Err(error) => {
+                return Err(anyhow::Error::from(error).context("configuring Usenet providers"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `std::env::vars` panics on a variable that is not UTF-8 and prints its value.
 fn check_env_is_text() -> Result<(), config::Error> {
     for (name, value) in std::env::vars_os() {

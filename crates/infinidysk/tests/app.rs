@@ -702,6 +702,153 @@ async fn invalid_provisioning_fails_without_opening_setup() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// `config validate` checks a deployment for a fresh installation without a config folder,
+/// database or free port, and leaves nothing behind.
+#[tokio::test]
+async fn config_validate_is_offline_and_creates_nothing() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let root = std::env::temp_dir().join(format!("infinidysk-validate-{}", ItemId::new()));
+    let secrets = root.join("secrets");
+    std::fs::create_dir_all(&secrets).unwrap();
+    let home = root.join("config");
+    let taken = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let secret = |name: &str, text: &str| {
+        let path = secrets.join(name);
+        std::fs::write(&path, text).unwrap();
+        path.display().to_string()
+    };
+    let provider = |hostname: &str, enabled: bool| {
+        json!([{"id": "0190f6c4-0000-7000-8000-0000000000d1", "name": "p", "hostname": hostname,
+            "port": 563, "tls": true, "enabled": enabled}])
+        .to_string()
+    };
+    let valid = [
+        ("INFINIDYSK_CONFIG_DIR", home.display().to_string()),
+        ("INFINIDYSK_LISTEN", taken.local_addr().unwrap().to_string()),
+        (
+            "INFINIDYSK_DATABASE_URL_FILE",
+            secret("url", "postgres://u:p@127.0.0.1:1/x\n"),
+        ),
+        ("INFINIDYSK_ADMIN_USERNAME", "admin".to_owned()),
+        (
+            "INFINIDYSK_ADMIN_PASSWORD_FILE",
+            secret("password", "a-long-password\n"),
+        ),
+        (
+            "INFINIDYSK__AUTH__API_KEY_FILE",
+            secret("key", "admin-key\n"),
+        ),
+        (
+            "INFINIDYSK__PROVIDERS_FILE",
+            secret("providers", &provider("news.example", true)),
+        ),
+        ("INFINIDYSK__MOUNT__FUSE", "false".to_owned()),
+    ];
+    let run = async |args: &[&str], extra: &[(&str, &std::ffi::OsStr)]| {
+        // A direct variable in `extra` replaces the base value and its _FILE.
+        let replaced = |key: &str| {
+            extra
+                .iter()
+                .any(|(k, _)| key == *k || key.strip_suffix("_FILE") == Some(*k))
+        };
+        let mut command = binary();
+        command.args(args).envs(
+            valid
+                .iter()
+                .filter(|(k, _)| !replaced(k))
+                .map(|(k, v)| (*k, v)),
+        );
+        for (key, value) in extra {
+            command.env(key, value);
+        }
+        let output = tokio::time::timeout(Duration::from_secs(60), command.output())
+            .await
+            .expect("validate did not finish")
+            .unwrap();
+        let (out, err) = (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        );
+        (output.status.code(), out, err)
+    };
+    let text = |value: &'static str| std::ffi::OsStr::new(value);
+
+    let (code, out, err) = run(&["config", "validate"], &[]).await;
+    assert_eq!(code, Some(0), "{out}{err}");
+    assert_eq!(out, "fresh-install configuration valid\n");
+    let disabled = provider("news.example:563", false);
+    let (code, _, err) = run(
+        &["config", "validate"],
+        &[("INFINIDYSK__PROVIDERS", disabled.as_ref())],
+    )
+    .await;
+    assert_eq!(code, Some(0), "a disabled provider is not built: {err}");
+
+    let broken = provider("news.example:563", true);
+    let rejected: [(&[(&str, &std::ffi::OsStr)], &str); 6] = [
+        (
+            &[("INFINIDYSK__WEBDAV__PASWORD", text("x"))],
+            "INFINIDYSK__WEBDAV__PASWORD",
+        ),
+        (
+            &[("INFINIDYSK__QUEUE__CONCURRENCY", text("50"))],
+            "queue.concurrency",
+        ),
+        (
+            &[("INFINIDYSK_DATABASE_URL", text("mysql://u:p@127.0.0.1/x"))],
+            "INFINIDYSK_DATABASE_URL",
+        ),
+        (
+            &[("INFINIDYSK__PROVIDERS", broken.as_ref())],
+            "providers[0].hostname",
+        ),
+        (
+            &[("INFINIDYSK_CONFIG_DIR", text("relative"))],
+            "absolute path",
+        ),
+        (
+            &[(
+                "INFINIDYSK_TEST_BYTES",
+                std::ffi::OsStr::from_bytes(b"\xff"),
+            )],
+            "INFINIDYSK_TEST_BYTES",
+        ),
+    ];
+    for (extra, want) in rejected {
+        let (code, out, err) = run(&["config", "validate"], extra).await;
+        assert_eq!(code, Some(1), "{want}: {out}{err}");
+        assert!(out.is_empty(), "{want}: {out}");
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines.len(), 1, "{want}: {err}");
+        assert!(
+            lines[0].starts_with("invalid: ") && lines[0].contains(want),
+            "{err}"
+        );
+        assert!(
+            !err.contains("news.example") && !err.contains("u:p@"),
+            "{err}"
+        );
+    }
+    for args in [
+        &["config"][..],
+        &["config", "check"],
+        &["config", "validate", "x"],
+    ] {
+        let (code, _, err) = run(args, &[]).await;
+        assert_eq!(code, Some(2), "{args:?}");
+        assert_eq!(err, "usage: infinidysk config validate\n");
+    }
+
+    assert!(!home.exists(), "validate created the config folder");
+    let left: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["secrets"]);
+    drop(taken);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// `INFINIDYSK_CONFIG_DIR` decides where the real binary makes its database and logs, and
 /// where it looks for a 1.x install to import.
 #[tokio::test]

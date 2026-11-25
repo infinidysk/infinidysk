@@ -50,6 +50,20 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("config") {
+        if std::env::args().skip(2).ne(["validate"]) {
+            eprintln!("usage: infinidysk config validate");
+            std::process::exit(2);
+        }
+        match app::validate_deployment() {
+            Ok(()) => println!("fresh-install configuration valid"),
+            Err(error) => {
+                eprintln!("invalid: {}", reason(&error));
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
     // Checked before anything reads it, so a folder infinidysk cannot use stops with one line.
     let setting = match app::config_dir_from_env() {
         Ok(setting) => setting,

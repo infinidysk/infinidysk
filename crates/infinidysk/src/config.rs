@@ -2227,6 +2227,11 @@ impl ConfigStore {
     }
 }
 
+/// The settings `env` gives a fresh installation, checked as startup checks them.
+pub(crate) fn fresh(env: &[Override], default_cache_dir: &str) -> Result<Settings, Error> {
+    effective(&Map::new(), env, default_cache_dir)
+}
+
 fn effective(
     stored: &Map<String, Value>,
     env: &[Override],
