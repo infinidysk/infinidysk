@@ -93,7 +93,7 @@ async fn packaged_worker_recovers_missing_plain_and_encrypted_archive_headers() 
     let _scratch = Scratch(root.clone());
     let mount = root.join("mount");
     let database = format!("sqlite:{}", root.join("data.sqlite").display());
-    let providers = json!([{"name":"fixture", "hostname":"127.0.0.1", "port": provider.addr().port(), "tls":false}]);
+    let providers = json!([{"id":"0190f6c4-0000-7000-8000-00000000f1f1", "name":"fixture", "hostname":"127.0.0.1", "port": provider.addr().port(), "tls":false}]);
     let mut app = Command::new("/usr/local/bin/infinidysk")
         .env("INFINIDYSK_LISTEN", addr.to_string())
         .env("INFINIDYSK_DATABASE_URL", &database)
@@ -382,7 +382,7 @@ async fn packaged_worker_resumes_after_shutdown() {
         .append(true)
         .open(root.join("output.log"))
         .unwrap();
-    let providers = json!([{"name":"fixture", "hostname":"127.0.0.1", "port":provider.addr().port(), "tls":false}]).to_string();
+    let providers = json!([{"id":"0190f6c4-0000-7000-8000-00000000f1f1", "name":"fixture", "hostname":"127.0.0.1", "port":provider.addr().port(), "tls":false}]).to_string();
     let start = || {
         Command::new("/usr/local/bin/infinidysk")
             .env("INFINIDYSK_CONFIG_DIR", &root)

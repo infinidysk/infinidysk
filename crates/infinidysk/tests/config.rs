@@ -467,6 +467,212 @@ async fn a_readarr_instance_stops_loading_with_what_to_do() {
 }
 
 #[tokio::test]
+async fn deployment_inputs_are_strict_but_stored_values_still_load() {
+    const SENTINEL: &str = "sentinel-secret-5d1c";
+    const P1: &str = "0190f6c4-0000-7000-8000-0000000000a1";
+    const P2: &str = "0190f6c4-0000-7000-8000-0000000000a2";
+    let path =
+        std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let vars = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    };
+    let provider = |id: &str, extra: &str| {
+        format!(
+            r#"{{"id":"{id}","name":"p","hostname":"news.example","password":"{SENTINEL}"{extra}}}"#
+        )
+    };
+    let arr = |id: &str| {
+        format!(
+            r#"{{"id":"{id}","name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"{SENTINEL}"}}"#
+        )
+    };
+    let rejected = async |pairs: &[(&str, &str)]| -> String {
+        match ConfigStore::load(db.clone(), vars(pairs)).await {
+            Ok(_) => panic!("loaded: {pairs:?}"),
+            Err(error) => {
+                let text = error.to_string();
+                assert!(!text.contains(SENTINEL), "{text}");
+                error.path().expect("names the setting").to_owned()
+            }
+        }
+    };
+
+    let cases: Vec<(Vec<(&str, String)>, &str)> = vec![
+        (
+            vec![("INFINIDYSK__QUEUE__CONCURENCY", "3".into())],
+            "INFINIDYSK__QUEUE__CONCURENCY",
+        ),
+        (
+            vec![(
+                "INFINIDYSK__PROVIDERS",
+                format!(
+                    "[{}]",
+                    provider(P1, r#","quota":{"gb":5,"period":"monthly","resetday":2}"#)
+                ),
+            )],
+            "providers[0].quota.resetday",
+        ),
+        (
+            vec![("INFINIDYSK__QUEUE__CONCURRENCY", "\"three\"".into())],
+            "queue.concurrency",
+        ),
+        (
+            vec![("INFINIDYSK__PROVIDERS", format!("[{}", provider(P1, "")))],
+            "INFINIDYSK__PROVIDERS",
+        ),
+        (
+            vec![("INFINIDYSK__MAINTENANCE__SCHEDULED", r#"["dust"]"#.into())],
+            "maintenance.scheduled[0]",
+        ),
+        (
+            vec![(
+                "INFINIDYSK__PROVIDERS",
+                format!(r#"[{{"name":"p","hostname":"news.example","password":"{SENTINEL}"}}]"#),
+            )],
+            "providers[0].id",
+        ),
+        (
+            vec![(
+                "INFINIDYSK__ARR_INSTANCES",
+                format!(
+                    r#"[{{"name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"{SENTINEL}"}}]"#
+                ),
+            )],
+            "arr_instances[0].id",
+        ),
+        (
+            vec![(
+                "INFINIDYSK__PROVIDERS",
+                format!("[{},{}]", provider(P1, ""), provider(P1, "")),
+            )],
+            "providers",
+        ),
+        (
+            vec![
+                ("INFINIDYSK__QUEUE__CONCURRENCY", "3".into()),
+                ("INFINIDYSK__queue__concurrency", "3".into()),
+            ],
+            "INFINIDYSK__queue__concurrency",
+        ),
+        (
+            vec![
+                ("INFINIDYSK__QUEUE", r#"{"concurrency":3}"#.into()),
+                ("INFINIDYSK__QUEUE__CONCURRENCY", "3".into()),
+            ],
+            "INFINIDYSK__QUEUE__CONCURRENCY",
+        ),
+        (
+            vec![
+                ("INFINIDYSK__QUEUE__CONCURRENCY", "3".into()),
+                ("INFINIDYSK__QUEUE", r#"{"concurrency":3}"#.into()),
+            ],
+            "INFINIDYSK__QUEUE__CONCURRENCY",
+        ),
+        (
+            vec![("INFINIDYSK__AUTH__API_KEY", String::new())],
+            "auth.api_key",
+        ),
+        (
+            vec![("INFINIDYSK__QUEUE__CONCURRENCY", "50".into())],
+            "queue.concurrency",
+        ),
+        (
+            vec![("INFINIDYSK__MAINTENANCE__WINDOW__END", "25:00".into())],
+            "maintenance.window",
+        ),
+    ];
+    for (pairs, want) in &cases {
+        let pairs: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        assert_eq!(rejected(&pairs).await, *want, "{pairs:?}");
+    }
+    let Err(Error::Invalid { message, .. }) = ConfigStore::load(
+        db.clone(),
+        vars(&[("INFINIDYSK__QUEUE__CONCURRENCY", "50")]),
+    )
+    .await
+    else {
+        panic!("out-of-range concurrency loaded");
+    };
+    assert_eq!(message, "Concurrency must be 1-10");
+
+    let lists = vars(&[
+        ("INFINIDYSK__PROVIDERS", &format!("[{}]", provider(P2, ""))),
+        ("INFINIDYSK__ARR_INSTANCES", &format!("[{}]", arr(P1))),
+        ("INFINIDYSK__EXPERIMENTS", r#"["retired-experiment"]"#),
+    ]);
+    let store = ConfigStore::load(db.clone(), lists)
+        .await
+        .expect("valid lists");
+    assert_eq!(store.settings().providers[0].id.to_string(), P2);
+    assert_eq!(store.settings().arr_instances[0].id.to_string(), P1);
+    assert_eq!(store.settings().experiments, Vec::<String>::new());
+
+    // Stored values are not deployment input: they load or reset as before.
+    db.write_config(
+        &[
+            ("queue", r#"{"concurrency":50}"#),
+            ("experiments", r#"["retired-experiment"]"#),
+            ("maintenance", r#"{"window":{"start":"3am","end":"06:00"}}"#),
+        ],
+        &[],
+    )
+    .await
+    .expect("write");
+    let store = ConfigStore::load(db.clone(), []).await.expect("stored");
+    assert_eq!(store.settings().queue.concurrency, 2);
+    assert_eq!(store.settings().experiments, Vec::<String>::new());
+
+    let window = |store: &ConfigStore| {
+        let w = &store.settings().maintenance.window;
+        (w.start.clone(), w.end.clone())
+    };
+    let end = |value: &str| vars(&[("INFINIDYSK__MAINTENANCE__WINDOW__END", value)]);
+    let store = ConfigStore::load(db.clone(), end("10:00"))
+        .await
+        .expect("mixed window");
+    assert_eq!(window(&store), ("03:00".into(), "10:00".into()));
+
+    db.write_config(
+        &[(
+            "maintenance",
+            r#"{"window":{"start":"06:00","end":"09:00"}}"#,
+        )],
+        &[],
+    )
+    .await
+    .expect("write");
+    let store = ConfigStore::load(db.clone(), end("12:00"))
+        .await
+        .expect("stored start");
+    assert_eq!(window(&store), ("06:00".into(), "12:00".into()));
+
+    db.write_config(
+        &[(
+            "maintenance",
+            r#"{"window":{"start":"08:00","end":"09:00"}}"#,
+        )],
+        &[],
+    )
+    .await
+    .expect("write");
+    assert_eq!(
+        rejected(&[("INFINIDYSK__MAINTENANCE__WINDOW__END", "08:00")]).await,
+        "maintenance.window"
+    );
+
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
 async fn out_of_range_stored_values_load_as_defaults_but_never_save() {
     let path =
         std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));

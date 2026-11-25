@@ -101,15 +101,18 @@ async fn main() -> anyhow::Result<()> {
     });
     let exit = match app::serve(listener, &boot, std::env::vars(), cancel).await {
         Ok(exit) => exit,
-        // Invalid saved settings are a known failure: one line, no backtrace.
+        // Invalid settings are a known failure: one line, no backtrace.
         Err(error)
             if matches!(
                 error.downcast_ref::<infinidysk::config::Error>(),
-                Some(infinidysk::config::Error::Invalid { .. })
+                Some(
+                    infinidysk::config::Error::Invalid { .. }
+                        | infinidysk::config::Error::Input { .. }
+                )
             ) =>
         {
-            let reason = format!("{error:#}");
-            let message = "the saved settings are invalid; fix them or override them with INFINIDYSK__ variables, then restart";
+            let reason = reason(&error);
+            let message = "the settings are invalid; fix the saved setting or the INFINIDYSK variable named in the reason, then restart";
             // A stricter RUST_LOG must not hide why startup stopped.
             if tracing::enabled!(tracing::Level::WARN) {
                 tracing::warn!(%reason, "{message}");
@@ -128,4 +131,12 @@ async fn main() -> anyhow::Result<()> {
         return Err(error).context("restarting");
     }
     Ok(())
+}
+
+/// The error chain, led by the setting path when the message lacks it.
+fn reason(error: &anyhow::Error) -> String {
+    match error.downcast_ref::<infinidysk::config::Error>() {
+        Some(infinidysk::config::Error::Invalid { path, .. }) => format!("{path}: {error:#}"),
+        _ => format!("{error:#}"),
+    }
 }

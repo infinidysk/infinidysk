@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::fmt::Write as _;
 use std::ops::RangeInclusive;
 
 use infinidysk_db::Db;
@@ -34,6 +35,14 @@ pub enum Error {
     },
     #[error("{0} is set by an environment variable and cannot be changed here")]
     Locked(String),
+    /// Deployment or request input that cannot be used. `reason` is fixed text, so no
+    /// input value reaches the message.
+    #[error("{path}: {reason}")]
+    Input {
+        /// The variable as it was set, or the dotted setting path like `providers[0].id`.
+        path: String,
+        reason: &'static str,
+    },
 }
 
 impl Error {
@@ -42,7 +51,7 @@ impl Error {
     pub fn path(&self) -> Option<&str> {
         match self {
             Self::Invalid { path, .. } => Some(path),
-            Self::Locked(path) => Some(path),
+            Self::Locked(path) | Self::Input { path, .. } => Some(path),
             Self::Db(_) | Self::Json(_) => None,
         }
     }
@@ -1686,9 +1695,263 @@ impl ArrInstance {
     }
 }
 
-struct Override {
+/// One setting an `INFINIDYSK__…` variable fixes.
+#[derive(Clone)]
+pub(crate) struct Override {
     path: Vec<String>,
     value: Value,
+}
+
+/// Server secrets [`ConfigStore::generate_missing_secrets`] fills when empty.
+const GENERATED: [[&str; 2]; 6] = [
+    ["sab", "api_key"],
+    ["auth", "api_key"],
+    ["auth", "session_key"],
+    ["webdav", "password"],
+    ["webdav", "download_key"],
+    ["imports", "strm_key"],
+];
+
+fn input(path: impl Into<String>, reason: &'static str) -> Error {
+    Error::Input {
+        path: path.into(),
+        reason,
+    }
+}
+
+/// A variable that names a setting, before its value is decoded.
+struct Named {
+    name: String,
+    path: Vec<String>,
+    raw: String,
+}
+
+/// Parses the `INFINIDYSK__…` variables in `vars`. A name that is not a setting, two
+/// names for one setting, a value of the wrong JSON kind or type, an unknown property,
+/// an entry of `providers` or `arr_instances` without an `id`, and an empty generated
+/// key are errors. Ranges and other value rules are left to [`Settings::validate`].
+pub(crate) fn parse_overrides(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> Result<Vec<Override>, Error> {
+    let defaults = serde_json::to_value(Settings::default())?;
+    let mut named = Vec::new();
+    for (name, raw) in vars {
+        let Some(rest) = name.strip_prefix(ENV_PREFIX) else {
+            continue;
+        };
+        let path: Vec<String> = rest.split("__").map(str::to_ascii_lowercase).collect();
+        if lookup(&defaults, &path).is_none() {
+            return Err(input(name, "not a setting"));
+        }
+        named.push(Named { name, path, raw });
+    }
+    named.sort_by(|a, b| (&a.path, &a.name).cmp(&(&b.path, &b.name)));
+    // Compares paths, never string prefixes: `auth` is not a prefix of `authors`.
+    if let Some(pair) = named
+        .windows(2)
+        .find(|pair| pair[1].path.starts_with(&pair[0].path))
+    {
+        return Err(input(
+            pair[1].name.clone(),
+            "sets the same setting as another variable",
+        ));
+    }
+
+    let mut env = Vec::with_capacity(named.len());
+    let mut tree = defaults.clone();
+    for Named { name, path, raw } in named {
+        let default = lookup(&defaults, &path).unwrap_or(&Value::Null);
+        let value = decode_text(&name, &path, default, raw)?;
+        set(&mut tree, &path, value.clone());
+        env.push(Override { path, value });
+    }
+    check_lists(&tree)?;
+    for list in ["providers", "arr_instances"] {
+        if env.iter().any(|o| o.path == [list]) {
+            check_ids(list, &tree[list])?;
+        }
+    }
+    reject_readarr(&tree)?;
+    let settings = decode_settings(tree)?;
+    let decoded = serde_json::to_value(&settings)?;
+    for o in &env {
+        let known = lookup(&decoded, &o.path).unwrap_or(&Value::Null);
+        check_input(&o.path.join("."), &o.value, known)?;
+    }
+    if let Some(o) = env.iter().find(|o| o.path == ["experiments"]) {
+        let dropped: Vec<&str> = o
+            .value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|name| !EXPERIMENTS.iter().any(|e| e.name == *name))
+            .collect();
+        if !dropped.is_empty() {
+            tracing::warn!(
+                variable = "INFINIDYSK__EXPERIMENTS",
+                dropped = dropped.join(", "),
+                "ignoring experiments this version does not have"
+            );
+        }
+    }
+    for secret in GENERATED {
+        let owned = env
+            .iter()
+            .any(|o| o.path == secret || o.path == [secret[0]]);
+        let path = secret.map(str::to_owned);
+        if owned && lookup(&decoded, &path).and_then(Value::as_str) == Some("") {
+            return Err(input(
+                path.join("."),
+                "must not be empty when a variable sets it",
+            ));
+        }
+    }
+    Ok(env)
+}
+
+/// The JSON value of a variable's text: text settings stay verbatim, so a numeric
+/// password is not read as a number; everything else is JSON of the setting's kind.
+fn decode_text(name: &str, path: &[String], default: &Value, raw: String) -> Result<Value, Error> {
+    if default.is_string() {
+        return Ok(Value::String(raw));
+    }
+    let parsed = serde_json::from_str::<Value>(&raw);
+    // The optional disk cache folder also takes a plain path.
+    if default.is_null() && path == ["performance", "disk_cache_dir"] {
+        return Ok(parsed.unwrap_or(Value::String(raw)));
+    }
+    let value = parsed.map_err(|_| input(name, "expected a JSON value"))?;
+    match default {
+        Value::Array(_) if !value.is_array() => Err(input(name, "expected a JSON list")),
+        Value::Object(_) if !value.is_object() => Err(input(name, "expected a JSON object")),
+        _ => Ok(value),
+    }
+}
+
+/// Every entry of an env-defined list carries its own UUID, so its identity survives
+/// restarts.
+fn check_ids(list: &str, entries: &Value) -> Result<(), Error> {
+    for (index, entry) in entries.as_array().into_iter().flatten().enumerate() {
+        let Value::Object(entry) = entry else {
+            return Err(input(format!("{list}[{index}]"), "expected a JSON object"));
+        };
+        if entry
+            .get("id")
+            .and_then(Value::as_str)
+            .is_none_or(|id| Uuid::parse_str(id).is_err())
+        {
+            return Err(input(format!("{list}[{index}].id"), "expected a UUID"));
+        }
+    }
+    Ok(())
+}
+
+/// Checks the list entries decoding would drop without a word: a library folder without
+/// a path and a maintenance job that cannot be scheduled. Values are never shown.
+pub(crate) fn check_lists(tree: &Value) -> Result<(), Error> {
+    let at = |section: &str, key: &str| tree.get(section).and_then(|s| s.get(key));
+    if let Some(Value::Array(dirs)) = at("imports", "library_dirs") {
+        for (index, dir) in dirs.iter().enumerate() {
+            let blank = match dir {
+                Value::String(path) => path.trim().is_empty(),
+                Value::Object(dir) => match dir.get("path") {
+                    None => true,
+                    Some(Value::String(path)) => path.trim().is_empty(),
+                    Some(_) => false,
+                },
+                _ => false,
+            };
+            if blank {
+                return Err(input(
+                    format!("imports.library_dirs[{index}]"),
+                    "needs a folder path",
+                ));
+            }
+        }
+    }
+    if let Some(Value::Array(jobs)) = at("maintenance", "scheduled") {
+        for (index, job) in jobs.iter().enumerate() {
+            let known = MaintenanceJob::ALL
+                .iter()
+                .any(|j| !j.always_scheduled() && job.as_str() == Some(j.id()));
+            if !known {
+                return Err(input(
+                    format!("maintenance.scheduled[{index}]"),
+                    "not a maintenance job that can be scheduled",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Decodes `tree`; an error names the failing setting, never the value or the parser text.
+pub(crate) fn decode_settings(tree: Value) -> Result<Settings, Error> {
+    serde_path_to_error::deserialize(tree).map_err(|error| {
+        let mut path = String::new();
+        let mut last = "";
+        for segment in error.path() {
+            match segment {
+                serde_path_to_error::Segment::Seq { index } => {
+                    // Writing to a String cannot fail.
+                    let _ = write!(path, "[{index}]");
+                }
+                serde_path_to_error::Segment::Map { key } if identifier(key) => {
+                    if !path.is_empty() {
+                        path.push('.');
+                    }
+                    path.push_str(key);
+                    last = key;
+                }
+                _ => break,
+            }
+        }
+        let reason = if last == "id" {
+            "expected a UUID"
+        } else {
+            "wrong type or missing value"
+        };
+        input(path, reason)
+    })
+}
+
+fn identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// Checks that every member of `supplied` exists, spelled exactly, in `decoded`, its
+/// typed form, and that no list or object stands where the type is not one. Serde would
+/// read a list as a struct by position and a one-member object as an enum.
+pub(crate) fn check_input(path: &str, supplied: &Value, decoded: &Value) -> Result<(), Error> {
+    match (supplied, decoded) {
+        (Value::Object(supplied), Value::Object(known)) => {
+            for (name, child) in supplied {
+                let field = match (identifier(name), path.is_empty()) {
+                    (false, _) => path.to_owned(),
+                    (true, true) => name.clone(),
+                    (true, false) => format!("{path}.{name}"),
+                };
+                let kept = known
+                    .get(name)
+                    .ok_or_else(|| input(field.clone(), "unknown property"))?;
+                check_input(&field, child, kept)?;
+            }
+        }
+        (Value::Array(supplied), Value::Array(known)) => {
+            for (index, (child, kept)) in supplied.iter().zip(known).enumerate() {
+                check_input(&format!("{path}[{index}]"), child, kept)?;
+            }
+        }
+        (Value::Array(_) | Value::Object(_), _) => {
+            return Err(input(path, "wrong JSON type"));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Effective settings plus the layers they came from.
@@ -1716,29 +1979,17 @@ impl ConfigStore {
         vars: impl IntoIterator<Item = (String, String)>,
         default_cache_dir: String,
     ) -> Result<Self, Error> {
-        let defaults = serde_json::to_value(Settings::default())?;
-        let mut env: Vec<Override> = vars
-            .into_iter()
-            .filter_map(|(key, raw)| {
-                let path: Vec<String> = key
-                    .strip_prefix(ENV_PREFIX)?
-                    .split("__")
-                    .map(str::to_ascii_lowercase)
-                    .collect();
-                let Some(default) = lookup(&defaults, &path) else {
-                    tracing::warn!(key, "ignoring unknown config environment variable");
-                    return None;
-                };
-                // Strings stay verbatim so a numeric password is not parsed as a number.
-                let value = if default.is_string() {
-                    Value::String(raw)
-                } else {
-                    serde_json::from_str(&raw).unwrap_or(Value::String(raw))
-                };
-                Some(Override { path, value })
-            })
-            .collect();
+        let env = parse_overrides(vars)?;
+        Self::load_overrides(db, &env, default_cache_dir).await
+    }
 
+    /// [`Self::load_in`] with variables [`parse_overrides`] already parsed.
+    pub(crate) async fn load_overrides(
+        db: Db,
+        env: &[Override],
+        default_cache_dir: String,
+    ) -> Result<Self, Error> {
+        let mut env = env.to_vec();
         let mut stored = Map::new();
         for (key, value) in db.config().await? {
             stored.insert(key, serde_json::from_str(&value)?);
@@ -1924,14 +2175,35 @@ fn effective(
     env: &[Override],
     default_cache_dir: &str,
 ) -> Result<Settings, Error> {
-    let mut tree = serde_json::to_value(Settings::default())?;
+    let defaults = serde_json::to_value(Settings::default())?;
+    let mut tree = defaults.clone();
     merge(&mut tree, Value::Object(stored.clone()));
+    // A stored value that a variable replaces is not in effect.
+    for o in env {
+        if let Some(value) = lookup(&defaults, &o.path) {
+            set(&mut tree, &o.path, value.clone());
+        }
+    }
+    reject_readarr(&tree)?;
+    let mut saved: Settings = serde_json::from_value(tree)?;
+    // A default end can equal a valid stored other end; it cannot equal both defaults.
+    let sets = |end: &str| env.iter().any(|o| o.path == ["maintenance", "window", end]);
+    let window = &mut saved.maintenance.window;
+    if sets("start") != sets("end") && window.minutes().is_none() {
+        let d = MaintenanceWindow::default();
+        if sets("start") {
+            window.start = d.end;
+        } else {
+            window.end = d.start;
+        }
+    }
+    saved.reset_invalid();
+    // Variables are checked as given, never reset.
+    let mut tree = serde_json::to_value(&saved)?;
     for o in env {
         set(&mut tree, &o.path, o.value.clone());
     }
-    reject_readarr(&tree)?;
     let mut settings: Settings = serde_json::from_value(tree)?;
-    settings.reset_invalid();
     settings.validate_in(default_cache_dir)?;
     check_rc_url_override(stored, env, &settings.rclone_rc)?;
     Ok(settings)

@@ -235,8 +235,10 @@ pub async fn serve(
     vars: impl IntoIterator<Item = (String, String)>,
     cancel: CancellationToken,
 ) -> anyhow::Result<Exit> {
-    let pending = crate::backup::boot::apply_pending(boot)?;
     let vars: Vec<(String, String)> = vars.into_iter().collect();
+    // Input is checked before a pending restore moves anything.
+    let overrides = config::parse_overrides(vars.iter().cloned())?;
+    let pending = crate::backup::boot::apply_pending(boot)?;
     let default_cache_dir = boot.home.join("cache").display().to_string();
     let db = match Db::connect(&boot.database_url).await {
         Ok(db) => db,
@@ -251,7 +253,7 @@ pub async fn serve(
     // Past `finish` a restore no longer rolls back, so its settings must load first.
     if pending.swapped()
         && let Err(error) =
-            ConfigStore::load_in(db.clone(), vars.iter().cloned(), default_cache_dir.clone()).await
+            ConfigStore::load_overrides(db.clone(), &overrides, default_cache_dir.clone()).await
     {
         db.close().await;
         let reason = format!(
@@ -287,7 +289,7 @@ pub async fn serve(
         return Ok(Exit::Stopped);
     }
     crate::upgrade::stamp_migrated(&db, &boot.config_dir).await;
-    let mut store = ConfigStore::load_in(db.clone(), vars, default_cache_dir.clone())
+    let mut store = ConfigStore::load_overrides(db.clone(), &overrides, default_cache_dir.clone())
         .await
         .context("loading settings")?;
     store
