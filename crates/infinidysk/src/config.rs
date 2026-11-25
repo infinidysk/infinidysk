@@ -1768,8 +1768,8 @@ fn setting_path(defaults: &Value, rest: &str) -> Option<(Vec<String>, bool)> {
 
 /// Parses the `INFINIDYSK__…` variables in `vars`. A name that is not a setting, two
 /// names for one setting, a value of the wrong JSON kind or type, an unknown property,
-/// an entry of `providers` or `arr_instances` without an `id`, and an empty generated
-/// key are errors. Ranges and other value rules are left to [`Settings::validate`].
+/// and an empty generated key are errors. Ranges and other value rules are left to
+/// [`Settings::validate`].
 pub(crate) fn parse_overrides(
     vars: impl IntoIterator<Item = (String, String)>,
 ) -> Result<Vec<Override>, Error> {
@@ -1818,16 +1818,17 @@ pub(crate) fn parse_overrides(
             raw
         };
         let default = lookup(&defaults, &path).unwrap_or(&Value::Null);
-        let value = decode_text(&name, &path, default, raw)?;
+        let mut value = decode_text(&name, &path, default, raw)?;
+        if let [list] = &path[..]
+            && matches!(list.as_str(), "providers" | "arr_instances")
+            && let Some(entries) = value.as_array_mut()
+        {
+            resolve_env_ids(list, entries)?;
+        }
         set(&mut tree, &path, value.clone());
         env.push(Override { path, value });
     }
     check_lists(&tree)?;
-    for list in ["providers", "arr_instances"] {
-        if env.iter().any(|o| o.path == [list]) {
-            check_ids(list, &tree[list])?;
-        }
-    }
     reject_readarr(&tree)?;
     let settings = decode_settings(tree)?;
     let decoded = serde_json::to_value(&settings)?;
@@ -1886,20 +1887,39 @@ fn decode_text(name: &str, path: &[String], default: &Value, raw: String) -> Res
     }
 }
 
-/// Every entry of an env-defined list carries its own UUID, so its identity survives
-/// restarts.
-fn check_ids(list: &str, entries: &Value) -> Result<(), Error> {
-    for (index, entry) in entries.as_array().into_iter().flatten().enumerate() {
+/// The namespace and key format are persistent: quotas and Arr webhooks use these IDs.
+fn resolve_env_ids(list: &str, entries: &mut [Value]) -> Result<(), Error> {
+    const NAMESPACE: Uuid = uuid::uuid!("13428296-ca9c-44e3-8440-2056062debab");
+    for (index, entry) in entries.iter_mut().enumerate() {
         let Value::Object(entry) = entry else {
             return Err(input(format!("{list}[{index}]"), "expected a JSON object"));
         };
-        if entry
-            .get("id")
-            .and_then(Value::as_str)
-            .is_none_or(|id| Uuid::parse_str(id).is_err())
-        {
-            return Err(input(format!("{list}[{index}].id"), "expected a UUID"));
+        if let Some(id) = entry.get("id") {
+            if id.as_str().is_none_or(|id| Uuid::parse_str(id).is_err()) {
+                return Err(input(format!("{list}[{index}].id"), "expected a UUID"));
+            }
+            continue;
         }
+        let fields: &[&str] = if list == "providers" {
+            &["name", "profile", "hostname"]
+        } else {
+            &["name"]
+        };
+        let Some((field, key)) = fields.iter().find_map(|&field| {
+            let key = entry.get(field)?.as_str()?;
+            (!key.is_empty()).then_some((field, key))
+        }) else {
+            // No valid entry lacks all its identity fields. Let settings validation
+            // report the missing or mistyped field rather than asking for a UUID.
+            continue;
+        };
+        let key = if field == "hostname" {
+            key.to_ascii_lowercase()
+        } else {
+            key.to_owned()
+        };
+        let id = Uuid::new_v5(&NAMESPACE, format!("{list}/{field}/{key}").as_bytes());
+        entry.insert("id".to_owned(), Value::String(id.to_string()));
     }
     Ok(())
 }

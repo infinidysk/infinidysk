@@ -483,8 +483,6 @@ async fn stop(child: &mut tokio::process::Child) {
 /// without the setup page, and a restart keeps what the running server changed.
 #[tokio::test]
 async fn headless_boot_and_restart_keep_the_account_settings_and_ids() {
-    const PROVIDER: &str = "0190f6c4-0000-7000-8000-0000000000c1";
-    const ARR: &str = "0190f6c4-0000-7000-8000-0000000000c2";
     let root = std::env::temp_dir().join(format!("infinidysk-headless-{}", ItemId::new()));
     let (home, data, secrets) = (root.join("config"), root.join("data"), root.join("secrets"));
     std::fs::create_dir_all(&data).unwrap();
@@ -500,15 +498,11 @@ async fn headless_boot_and_restart_keep_the_account_settings_and_ids() {
     let key_file = secret("admin-key", "headless-admin-key\n");
     let providers = secret(
         "providers.json",
-        &format!(
-            r#"[{{"id":"{PROVIDER}","name":"p","hostname":"news.example","port":563,"password":"pw","enabled":false}}]"#
-        ),
+        r#"[{"name":"p","hostname":"news.example","port":563,"password":"pw","enabled":false}]"#,
     );
     let arrs = secret(
         "arrs.json",
-        &format!(
-            r#"[{{"id":"{ARR}","name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"k","enabled":false}}]"#
-        ),
+        r#"[{"name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"k","enabled":false}]"#,
     );
     let start = |addr: SocketAddr| {
         binary()
@@ -584,8 +578,9 @@ async fn headless_boot_and_restart_keep_the_account_settings_and_ids() {
     );
     assert_eq!(view["env_managed"], true, "{view}");
     let before = settings(addr).await;
-    assert_eq!(before["settings"]["providers"][0]["id"], PROVIDER);
-    assert_eq!(before["settings"]["arr_instances"][0]["id"], ARR);
+    for list in ["providers", "arr_instances"] {
+        uuid::Uuid::parse_str(before["settings"][list][0]["id"].as_str().unwrap()).unwrap();
+    }
     let change = json!({"current_password": "initial-password", "password": "rotated-password"});
     let (code, body) = api(
         addr,
@@ -718,7 +713,7 @@ async fn config_validate_is_offline_and_creates_nothing() {
         path.display().to_string()
     };
     let provider = |hostname: &str, enabled: bool| {
-        json!([{"id": "0190f6c4-0000-7000-8000-0000000000d1", "name": "p", "hostname": hostname,
+        json!([{"name": "p", "hostname": hostname,
             "port": 563, "tls": true, "enabled": enabled}])
         .to_string()
     };

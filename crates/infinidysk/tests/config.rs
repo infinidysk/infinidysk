@@ -533,7 +533,9 @@ async fn deployment_inputs_are_strict_but_stored_values_still_load() {
         (
             vec![(
                 "INFINIDYSK__PROVIDERS",
-                format!(r#"[{{"name":"p","hostname":"news.example","password":"{SENTINEL}"}}]"#),
+                format!(
+                    r#"[{{"id":null,"name":"p","hostname":"news.example","password":"{SENTINEL}"}}]"#
+                ),
             )],
             "providers[0].id",
         ),
@@ -541,7 +543,7 @@ async fn deployment_inputs_are_strict_but_stored_values_still_load() {
             vec![(
                 "INFINIDYSK__ARR_INSTANCES",
                 format!(
-                    r#"[{{"name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"{SENTINEL}"}}]"#
+                    r#"[{{"id":"invalid","name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"{SENTINEL}"}}]"#
                 ),
             )],
             "arr_instances[0].id",
@@ -669,6 +671,66 @@ async fn deployment_inputs_are_strict_but_stored_values_still_load() {
     db.close().await;
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
+async fn automatic_env_ids_follow_entries_not_positions_or_credentials() {
+    use serde_json::{Value, json};
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let load = async |providers: Value, arrs: Value| {
+        ConfigStore::load(
+            db.clone(),
+            [
+                ("INFINIDYSK__PROVIDERS".into(), providers.to_string()),
+                ("INFINIDYSK__ARR_INSTANCES".into(), arrs.to_string()),
+            ],
+        )
+        .await
+    };
+    let named = json!({"name":"tv","profile":"eweka","password":"old"});
+    let catalog = json!({"profile":"eweka"});
+    let custom = json!({"hostname":"NEWS.example"});
+    let tv = json!({"name":"tv","profile":"sonarr","url":"http://tv","api_key":"old"});
+    let other = json!({"name":"other","profile":"sonarr","url":"http://other","api_key":"other"});
+    let first = load(json!([named, catalog, custom]), json!([tv, other]))
+        .await
+        .unwrap();
+    let mut renamed_host = custom;
+    renamed_host["hostname"] = json!("news.example");
+    let mut rotated = named.clone();
+    rotated["password"] = json!("new");
+    let mut moved = tv.clone();
+    moved["url"] = json!("https://new-host");
+    moved["api_key"] = json!("new");
+    let second = load(
+        json!([renamed_host, rotated, catalog]),
+        json!([other, moved]),
+    )
+    .await
+    .unwrap();
+    let a = first.settings();
+    let b = second.settings();
+    assert_eq!(a.providers[0].id, b.providers[1].id);
+    assert_eq!(a.providers[1].id, b.providers[2].id);
+    assert_eq!(a.providers[2].id, b.providers[0].id);
+    assert_eq!(a.arr_instances[0].id, b.arr_instances[1].id);
+    assert_eq!(a.arr_instances[1].id, b.arr_instances[0].id);
+    assert_ne!(a.providers[0].id, a.arr_instances[0].id);
+    // Pin the public identity across releases, not just across two loads of this build.
+    assert_eq!(
+        a.arr_instances[0].id,
+        uuid::uuid!("db8c5954-c7fc-56f3-978c-a34c39bafadf")
+    );
+    assert_eq!(
+        a.providers[1].id,
+        uuid::uuid!("f1a09c54-fdab-5582-a477-2c9ffcb405df")
+    );
+    for (providers, arrs, path) in [
+        (json!([named, named]), json!([]), "providers"),
+        (json!([]), json!([tv, tv]), "arr_instances"),
+    ] {
+        assert!(matches!(load(providers, arrs).await, Err(e) if e.path() == Some(path)));
     }
 }
 

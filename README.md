@@ -73,6 +73,10 @@ services:
 
 Open `http://<host>:3000`, create the admin account, then add your providers. Do this before exposing the port to an untrusted network: until an admin exists, anyone who reaches the page can create one.
 
+For [environment-based setup](https://www.infinidysk.com/v2/reference/environment/), `id` is optional in `INFINIDYSK__PROVIDERS` and `INFINIDYSK__ARR_INSTANCES`. Give entries distinct names within each list. An unnamed provider uses its catalog profile ID or, for a custom provider, its hostname. Reordering entries or rotating credentials does not change their IDs. Reusing a name for a replacement account or instance reuses its ID; choose a new name if it should have separate history.
+
+To keep quota counters and Arr webhook URLs when moving settings from the UI, upgrading an older ID-less deployment, or renaming an entry, copy its current `id` from authenticated `GET /api/v1/settings` **before** the change. Keep the original credentials, not the masked values from that response.
+
 | | |
 |---|---|
 | **Port** | `3000`, shared by the UI, the SABnzbd API and WebDAV |
