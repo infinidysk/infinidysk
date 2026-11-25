@@ -256,6 +256,7 @@ pub async fn serve(
     let vars: Vec<(String, String)> = vars.into_iter().collect();
     // Input is checked before a pending restore moves anything.
     let overrides = config::parse_overrides(vars.iter().cloned())?;
+    let initial_admin = crate::auth::InitialAdmin::from_vars(&vars)?;
     let pending = crate::backup::boot::apply_pending(boot)?;
     let default_cache_dir = boot.home.join("cache").display().to_string();
     let db = match Db::connect(&boot.database_url).await {
@@ -636,11 +637,15 @@ pub async fn serve(
         handoff: Arc::clone(&handoff),
     };
     let config = Arc::new(RwLock::new(store));
-    let auth = Arc::new(
-        Auth::load(db.clone(), Arc::clone(&config))
+    let mut auth = Auth::load(db.clone(), Arc::clone(&config))
+        .await
+        .context("loading the admin account")?;
+    if let Some(initial) = initial_admin {
+        auth.provision(initial)
             .await
-            .context("loading the admin account")?,
-    );
+            .context("creating the admin account")?;
+    }
+    let auth = Arc::new(auth);
     let sab =
         Sab::new(Arc::clone(&queue), Arc::clone(&config)).context("building the NZB fetcher")?;
     let discovery = Arc::new(

@@ -446,6 +446,262 @@ async fn an_unusable_config_dir_stops_startup_with_one_warning() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// One HTTP request with an optional admin key; returns the status line and body.
+async fn api(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    key: Option<&str>,
+    body: &str,
+) -> (String, String) {
+    let key = key
+        .map(|k| format!("X-Api-Key: {k}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{key}\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    send(addr, &request).await
+}
+
+/// Stops the real binary as a container stop would.
+async fn stop(child: &mut tokio::process::Child) {
+    let pid = child.id().unwrap().to_string();
+    tokio::process::Command::new("sh")
+        .args(["-c", "kill -TERM \"$1\"", "sh", &pid])
+        .status()
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(60), child.wait())
+        .await
+        .expect("the server did not stop")
+        .unwrap();
+}
+
+/// A deployment that supplies the account, keys and lists through mounted files starts
+/// without the setup page, and a restart keeps what the running server changed.
+#[tokio::test]
+async fn headless_boot_and_restart_keep_the_account_settings_and_ids() {
+    const PROVIDER: &str = "0190f6c4-0000-7000-8000-0000000000c1";
+    const ARR: &str = "0190f6c4-0000-7000-8000-0000000000c2";
+    let root = std::env::temp_dir().join(format!("infinidysk-headless-{}", ItemId::new()));
+    let (home, data, secrets) = (root.join("config"), root.join("data"), root.join("secrets"));
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&secrets).unwrap();
+    let secret = |name: &str, text: &str| {
+        let path = secrets.join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let database = data.join("infinidysk.sqlite");
+    let url_file = secret("database-url", &format!("sqlite:{}\n", database.display()));
+    let password_file = secret("admin-password", "initial-password\n");
+    let key_file = secret("admin-key", "headless-admin-key\n");
+    let providers = secret(
+        "providers.json",
+        &format!(
+            r#"[{{"id":"{PROVIDER}","name":"p","hostname":"news.example","port":563,"password":"pw","enabled":false}}]"#
+        ),
+    );
+    let arrs = secret(
+        "arrs.json",
+        &format!(
+            r#"[{{"id":"{ARR}","name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"k","enabled":false}}]"#
+        ),
+    );
+    let start = |addr: SocketAddr| {
+        binary()
+            .env("INFINIDYSK_CONFIG_DIR", &home)
+            .env("INFINIDYSK_LISTEN", addr.to_string())
+            .env("INFINIDYSK_DATABASE_URL_FILE", &url_file)
+            .env("INFINIDYSK_ADMIN_USERNAME", "admin")
+            .env("INFINIDYSK_ADMIN_PASSWORD_FILE", &password_file)
+            .env("INFINIDYSK__AUTH__API_KEY_FILE", &key_file)
+            .env("INFINIDYSK__PROVIDERS_FILE", &providers)
+            .env("INFINIDYSK__ARR_INSTANCES_FILE", &arrs)
+            .env("INFINIDYSK__MOUNT__FUSE", "false")
+            .env("INFINIDYSK__MOUNT__DIR", root.join("mnt"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let up = async |addr: SocketAddr| {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while TcpStream::connect(addr).await.is_err() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("the server did not answer");
+    };
+    let key = Some("headless-admin-key");
+    let login = async |addr, password: &str| {
+        let body = json!({"username": "admin", "password": password}).to_string();
+        api(addr, "POST", "/api/v1/auth/login", None, &body).await.0
+    };
+    let settings = async |addr| {
+        let (code, body) = api(addr, "GET", "/api/v1/settings", key, "").await;
+        assert_eq!(code, "HTTP/1.1 200 OK", "{body}");
+        let mut settings: Value = serde_json::from_str(&body).unwrap();
+        settings.as_object_mut().unwrap().remove("revision");
+        settings
+    };
+    let admin_hash = async || {
+        let db = infinidysk_db::Db::connect(&format!("sqlite:{}", database.display()))
+            .await
+            .unwrap();
+        let (_, hash) = db.admin().await.unwrap().expect("an account");
+        db.close().await;
+        hash
+    };
+    let free = || async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap()
+    };
+
+    let addr = free().await;
+    let mut child = start(addr);
+    up(addr).await;
+    let (_, status) = api(addr, "GET", "/api/v1/auth", None, "").await;
+    let status: Value = serde_json::from_str(&status).unwrap();
+    assert_eq!(status["setup_required"], false, "{status}");
+    assert_eq!(status["account"], true, "{status}");
+    let claim = json!({"username": "intruder", "password": "intruder-password"}).to_string();
+    let (code, _) = api(addr, "POST", "/api/v1/auth/setup", None, &claim).await;
+    assert_eq!(code, "HTTP/1.1 409 Conflict");
+    assert_eq!(
+        login(addr, "initial-password").await,
+        "HTTP/1.1 204 No Content"
+    );
+    let (_, view) = api(addr, "GET", "/api/v1/database", key, "").await;
+    let view: Value = serde_json::from_str(&view).unwrap();
+    assert_eq!(
+        view["sqlite_path"],
+        database.display().to_string(),
+        "{view}"
+    );
+    assert_eq!(view["env_managed"], true, "{view}");
+    let before = settings(addr).await;
+    assert_eq!(before["settings"]["providers"][0]["id"], PROVIDER);
+    assert_eq!(before["settings"]["arr_instances"][0]["id"], ARR);
+    let change = json!({"current_password": "initial-password", "password": "rotated-password"});
+    let (code, body) = api(
+        addr,
+        "PUT",
+        "/api/v1/auth/password",
+        key,
+        &change.to_string(),
+    )
+    .await;
+    assert_eq!(code, "HTTP/1.1 204 No Content", "{body}");
+    stop(&mut child).await;
+    let rotated = admin_hash().await;
+
+    let addr = free().await;
+    let mut child = start(addr);
+    up(addr).await;
+    assert_eq!(
+        login(addr, "rotated-password").await,
+        "HTTP/1.1 204 No Content"
+    );
+    assert_ne!(
+        login(addr, "initial-password").await,
+        "HTTP/1.1 204 No Content"
+    );
+    assert_eq!(settings(addr).await, before);
+    stop(&mut child).await;
+    assert_eq!(admin_hash().await, rotated);
+    assert!(!home.join("infinidysk.sqlite").exists());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// Bad deployment input stops startup with one line naming the input, before any setup
+/// page is served, and never prints a secret.
+#[tokio::test]
+async fn invalid_provisioning_fails_without_opening_setup() {
+    use std::os::unix::ffi::OsStrExt as _;
+    const SENTINEL: &str = "sentinel-secret-4e8a";
+    let root = std::env::temp_dir().join(format!("infinidysk-provision-{}", ItemId::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let password_file = root.join("password");
+    std::fs::write(&password_file, SENTINEL).unwrap();
+    let password_file = password_file.display().to_string();
+    let absent = root.join("absent").display().to_string();
+    let malformed = format!(r#"[{{"id":"x","password":"{SENTINEL}""#);
+    let user = ("INFINIDYSK_ADMIN_USERNAME", "admin");
+    let cases: [(Vec<(&str, &str)>, &str); 7] = [
+        (vec![user], "INFINIDYSK_ADMIN_PASSWORD"),
+        (
+            vec![
+                user,
+                ("INFINIDYSK_ADMIN_PASSWORD", SENTINEL),
+                ("INFINIDYSK_ADMIN_PASSWORD_FILE", &password_file),
+            ],
+            "INFINIDYSK_ADMIN_PASSWORD",
+        ),
+        (
+            vec![user, ("INFINIDYSK_ADMIN_PASSWORD", "short")],
+            "at least 8 characters",
+        ),
+        (
+            vec![user, ("INFINIDYSK_ADMIN_PASWORD", SENTINEL)],
+            "INFINIDYSK_ADMIN_PASWORD",
+        ),
+        (
+            vec![("INFINIDYSK_DATABASE_URL_FILE", &absent)],
+            "INFINIDYSK_DATABASE_URL",
+        ),
+        (
+            vec![("INFINIDYSK__QUEUE__CONCURRENCY", "50")],
+            "queue.concurrency",
+        ),
+        (
+            vec![("INFINIDYSK__PROVIDERS", &malformed)],
+            "INFINIDYSK__PROVIDERS",
+        ),
+    ];
+    let run = async |command: &mut tokio::process::Command, want: &str| {
+        let home = root.join(ItemId::new().to_string());
+        command
+            .env("INFINIDYSK_CONFIG_DIR", &home)
+            .env("INFINIDYSK_LISTEN", "127.0.0.1:0")
+            .env("INFINIDYSK__MOUNT__DIR", root.join("mnt"))
+            .env("RUST_LOG", "off")
+            .env("RUST_BACKTRACE", "1")
+            .env("NO_COLOR", "1");
+        let output = tokio::time::timeout(Duration::from_secs(60), command.output())
+            .await
+            .expect("startup did not stop")
+            .unwrap();
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.code(), Some(1), "{want}: {printed}");
+        let lines: Vec<&str> = printed.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1, "{want}: {printed}");
+        assert!(lines[0].contains(want), "{want}: {printed}");
+        for leak in [SENTINEL, "Error:", "backtrace", "panicked"] {
+            assert!(!printed.contains(leak), "{want}: {printed}");
+        }
+    };
+    for (vars, want) in cases {
+        let mut command = binary();
+        command.envs(vars);
+        run(&mut command, want).await;
+    }
+    let mut command = binary();
+    command.env(
+        "INFINIDYSK_TEST_BYTES",
+        std::ffi::OsStr::from_bytes(b"\xff"),
+    );
+    run(&mut command, "INFINIDYSK_TEST_BYTES").await;
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// `INFINIDYSK_CONFIG_DIR` decides where the real binary makes its database and logs, and
 /// where it looks for a 1.x install to import.
 #[tokio::test]

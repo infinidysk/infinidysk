@@ -220,6 +220,32 @@ impl Auth {
         set_cookie(headers, &token, SESSION_SECS)
     }
 
+    /// Creates the deployment's admin account unless one exists. An existing account
+    /// wins: the supplied password is an initial value, never a rotation.
+    pub(crate) async fn provision(&mut self, initial: InitialAdmin) -> anyhow::Result<()> {
+        if self.admin.get_mut().is_some() {
+            return Ok(());
+        }
+        let hash = self
+            .hash(initial.password.0)
+            .await
+            .map_err(|_| anyhow::anyhow!("hashing the admin password failed"))?;
+        if self.db.create_admin(&initial.username, &hash).await? {
+            *self.admin.get_mut() = Some(Admin {
+                username: initial.username,
+                hash,
+            });
+            tracing::info!("created the admin account from the environment");
+            return Ok(());
+        }
+        let (username, hash) =
+            self.db.admin().await?.ok_or_else(|| {
+                anyhow::anyhow!("the admin account was neither created nor found")
+            })?;
+        *self.admin.get_mut() = Some(Admin { username, hash });
+        Ok(())
+    }
+
     async fn hash(&self, password: String) -> Result<String, Fail> {
         let _permit = self.hashing.acquire().await.map_err(|_| Fail::Internal)?;
         tokio::task::spawn_blocking(move || {
@@ -345,13 +371,76 @@ pub(crate) struct AuthStatus {
 }
 
 fn check(username: &str, password: &str) -> Result<(), Fail> {
+    check_username(username).map_err(Fail::Bad)?;
+    check_password(password).map_err(Fail::Bad)
+}
+
+fn check_username(username: &str) -> Result<(), &'static str> {
     if username.trim().is_empty() || username.len() > MAX_FIELD {
-        return Err(Fail::Bad("username must be 1-1024 bytes"));
-    }
-    if password.chars().count() < MIN_PASSWORD || password.len() > MAX_FIELD {
-        return Err(Fail::Bad("password must be at least 8 characters"));
+        return Err("username must be 1-1024 bytes");
     }
     Ok(())
+}
+
+fn check_password(password: &str) -> Result<(), &'static str> {
+    if password.chars().count() < MIN_PASSWORD || password.len() > MAX_FIELD {
+        return Err("password must be at least 8 characters");
+    }
+    Ok(())
+}
+
+const ADMIN_USERNAME: &str = "INFINIDYSK_ADMIN_USERNAME";
+const ADMIN_PASSWORD: &str = "INFINIDYSK_ADMIN_PASSWORD";
+
+/// The admin account a deployment supplies, created at startup when none exists.
+/// Deliberately not `Debug`: it holds a password.
+pub(crate) struct InitialAdmin {
+    username: String,
+    password: config::Secret,
+}
+
+impl InitialAdmin {
+    /// Reads `INFINIDYSK_ADMIN_USERNAME` and `INFINIDYSK_ADMIN_PASSWORD`, each also as
+    /// `_FILE`. `None` when neither is set; one without the other, a value outside the
+    /// setup bounds or another `INFINIDYSK_ADMIN_` name is an error.
+    pub(crate) fn from_vars(vars: &[(String, String)]) -> Result<Option<Self>, config::Error> {
+        let known = [ADMIN_USERNAME, ADMIN_PASSWORD];
+        let value = |name: &str| vars.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+        for (name, _) in vars {
+            let stem = name.strip_suffix("_FILE").unwrap_or(name);
+            if name.starts_with("INFINIDYSK_ADMIN_") && !known.contains(&stem) {
+                return Err(input(name, "not an admin account variable"));
+            }
+        }
+        let supplied =
+            |name: &str| config::supplied_text(name, value(name), value(&format!("{name}_FILE")));
+        match (supplied(ADMIN_USERNAME)?, supplied(ADMIN_PASSWORD)?) {
+            (None, None) => Ok(None),
+            (Some(_), None) => Err(input(
+                ADMIN_PASSWORD,
+                "must be set with INFINIDYSK_ADMIN_USERNAME",
+            )),
+            (None, Some(_)) => Err(input(
+                ADMIN_USERNAME,
+                "must be set with INFINIDYSK_ADMIN_PASSWORD",
+            )),
+            (Some(username), Some(password)) => {
+                check_username(&username).map_err(|reason| input(ADMIN_USERNAME, reason))?;
+                check_password(&password).map_err(|reason| input(ADMIN_PASSWORD, reason))?;
+                Ok(Some(Self {
+                    username,
+                    password: config::Secret(password),
+                }))
+            }
+        }
+    }
+}
+
+fn input(name: &str, reason: &'static str) -> config::Error {
+    config::Error::Input {
+        path: name.to_owned(),
+        reason,
+    }
 }
 
 #[utoipa::path(get, path = "/api/v1/auth", tag = "auth", security(()),
@@ -388,8 +477,8 @@ async fn sso_on(auth: &Auth) -> bool {
 }
 
 /// Creates the admin account and signs in; only while none exists.
-// ponytail: whoever reaches a fresh install first claims it; an env-provisioned admin is
-// the upgrade path if exposed first runs become a problem.
+// ponytail: without INFINIDYSK_ADMIN_USERNAME and INFINIDYSK_ADMIN_PASSWORD, whoever
+// reaches a fresh install first claims it; deployments that expose a first run set them.
 #[utoipa::path(post, path = "/api/v1/auth/setup", tag = "auth", security(()), request_body = Login,
     responses(
         (status = 204, description = "Signed in; sets the session cookie"),
