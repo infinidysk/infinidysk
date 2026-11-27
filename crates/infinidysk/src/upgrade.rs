@@ -2271,8 +2271,12 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("http://auth.example.com/") && error.contains("OIDC_*"),
+            error.contains("Issuer must be") && error.contains("OIDC_*"),
             "{error}"
+        );
+        assert!(
+            !error.contains("auth.example.com"),
+            "input stays out: {error}"
         );
         let mut notes = Vec::new();
         let o = oidc(|n| vars.get(n).copied(), true, &mut notes).unwrap();
