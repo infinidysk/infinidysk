@@ -568,7 +568,7 @@ struct SettingsPatch {
     revision: Uuid,
     /// Settings to change, shaped like `settings`. Objects merge; values and lists
     /// replace. A list entry that keeps its `id` keeps a secret it leaves out.
-    #[schema(value_type = Object)]
+    #[schema(value_type = HashMap<String, serde_json::Value>)]
     changes: serde_json::Map<String, serde_json::Value>,
 }
 

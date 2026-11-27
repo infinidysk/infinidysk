@@ -4555,7 +4555,9 @@ export interface components {
              * @description Settings to change, shaped like `settings`. Objects merge; values and lists
              *     replace. A list entry that keeps its `id` keeps a secret it leaves out.
              */
-            changes: Record<string, never>;
+            changes: {
+                [key: string]: unknown;
+            };
             /**
              * Format: uuid
              * @description The `revision` of the settings the changes were made against.
