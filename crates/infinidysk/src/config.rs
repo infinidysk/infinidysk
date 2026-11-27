@@ -1550,14 +1550,14 @@ impl Settings {
             p.resolve(&Provider::label(i))?;
         }
         ids.clear();
-        for a in &self.arr_instances {
+        for (i, a) in self.arr_instances.iter().enumerate() {
             if !ids.insert(a.id) {
                 return Err(invalid(
                     "arr_instances",
                     format!("Duplicate Arr instance id {}", a.id),
                 ));
             }
-            a.validate()?;
+            a.validate(&ArrInstance::label(i))?;
         }
         Ok(())
     }
@@ -1644,10 +1644,16 @@ impl Provider {
 }
 
 impl ArrInstance {
-    pub(crate) fn validate(&self) -> Result<(), Error> {
+    /// Names the Arr instance at `index` in messages by its list position; its name is
+    /// user input that can carry credentials.
+    pub(crate) fn label(index: usize) -> String {
+        format!("Arr instance {}", index + 1)
+    }
+
+    /// `label` names the instance in errors; see [`ArrInstance::label`].
+    pub(crate) fn validate(&self, label: &str) -> Result<(), Error> {
         const A: &str = "arr_instances";
-        let label = &self.name;
-        if label.trim().is_empty() {
+        if self.name.trim().is_empty() {
             return Err(invalid(A, "Arr instance name must not be empty".to_owned()));
         }
         let rest = self
@@ -1657,14 +1663,11 @@ impl ArrInstance {
         if rest.is_none_or(str::is_empty) {
             return Err(invalid(
                 A,
-                format!("Arr instance {label}: URL must start with http:// or https://"),
+                format!("{label}: URL must start with http:// or https://"),
             ));
         }
         if self.api_key.0.is_empty() {
-            return Err(invalid(
-                A,
-                format!("Arr instance {label}: API key is required"),
-            ));
+            return Err(invalid(A, format!("{label}: API key is required")));
         }
         Ok(())
     }
@@ -1835,17 +1838,28 @@ pub(crate) fn parse_overrides(
             );
         }
     }
+    // A generated secret a variable owns is never generated: a new one on every start
+    // would break clients that saved the old one.
     for secret in GENERATED {
-        let owned = env
+        let Some(o) = env
             .iter()
-            .any(|o| o.path == secret || o.path == [secret[0]]);
+            .find(|o| o.path == secret || o.path == [secret[0]])
+        else {
+            continue;
+        };
         let path = secret.map(str::to_owned);
-        if owned && lookup(&decoded, &path).and_then(Value::as_str) == Some("") {
-            return Err(input(
-                path.join("."),
-                "must not be empty when a variable sets it",
-            ));
+        if lookup(&decoded, &path).and_then(Value::as_str) != Some("") {
+            continue;
         }
+        let reason = if o.path == path {
+            "must not be empty when a variable sets it"
+        } else if lookup(&o.value, &path[1..]).is_none() {
+            "is left out of the object a variable sets for its parent; add it to that \
+             object, since a secret a variable owns is never generated"
+        } else {
+            "must not be empty in the object a variable sets for its parent"
+        };
+        return Err(input(path.join("."), reason));
     }
     Ok(env)
 }
@@ -2319,19 +2333,19 @@ fn check_rc_url_override(
 /// Readarr support was dropped; an instance left from before stops startup with what
 /// to do, not a parse error.
 fn reject_readarr(tree: &Value) -> Result<(), Error> {
-    let Some(arr) = tree["arr_instances"]
+    let Some(index) = tree["arr_instances"]
         .as_array()
-        .and_then(|arrs| arrs.iter().find(|a| a["profile"] == "readarr"))
+        .and_then(|arrs| arrs.iter().position(|a| a["profile"] == "readarr"))
     else {
         return Ok(());
     };
     Err(invalid(
         "arr_instances",
         format!(
-            "Arr instance \"{}\" is a Readarr, which infinidysk no longer supports. Remove \
-             it first: in the previous version under Settings > Automation > Arr \
-             instances, or from INFINIDYSK__ARR_INSTANCES. Then upgrade and add Chaptarr.",
-            arr["name"].as_str().unwrap_or_default()
+            "{} is a Readarr, which infinidysk no longer supports. Remove it first: in the \
+             previous version under Settings > Automation > Arr instances, or from \
+             INFINIDYSK__ARR_INSTANCES. Then upgrade and add Chaptarr.",
+            ArrInstance::label(index)
         ),
     ))
 }

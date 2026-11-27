@@ -444,7 +444,8 @@ async fn a_readarr_instance_stops_loading_with_what_to_do() {
     let stopped = |result: Result<ConfigStore, Error>| match result {
         Err(Error::Invalid { path, message }) => {
             assert_eq!(path, "arr_instances");
-            assert!(message.contains("\"books\" is a Readarr"), "{message}");
+            assert!(message.contains("Arr instance 1 is a Readarr"), "{message}");
+            assert!(!message.contains("books"), "names are left out: {message}");
         }
         other => panic!("loaded: {:?}", other.err()),
     };
@@ -602,6 +603,20 @@ async fn deployment_inputs_are_strict_but_stored_values_still_load() {
         panic!("out-of-range concurrency loaded");
     };
     assert_eq!(message, "Concurrency must be 1-10");
+    // An object for a parent owns its secrets, so one it leaves out is not generated.
+    let Err(error) = ConfigStore::load(
+        db.clone(),
+        vars(&[("INFINIDYSK__AUTH", r#"{"mode":"disabled","api_key":"k"}"#)]),
+    )
+    .await
+    else {
+        panic!("auth without a session key loaded");
+    };
+    let message = error.to_string();
+    assert!(
+        message.starts_with("auth.session_key: is left out"),
+        "{message}"
+    );
 
     let lists = vars(&[
         ("INFINIDYSK__PROVIDERS", &format!("[{}]", provider(P2, ""))),

@@ -1559,7 +1559,7 @@ async fn post_arr_test(
         instance.name = format!("{:?}", instance.profile);
     }
     instance
-        .validate()
+        .validate("Arr instance")
         .map_err(|error| Fail::Bad(error.to_string()))?;
     let arr = crate::app::to_arr(&instance);
     Ok(Json(
