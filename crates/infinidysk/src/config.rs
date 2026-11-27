@@ -1304,8 +1304,8 @@ impl Settings {
             self.network.download_limit_mb_per_s = None;
         }
         let pd = Provider::default();
-        for p in &mut self.providers {
-            let f = format!("providers[{}].", p.label());
+        for (i, p) in self.providers.iter_mut().enumerate() {
+            let f = format!("providers[{i}].");
             reset(
                 &format!("{f}max_connections"),
                 &mut p.max_connections,
@@ -1540,14 +1540,14 @@ impl Settings {
             ));
         }
         let mut ids = HashSet::new();
-        for p in &mut self.providers {
+        for (i, p) in self.providers.iter_mut().enumerate() {
             if !ids.insert(p.id) {
                 return Err(invalid(
                     "providers",
                     format!("Duplicate provider id {}", p.id),
                 ));
             }
-            p.resolve()?;
+            p.resolve(&Provider::label(i))?;
         }
         ids.clear();
         for a in &self.arr_instances {
@@ -1564,50 +1564,40 @@ impl Settings {
 }
 
 impl Provider {
-    fn label(&self) -> &str {
-        [&self.name, &self.hostname]
-            .into_iter()
-            .find(|s| !s.is_empty())
-            .or(self.profile.as_ref())
-            .map_or("", String::as_str)
+    /// Names the provider at `index` in messages by its list position. The name and
+    /// hostname are user input that can carry credentials, so messages leave them out.
+    pub(crate) fn label(index: usize) -> String {
+        format!("provider {}", index + 1)
     }
 
-    pub(crate) fn resolve(&mut self) -> Result<(), Error> {
+    /// Checks the provider and fills `port`, `backbone` and `name` from its profile.
+    /// `label` names it in errors; see [`Provider::label`].
+    pub(crate) fn resolve(&mut self, label: &str) -> Result<(), Error> {
         const P: &str = "providers";
-        let label = self.label().to_owned();
         check(
             P,
-            &format!("Provider {label}: max connections"),
+            &format!("{label}: max connections"),
             self.max_connections,
             &MAX_CONNECTIONS,
         )?;
         check(
             P,
-            &format!("Provider {label}: pipeline depth"),
+            &format!("{label}: pipeline depth"),
             self.pipeline_depth,
             &PIPELINE_DEPTH,
         )?;
         if let Some(quota) = &self.quota {
+            check(P, &format!("{label}: quota GB"), quota.gb, &QUOTA_GB)?;
             check(
                 P,
-                &format!("Provider {label}: quota GB"),
-                quota.gb,
-                &QUOTA_GB,
-            )?;
-            check(
-                P,
-                &format!("Provider {label}: quota reset day"),
+                &format!("{label}: quota reset day"),
                 quota.reset_day,
                 &RESET_DAY,
             )?;
         }
         if let Some(id) = &self.profile {
-            let profile = catalog::profile(id).ok_or_else(|| {
-                invalid(
-                    P,
-                    format!("Provider {label}: unknown catalog profile {id:?}"),
-                )
-            })?;
+            let profile = catalog::profile(id)
+                .ok_or_else(|| invalid(P, format!("{label}: unknown catalog profile")))?;
             let server = if self.hostname.is_empty() {
                 profile.servers.first()
             } else {
@@ -1619,10 +1609,7 @@ impl Provider {
             .ok_or_else(|| {
                 invalid(
                     P,
-                    format!(
-                        "Provider {label}: {} is not a {} server",
-                        self.hostname, profile.name
-                    ),
+                    format!("{label}: hostname is not a {} server", profile.name),
                 )
             })?;
             server.hostname.clone_into(&mut self.hostname);
@@ -1635,22 +1622,17 @@ impl Provider {
             if self.hostname.is_empty()
                 || self
                     .hostname
-                    .contains(|c: char| c.is_whitespace() || c == '/')
+                    .contains(|c: char| c.is_whitespace() || c == '/' || c == '@')
             {
-                return Err(invalid(
-                    P,
-                    format!("Provider {label}: invalid hostname {:?}", self.hostname),
-                ));
+                return Err(invalid(P, format!("{label}: invalid hostname")));
             }
-            check(P, &format!("Provider {label}: port"), self.port, &PORT)?;
+            check(P, &format!("{label}: port"), self.port, &PORT)?;
             if let Some(b) = &self.backbone
                 && catalog::backbone(b).is_none()
             {
                 return Err(invalid(
                     P,
-                    format!(
-                        "Provider {label}: unknown backbone {b:?}; pick one from the catalog or none"
-                    ),
+                    format!("{label}: unknown backbone; pick one from the catalog or none"),
                 ));
             }
             if self.name.is_empty() {

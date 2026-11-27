@@ -45,7 +45,7 @@ pub async fn post_provider_check(
         provider.password.restore(&saved);
     }
     provider
-        .resolve()
+        .resolve("provider")
         .map_err(|error| Fail::Bad(error.to_string()))?;
     let endpoint = app::endpoint(&provider).map_err(|error| Fail::Bad(error.connect_problem()))?;
     let result = tokio::time::timeout(CHECK_TIMEOUT, Connection::connect(&endpoint))

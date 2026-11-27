@@ -1067,6 +1067,20 @@ fn validation_rejects_unknown_catalog_entries_and_bad_arr_urls() {
     };
     assert!(matches!(wrong_host.validate(), Err(Error::Invalid { .. })));
 
+    // Hostnames and names are user input that can hold credentials; errors name the
+    // provider by position and leave both out.
+    for (profile, hostname) in [
+        (None, "user:hunter2@news.example.com"),
+        (Some("eweka"), "hunter2.example.com"),
+    ] {
+        let mut leaky = custom(None);
+        leaky.providers[0].profile = profile.map(Into::into);
+        leaky.providers[0].hostname = hostname.into();
+        let message = leaky.validate().expect_err(hostname).to_string();
+        assert!(message.contains("provider 1"), "{message}");
+        assert!(!message.contains("hunter2"), "{message}");
+    }
+
     let old: Provider = serde_json::from_str(r#"{"hostname":"news.example.com"}"#).expect("json");
     assert_eq!(old.pipeline_depth, 4, "saved providers keep the old depth");
     for (depth, ok) in [(0, false), (1, true), (16, true), (17, false)] {
