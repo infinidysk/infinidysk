@@ -242,7 +242,7 @@ fn config_dir_setting(value: Option<&str>) -> anyhow::Result<Option<PathBuf>> {
     let dir = Path::new(value);
     // An empty value is not absolute either.
     if !dir.is_absolute() {
-        anyhow::bail!("INFINIDYSK_CONFIG_DIR must be an absolute path, not {value:?}");
+        anyhow::bail!("INFINIDYSK_CONFIG_DIR must be an absolute path");
     }
     Ok(Some(dir.to_path_buf()))
 }

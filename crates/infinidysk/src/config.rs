@@ -1082,13 +1082,13 @@ impl Performance {
         if !dir.is_absolute() {
             return Err(invalid(
                 "performance.disk_cache_dir",
-                format!("Disk cache dir {cache_dir:?} must be an absolute path"),
+                "Disk cache dir must be an absolute path".to_owned(),
             ));
         }
         if dir.starts_with(mount_dir) {
             return Err(invalid(
                 "performance.disk_cache_dir",
-                format!("Disk cache dir {cache_dir:?} must be outside the mount dir"),
+                "Disk cache dir must be outside the mount dir".to_owned(),
             ));
         }
         Ok(())
@@ -1346,7 +1346,7 @@ impl Settings {
         if !self.mount.dir.starts_with('/') {
             return Err(invalid(
                 "mount.dir",
-                format!("Mount dir {:?} must be an absolute path", self.mount.dir),
+                "Mount dir must be an absolute path".to_owned(),
             ));
         }
         // A mount over the config folder would hide its files once it mounts.
@@ -1356,8 +1356,7 @@ impl Settings {
             return Err(invalid(
                 "mount.dir",
                 format!(
-                    "Mount dir {:?} must not contain the config folder {}",
-                    self.mount.dir,
+                    "Mount dir must not contain the config folder {}",
                     config_dir.display()
                 ),
             ));
@@ -1427,13 +1426,13 @@ impl Settings {
             if !backup_dir.starts_with('/') {
                 return Err(invalid(
                     "maintenance.backup.dir",
-                    format!("Backup folder {backup_dir:?} must be an absolute path"),
+                    "Backup folder must be an absolute path".to_owned(),
                 ));
             }
             if std::path::Path::new(backup_dir).starts_with(&self.mount.dir) {
                 return Err(invalid(
                     "maintenance.backup.dir",
-                    format!("Backup folder {backup_dir:?} must be outside the mount"),
+                    "Backup folder must be outside the mount".to_owned(),
                 ));
             }
         }
@@ -1442,20 +1441,20 @@ impl Settings {
         if !strm_dir.starts_with('/') {
             return Err(invalid(
                 "imports.strm_dir",
-                format!("STRM directory {strm_dir:?} must be an absolute path"),
+                "STRM directory must be an absolute path".to_owned(),
             ));
         }
         self.imports.strm_dir = strm_dir.to_owned();
         self.imports
             .library_dirs
             .retain(|d| !d.path.trim().is_empty());
-        for dir in &mut self.imports.library_dirs {
+        for (i, dir) in self.imports.library_dirs.iter_mut().enumerate() {
             for path in [&mut dir.path, &mut dir.arr_path] {
                 let trimmed = path.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with('/') {
                     return Err(invalid(
                         "imports.library_dirs",
-                        format!("Library folder {trimmed:?} must be an absolute path"),
+                        format!("Library folder {} must be an absolute path", i + 1),
                     ));
                 }
                 *path = if trimmed == "/" {
@@ -1491,18 +1490,18 @@ impl Settings {
             if let Some(what) = clash {
                 return Err(invalid(
                     "imports.library_dirs",
-                    format!("Library folder {path:?} {what}"),
+                    format!("Library folder {} {what}", i + 1),
                 ));
             }
         }
         self.network
             .trusted_proxies
             .retain(|p| !p.trim().is_empty());
-        for proxy in &mut self.network.trusted_proxies {
+        for (i, proxy) in self.network.trusted_proxies.iter_mut().enumerate() {
             if infinidysk_webdav::parse_proxy(proxy).is_none() {
                 return Err(invalid(
                     "network.trusted_proxies",
-                    format!("Trusted proxy {proxy:?} is not an IP address or CIDR range"),
+                    format!("Trusted proxy {} is not an IP address or CIDR range", i + 1),
                 ));
             }
             *proxy = proxy.trim().to_owned();
@@ -1822,18 +1821,19 @@ pub(crate) fn parse_overrides(
         check_input(&o.path.join("."), &o.value, known)?;
     }
     if let Some(o) = env.iter().find(|o| o.path == ["experiments"]) {
-        let dropped: Vec<&str> = o
+        // Counted, not named: the entries are free text and could hold a secret.
+        let dropped = o
             .value
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
             .filter(|name| !EXPERIMENTS.iter().any(|e| e.name == *name))
-            .collect();
-        if !dropped.is_empty() {
+            .count();
+        if dropped > 0 {
             tracing::warn!(
                 variable = "INFINIDYSK__EXPERIMENTS",
-                dropped = dropped.join(", "),
+                dropped,
                 "ignoring experiments this version does not have"
             );
         }

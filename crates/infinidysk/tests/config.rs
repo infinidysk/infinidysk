@@ -952,6 +952,30 @@ fn library_dirs_stored_as_plain_paths_still_load() {
 }
 
 #[test]
+fn path_and_proxy_errors_leave_the_value_out() {
+    const SECRET: &str = "sentinel-secret";
+    let cases: [fn(&mut Settings); 6] = [
+        |s| s.mount.dir = SECRET.into(),
+        |s| s.performance.disk_cache_dir = Some(SECRET.into()),
+        |s| s.maintenance.backup.dir = SECRET.into(),
+        |s| s.imports.strm_dir = SECRET.into(),
+        |s| {
+            s.imports.library_dirs = vec![LibraryDir {
+                path: SECRET.into(),
+                arr_path: String::new(),
+            }];
+        },
+        |s| s.network.trusted_proxies = vec![SECRET.into()],
+    ];
+    for (i, set) in cases.into_iter().enumerate() {
+        let mut settings = Settings::default();
+        set(&mut settings);
+        let message = settings.validate().expect_err("invalid").to_string();
+        assert!(!message.contains(SECRET), "case {i}: {message}");
+    }
+}
+
+#[test]
 fn idle_memory_trim_is_opt_in_and_survives_a_settings_round_trip() {
     let enabled = |settings: &Settings| {
         settings
