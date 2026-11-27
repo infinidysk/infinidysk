@@ -1051,7 +1051,7 @@ async fn settings_patch_preserves_omissions_and_rejects_stale_writes() {
     .await;
     assert_eq!(code, ok, "{body}");
     let password = &stored("providers").await[0]["password"];
-    assert!(password.is_null() || password == "", "{password}");
+    assert!(password.is_null() || password == "");
     assert_eq!(
         body["settings"]["network"]["download_limit_mb_per_s"],
         Value::Null
