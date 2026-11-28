@@ -699,9 +699,9 @@ impl Oidc {
         }
     }
 
-    /// Trims the fields; checks them only while SSO is on, so clearing the issuer alone
-    /// always turns SSO off.
-    pub(crate) fn validate(&mut self) -> Result<(), Error> {
+    /// Trims the fields and checks the ones that are valid or not on their own: the
+    /// display name, and the issuer when one is set (it turns SSO on).
+    fn check_values(&mut self) -> Result<(), Error> {
         self.issuer = self.issuer.trim().to_owned();
         self.client_id = self.client_id.trim().to_owned();
         self.redirect_uri = self.redirect_uri.trim().to_owned();
@@ -720,15 +720,27 @@ impl Oidc {
                 format!("Display name must be plain text of at most {MAX_DISPLAY_NAME} characters"),
             ));
         }
-        if !self.enabled() {
-            return Ok(());
-        }
-        if !issuer_ok(&self.issuer) {
+        if self.enabled() && !issuer_ok(&self.issuer) {
             return Err(invalid(
                 "auth.oidc.issuer",
                 "Issuer must be an https:// address without a query (http:// only on this machine)"
                     .to_owned(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Trims and checks every field.
+    pub(crate) fn validate(&mut self) -> Result<(), Error> {
+        self.check_values()?;
+        self.check_required()
+    }
+
+    /// The fields SSO needs, checked only while it is on, so clearing the issuer alone
+    /// always turns SSO off. Runs after [`Self::check_values`].
+    fn check_required(&self) -> Result<(), Error> {
+        if !self.enabled() {
+            return Ok(());
         }
         if self.client_id.is_empty() {
             return Err(invalid(
@@ -844,13 +856,19 @@ impl RcloneRc {
         Ok(url)
     }
 
-    fn validate(&mut self) -> Result<(), Error> {
+    /// Trims the fields and checks a URL that is set, whether or not RC is on.
+    fn check_values(&mut self) -> Result<(), Error> {
         for field in [&mut self.url, &mut self.fs, &mut self.user] {
             *field = field.trim().to_owned();
         }
         if !self.url.is_empty() {
             self.forget_url()?;
         }
+        Ok(())
+    }
+
+    /// The fields RC needs while it is on. Runs after [`Self::check_values`].
+    fn validate(&self) -> Result<(), Error> {
         if !self.enabled {
             return Ok(());
         }
@@ -1428,7 +1446,7 @@ impl Settings {
                 ));
             }
         }
-        self.auth.oidc.validate()?;
+        self.auth.oidc.check_required()?;
         if self.imports.strategy == ImportStrategy::Strm && self.network.public_url.is_empty() {
             return Err(invalid(
                 "imports.strategy",
@@ -1442,11 +1460,10 @@ impl Settings {
     /// other settings hold: ranges, single paths and addresses, and the provider and Arr
     /// lists. A variable that fails here fails with any saved settings, so startup runs
     /// this before a pending restore moves files (see [`check_supplied`]).
-    // ponytail: the OIDC and rclone RC sections check fields against each other, so they
-    // stay in `validate_in`; split per-field checks out of them to catch those before a
-    // restore too.
     pub(crate) fn check_values(&mut self) -> Result<(), Error> {
         self.performance.check_ranges()?;
+        self.auth.oidc.check_values()?;
+        self.rclone_rc.check_values()?;
         if let Some(dir) = &self.performance.disk_cache_dir
             && !std::path::Path::new(dir).is_absolute()
         {

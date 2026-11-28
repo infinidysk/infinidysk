@@ -469,6 +469,12 @@ async fn a_bad_variable_stops_startup_before_a_restore_swaps() {
         ),
         // No saved start makes this end valid.
         ("INFINIDYSK__MAINTENANCE__WINDOW__END", "25:00", "HH:MM"),
+        (
+            "INFINIDYSK__AUTH__OIDC__ISSUER",
+            "not-a-url",
+            "Issuer must be",
+        ),
+        ("INFINIDYSK__RCLONE_RC__URL", "ftp://rclone", "RC base URL"),
         // Both ends from the variable: no saved end can make them differ.
         (
             "INFINIDYSK__MAINTENANCE__WINDOW",
