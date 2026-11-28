@@ -96,6 +96,7 @@ impl Boot {
             std::env::var("INFINIDYSK_DATABASE_URL_FILE").ok(),
         )?;
         let (_, database_url, database_source) = crate::database::select(url, &home)?;
+        check_url_parameters(&database_url, database_source)?;
         let beside = base_dir(setting, &database_url);
         Ok(Self {
             listen: listen_from_env()?,
@@ -142,24 +143,41 @@ pub fn validate_deployment() -> anyhow::Result<()> {
             }
             .into());
         }
-        if infinidysk_db::check_postgres_url(url).is_err() {
-            return Err(config::Error::Input {
-                path: "INFINIDYSK_DATABASE_URL".to_owned(),
-                reason: "has a query parameter infinidysk does not support",
-            }
-            .into());
-        }
+        check_url_parameters(url, crate::database::Source::Env)?;
     }
     listen_from_env()?;
     var("PUID", 1000_u32)?;
     var("PGID", 1000_u32)?;
     var("INFINIDYSK_TRACE_MINUTES", 0_u32)?;
     let settings = config::fresh(&overrides, &home.join("cache").display().to_string())?;
-    match check_endpoints(&settings.providers) {
-        Ok(()) => Ok(()),
-        Err(EndpointCheck::Host(error)) => Err(error.into()),
-        Err(EndpointCheck::Other(error)) => {
-            Err(anyhow::Error::from(error).context("configuring Usenet providers"))
+    check_endpoints(&settings.providers).map_err(anyhow::Error::from)
+}
+
+/// Refuses a PostgreSQL URL with a query parameter the driver would log, value and all,
+/// as a bad input: one line naming where the URL came from, never the URL.
+fn check_url_parameters(url: &str, source: crate::database::Source) -> Result<(), config::Error> {
+    if infinidysk_db::check_postgres_url(url).is_err() {
+        return Err(config::Error::Input {
+            path: match source {
+                crate::database::Source::Env => "INFINIDYSK_DATABASE_URL",
+                crate::database::Source::BootFile | crate::database::Source::Default => {
+                    "the URL in database.toml"
+                }
+            }
+            .to_owned(),
+            reason: "has a query parameter infinidysk does not support",
+        });
+    }
+    Ok(())
+}
+
+impl From<EndpointCheck> for anyhow::Error {
+    fn from(check: EndpointCheck) -> Self {
+        match check {
+            EndpointCheck::Host(error) => error.into(),
+            EndpointCheck::Other(error) => {
+                Self::from(error).context("configuring Usenet providers")
+            }
         }
     }
 }
@@ -332,7 +350,8 @@ pub async fn serve(
     // Input is checked before a pending restore moves anything, so a bad variable does
     // not roll back a restore that neither database failed.
     let overrides = config::parse_overrides(vars.iter().cloned())?;
-    config::check_supplied(&overrides)?;
+    let supplied = config::check_supplied(&overrides)?;
+    check_endpoints(&supplied.providers)?;
     let initial_admin = crate::auth::InitialAdmin::from_vars(&vars)?;
     let pending = crate::backup::boot::apply_pending(boot)?;
     let default_cache_dir = boot.home.join("cache").display().to_string();
@@ -347,15 +366,16 @@ pub async fn serve(
         Err(error) => return Err(anyhow::Error::from(error).context("opening the database")),
     };
     // Past `finish` a restore no longer rolls back, so its settings must load first.
+    // Providers are built after `finish`, so their endpoints are checked here too.
     if pending.swapped()
         && let Err(error) =
-            ConfigStore::load_overrides(db.clone(), &overrides, default_cache_dir.clone()).await
+            ConfigStore::load_overrides(db.clone(), &overrides, default_cache_dir.clone())
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|store| Ok(check_endpoints(&store.settings().providers)?))
     {
         db.close().await;
-        let reason = format!(
-            "{:#}",
-            anyhow::Error::from(error).context("loading settings")
-        );
+        let reason = format!("{:#}", error.context("loading settings"));
         warn!(%reason, "the restored database did not open; putting the previous one back");
         crate::backup::boot::begin_roll_back(boot, pending, &reason)?;
         return Ok(Exit::Restart);

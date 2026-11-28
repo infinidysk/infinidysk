@@ -288,16 +288,35 @@ impl MaintenanceWindow {
     /// they are equal.
     #[must_use]
     pub fn minutes(&self) -> Option<(u16, u16)> {
-        let parse = |s: &str| {
-            let (h, m) = s.split_once(':')?;
-            if h.len() != 2 || m.len() != 2 {
-                return None;
-            }
-            let (h, m): (u16, u16) = (h.parse().ok()?, m.parse().ok()?);
-            (h < 24 && m < 60).then_some(h * 60 + m)
-        };
-        let (start, end) = (parse(&self.start)?, parse(&self.end)?);
+        let (start, end) = (Self::time(&self.start)?, Self::time(&self.end)?);
         (start != end).then_some((start, end))
+    }
+
+    /// `HH:MM` in minutes after midnight.
+    fn time(value: &str) -> Option<u16> {
+        let (h, m) = value.split_once(':')?;
+        if h.len() != 2 || m.len() != 2 {
+            return None;
+        }
+        let (h, m): (u16, u16) = (h.parse().ok()?, m.parse().ok()?);
+        (h < 24 && m < 60).then_some(h * 60 + m)
+    }
+
+    /// Each end on its own. Whether they differ is checked once both are known, since a
+    /// variable can set one end and the saved settings the other.
+    fn check_times(&self) -> Result<(), Error> {
+        for (path, value) in [
+            ("maintenance.window.start", &self.start),
+            ("maintenance.window.end", &self.end),
+        ] {
+            if Self::time(value).is_none() {
+                return Err(invalid(
+                    path,
+                    "The window start and end must each be HH:MM".to_owned(),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1428,6 +1447,14 @@ impl Settings {
     // restore too.
     pub(crate) fn check_values(&mut self) -> Result<(), Error> {
         self.performance.check_ranges()?;
+        if let Some(dir) = &self.performance.disk_cache_dir
+            && !std::path::Path::new(dir).is_absolute()
+        {
+            return Err(invalid(
+                "performance.disk_cache_dir",
+                "Disk cache dir must be an absolute path".to_owned(),
+            ));
+        }
         if !self.mount.dir.starts_with('/') {
             return Err(invalid(
                 "mount.dir",
@@ -2275,13 +2302,17 @@ impl ConfigStore {
 /// Checks each variable's value on its own ([`Settings::check_values`]), without saved
 /// settings. A failure here fails with any database, so startup runs it before a
 /// pending restore swaps one in; checks that need saved settings run after the swap.
-pub(crate) fn check_supplied(env: &[Override]) -> Result<(), Error> {
+/// Returns those settings, with providers resolved, for checks outside this module.
+pub(crate) fn check_supplied(env: &[Override]) -> Result<Settings, Error> {
     let mut tree = serde_json::to_value(Settings::default())?;
     for o in env {
         set(&mut tree, &o.path, o.value.clone());
     }
     let mut settings: Settings = serde_json::from_value(tree)?;
-    settings.check_values()
+    settings.check_values()?;
+    // A default end is valid, so only a supplied end can fail here.
+    settings.maintenance.window.check_times()?;
+    Ok(settings)
 }
 
 pub(crate) fn fresh(env: &[Override], default_cache_dir: &str) -> Result<Settings, Error> {

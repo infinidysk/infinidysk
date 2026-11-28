@@ -624,9 +624,11 @@ async fn invalid_provisioning_fails_without_opening_setup() {
     std::fs::write(&password_file, SENTINEL).unwrap();
     let password_file = password_file.display().to_string();
     let absent = root.join("absent").display().to_string();
+    // The driver would log an unknown parameter and its value.
+    let bad_url = format!("postgres://u@127.0.0.1/x?connect_timeout={SENTINEL}");
     let malformed = format!(r#"[{{"id":"x","password":"{SENTINEL}""#);
     let user = ("INFINIDYSK_ADMIN_USERNAME", "admin");
-    let cases: [(Vec<(&str, &str)>, &str); 7] = [
+    let cases: [(Vec<(&str, &str)>, &str); 8] = [
         (vec![user], "INFINIDYSK_ADMIN_PASSWORD"),
         (
             vec![
@@ -655,6 +657,10 @@ async fn invalid_provisioning_fails_without_opening_setup() {
         (
             vec![("INFINIDYSK__PROVIDERS", &malformed)],
             "INFINIDYSK__PROVIDERS",
+        ),
+        (
+            vec![("INFINIDYSK_DATABASE_URL", &bad_url)],
+            "INFINIDYSK_DATABASE_URL",
         ),
     ];
     let run = async |command: &mut tokio::process::Command, want: &str| {

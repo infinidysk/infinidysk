@@ -462,6 +462,19 @@ async fn a_bad_variable_stops_startup_before_a_restore_swaps() {
             "0",
             "Memory cache size",
         ),
+        (
+            "INFINIDYSK__PERFORMANCE__DISK_CACHE_DIR",
+            "cache",
+            "Disk cache dir",
+        ),
+        // No saved start makes this end valid.
+        ("INFINIDYSK__MAINTENANCE__WINDOW__END", "25:00", "HH:MM"),
+        // A setting, but startup could not build its TLS endpoint.
+        (
+            "INFINIDYSK__PROVIDERS",
+            r#"[{"name":"p","hostname":"news.example:563","tls":true}]"#,
+            "providers[0].hostname",
+        ),
     ] {
         let root = root();
         let (_, server, cancel) = start(&root).await;
