@@ -46,6 +46,7 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
+      - { if: "matrix.os == 'macos-latest'", shell: bash, run: 'set -eo pipefail; { git rev-parse HEAD; rustc -Vv; sysctl -n machdep.cpu.brand_string; } >> "$GITHUB_STEP_SUMMARY"; cargo run --release --locked -p infinidysk-yenc --example paired | tee -a "$GITHUB_STEP_SUMMARY"' }
 
   test-postgres:
     runs-on: ubuntu-latest
@@ -100,3 +101,5 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
+      - { if: "matrix.runner == 'ubuntu-26.04-arm'", run: 'cargo test --locked -p infinidysk-yenc --lib' }
+      - { shell: bash, run: 'set -eo pipefail; { git rev-parse HEAD; rustc -Vv; LC_ALL=C lscpu; } >> "$GITHUB_STEP_SUMMARY"; cargo run --release --locked -p infinidysk-yenc --example paired | tee -a "$GITHUB_STEP_SUMMARY"' }

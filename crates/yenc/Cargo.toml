@@ -9,6 +9,12 @@ repository.workspace = true
 publish.workspace = true
 links = "rapidyenc"
 
+[dependencies]
+crc32fast.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
 [build-dependencies]
 cmake.workspace = true
 
