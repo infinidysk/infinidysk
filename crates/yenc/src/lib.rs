@@ -4,6 +4,15 @@
 use std::ffi::{c_int, c_void};
 use std::sync::Once;
 
+mod block;
+#[cfg(target_arch = "aarch64")]
+mod neon;
+#[cfg(test)]
+mod parity;
+mod scalar;
+#[cfg(target_arch = "x86_64")]
+mod x86;
+
 mod ffi {
     use std::ffi::{c_int, c_void};
 
@@ -165,6 +174,43 @@ pub fn crc32(crc: u32, data: &[u8]) -> u32 {
     init();
     // SAFETY: `data` is valid for `data.len()` reads.
     unsafe { ffi::rapidyenc_crc(data.as_ptr().cast::<c_void>(), data.len(), crc) }
+}
+
+/// The Rust codec that replaces rapidyenc once it passes the performance gate (issue 1966).
+/// Public only for the paired benchmark; nothing else calls it yet.
+#[doc(hidden)]
+pub mod rust {
+    use crate::{DecodeEnd, DecoderState, block, scalar};
+
+    /// The kernel `decode_incremental` uses on this CPU.
+    pub fn kernel() -> &'static str {
+        block::available()
+            .first()
+            .map_or("scalar", |&(name, _)| name)
+    }
+
+    pub fn decode(raw: bool, src: &[u8], dst: &mut [u8], state: &mut DecoderState) -> usize {
+        assert!(dst.len() >= src.len(), "yEnc decode buffer too small");
+        scalar::decode(raw, src, dst, state)
+    }
+
+    pub fn decode_incremental(
+        src: &[u8],
+        dst: &mut Vec<u8>,
+        state: &mut DecoderState,
+    ) -> (usize, DecodeEnd) {
+        block::decode_incremental(block::best(), src, dst, state)
+    }
+
+    pub fn encode(src: &[u8], line_size: u16) -> Vec<u8> {
+        scalar::encode(src, line_size)
+    }
+
+    pub fn crc32(crc: u32, data: &[u8]) -> u32 {
+        let mut hasher = crc32fast::Hasher::new_with_initial(crc);
+        hasher.update(data);
+        hasher.finalize()
+    }
 }
 
 #[cfg(test)]
