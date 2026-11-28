@@ -469,6 +469,12 @@ async fn a_bad_variable_stops_startup_before_a_restore_swaps() {
         ),
         // No saved start makes this end valid.
         ("INFINIDYSK__MAINTENANCE__WINDOW__END", "25:00", "HH:MM"),
+        // Both ends from the variable: no saved end can make them differ.
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW",
+            r#"{"start":"07:00","end":"07:00"}"#,
+            "different end",
+        ),
         // A setting, but startup could not build its TLS endpoint.
         (
             "INFINIDYSK__PROVIDERS",

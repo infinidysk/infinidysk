@@ -2311,7 +2311,20 @@ pub(crate) fn check_supplied(env: &[Override]) -> Result<Settings, Error> {
     let mut settings: Settings = serde_json::from_value(tree)?;
     settings.check_values()?;
     // A default end is valid, so only a supplied end can fail here.
-    settings.maintenance.window.check_times()?;
+    let window = &settings.maintenance.window;
+    window.check_times()?;
+    // A variable at or above an end owns it; saved settings can supply only the other.
+    let owns = |end: &str| {
+        let target = ["maintenance", "window", end];
+        env.iter()
+            .any(|o| o.path.len() <= target.len() && o.path.iter().zip(target).all(|(a, b)| a == b))
+    };
+    if owns("start") && owns("end") && window.minutes().is_none() {
+        return Err(invalid(
+            "maintenance.window",
+            "The window needs a start and a different end, each HH:MM".to_owned(),
+        ));
+    }
     Ok(settings)
 }
 
@@ -2469,5 +2482,41 @@ fn diff(value: Value, default: Option<&Value>) -> Option<Value> {
         }
         (value, Some(default)) if &value == default => None,
         (value, _) => Some(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn supplied(vars: &[(&str, &str)]) -> Result<Settings, Error> {
+        let vars = vars.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned()));
+        check_supplied(&parse_overrides(vars).unwrap())
+    }
+
+    #[test]
+    fn equal_window_ends_fail_before_a_restore_only_when_variables_set_both() {
+        let window = r#"{"start":"07:00","end":"07:00"}"#;
+        for vars in [
+            &[("INFINIDYSK__MAINTENANCE__WINDOW", window)][..],
+            &[
+                ("INFINIDYSK__MAINTENANCE__WINDOW__START", "07:00"),
+                ("INFINIDYSK__MAINTENANCE__WINDOW__END", "07:00"),
+            ],
+        ] {
+            let error = supplied(vars).expect_err("both ends are supplied");
+            assert!(
+                matches!(
+                    error,
+                    Error::Invalid {
+                        path: "maintenance.window",
+                        ..
+                    }
+                ),
+                "{error}"
+            );
+        }
+        // The saved start can differ, so the comparison waits for the saved settings.
+        supplied(&[("INFINIDYSK__MAINTENANCE__WINDOW__END", "03:00")]).unwrap();
     }
 }
