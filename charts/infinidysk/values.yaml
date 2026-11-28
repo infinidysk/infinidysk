@@ -1,0 +1,84 @@
+image:
+  repository: ghcr.io/infinidysk/infinidysk-next
+  # Empty uses the chart's appVersion, the image released with this chart.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Owner of the files infinidysk writes. Without FUSE the container also runs as
+# this user and group, so both must be nonzero and able to write the config volume.
+puid: 1000
+pgid: 1000
+# The maintenance window follows this time zone.
+timezone: Etc/UTC
+
+# Off: a non-root container that serves WebDAV, the SABnzbd API and the UI.
+# On: an explicit opt-in to a privileged root container with host mounts. It needs
+# hostMountPath and nodeSelector["kubernetes.io/hostname"]. hostMountPath is an
+# existing, shared host directory; the library appears in its `infinidysk` child.
+fuse:
+  enabled: false
+  hostMountPath: ""
+
+# The /config volume. It is needed with PostgreSQL too. A claim the chart creates
+# is kept on uninstall; reuse it with existingClaim or delete it yourself.
+persistence:
+  existingClaim: ""
+  # null uses the cluster's default class; "" asks for no class.
+  storageClass: null
+  size: 10G
+
+# Application settings as a flat map of dotted paths, for example
+# `queue.concurrency: 3`. A value may be a list or an object.
+settings: {}
+# The same, for values that hold credentials. The chart stores them in a Secret,
+# but they also stay in your values file and in Helm's release storage, and base64
+# is not encryption. Prefer existingEnvSecret.
+secretSettings: {}
+# A Secret you manage whose keys are application environment variable names, such
+# as INFINIDYSK__PROVIDERS, INFINIDYSK_ADMIN_USERNAME and INFINIDYSK_ADMIN_PASSWORD.
+existingEnvSecret: ""
+
+# A Secret you manage that holds the PostgreSQL URL. Empty uses SQLite in /config.
+database:
+  existingSecret: ""
+  key: url
+
+# A Secret you manage that holds the admin API key (auth.api_key, not the SAB key).
+adminApiKey:
+  existingSecret: ""
+  key: api-key
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tlsSecret: ""
+
+# Needs the Gateway API CRDs and a Gateway you manage.
+httpRoute:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+
+# Needs the Prometheus Operator and adminApiKey.existingSecret. Turns on /metrics.
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+
+# Time to drain requests and unmount before the container is killed.
+terminationGracePeriodSeconds: 60
+
+# Empty sets no CPU or memory limit.
+resources: {}
+nodeSelector: {}
+tolerations: []
+
+# Native Kubernetes volumes and mounts, for example a library claim.
+extraVolumes: []
+extraVolumeMounts: []

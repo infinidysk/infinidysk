@@ -1,0 +1,363 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "image",
+    "imagePullSecrets",
+    "puid",
+    "pgid",
+    "timezone",
+    "fuse",
+    "persistence",
+    "settings",
+    "secretSettings",
+    "existingEnvSecret",
+    "database",
+    "adminApiKey",
+    "service",
+    "ingress",
+    "httpRoute",
+    "serviceMonitor",
+    "terminationGracePeriodSeconds",
+    "resources",
+    "nodeSelector",
+    "tolerations",
+    "extraVolumes",
+    "extraVolumeMounts"
+  ],
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "tag",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "puid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "pgid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fuse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "hostMountPath"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "hostMountPath": {
+          "type": "string"
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existingClaim",
+        "size"
+      ],
+      "properties": {
+        "existingClaim": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "settings": {
+      "$ref": "#/definitions/settingsMap"
+    },
+    "secretSettings": {
+      "$ref": "#/definitions/settingsMap"
+    },
+    "existingEnvSecret": {
+      "$ref": "#/definitions/secretName"
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existingSecret",
+        "key"
+      ],
+      "properties": {
+        "existingSecret": {
+          "$ref": "#/definitions/secretName"
+        },
+        "key": {
+          "$ref": "#/definitions/secretKey"
+        }
+      }
+    },
+    "adminApiKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existingSecret",
+        "key"
+      ],
+      "properties": {
+        "existingSecret": {
+          "$ref": "#/definitions/secretName"
+        },
+        "key": {
+          "$ref": "#/definitions/secretKey"
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "className",
+        "host",
+        "annotations",
+        "tlsSecret"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "annotations": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "tlsSecret": {
+          "type": "string"
+        }
+      }
+    },
+    "httpRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "parentRefs",
+        "hostnames"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "parentRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "hostnames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "labels",
+        "interval"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "labels": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "interval": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(ms|s|m|h)$"
+        }
+      }
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 30
+    },
+    "resources": {
+      "type": "object"
+    },
+    "nodeSelector": {
+      "$ref": "#/definitions/stringMap"
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "extraVolumes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "extraVolumeMounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "mountPath"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mountPath": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "settingsMap": {
+      "type": "object",
+      "propertyNames": {
+        "allOf": [
+          {
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          },
+          {
+            "not": {
+              "pattern": "__|_file$"
+            }
+          }
+        ]
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "boolean",
+          "number",
+          "array",
+          "object",
+          "null"
+        ]
+      }
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "secretName": {
+      "type": "string",
+      "maxLength": 253
+    },
+    "secretKey": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    }
+  }
+}

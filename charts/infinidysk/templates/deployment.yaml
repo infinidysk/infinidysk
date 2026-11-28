@@ -1,0 +1,157 @@
+{{- include "infinidysk.check" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "infinidysk.name" . | quote }}
+  labels:
+    {{- include "infinidysk.selector" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "infinidysk.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "infinidysk.selector" . | nindent 8 }}
+      {{- if .Values.secretSettings }}
+      annotations:
+        checksum/settings: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        fsGroup: {{ .Values.pgid | int64 }}
+        fsGroupChangePolicy: OnRootMismatch
+      nodeSelector:
+        {{- mergeOverwrite (dict) .Values.nodeSelector (dict "kubernetes.io/os" "linux") | toYaml | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: infinidysk
+          image: {{ printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- if .Values.fuse.enabled }}
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            privileged: true
+            allowPrivilegeEscalation: true
+            {{- else }}
+            runAsUser: {{ .Values.puid | int64 }}
+            runAsGroup: {{ .Values.pgid | int64 }}
+            runAsNonRoot: true
+            privileged: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PUID
+              value: {{ .Values.puid | int64 | quote }}
+            - name: PGID
+              value: {{ .Values.pgid | int64 | quote }}
+            - name: TZ
+              value: {{ .Values.timezone | replace "$" "$$" | quote }}
+            - name: INFINIDYSK_CONFIG_DIR
+              value: /config
+            - name: INFINIDYSK__MOUNT__FUSE
+              value: {{ .Values.fuse.enabled | quote }}
+            {{- if .Values.fuse.enabled }}
+            - name: INFINIDYSK__MOUNT__DIR
+              value: /mnt/infinidysk
+            {{- end }}
+            {{- range $path, $value := .Values.settings }}
+            - name: {{ printf "INFINIDYSK__%s" (upper (replace "." "__" $path)) }}
+              value: {{ include "infinidysk.value" $value | replace "$" "$$" | quote }}
+            {{- end }}
+            {{- if .Values.database.existingSecret }}
+            - name: INFINIDYSK_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret | quote }}
+                  key: {{ .Values.database.key | quote }}
+            {{- end }}
+            {{- if .Values.adminApiKey.existingSecret }}
+            - name: INFINIDYSK__AUTH__API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminApiKey.existingSecret | quote }}
+                  key: {{ .Values.adminApiKey.key | quote }}
+            {{- end }}
+            {{- if .Values.serviceMonitor.enabled }}
+            - name: INFINIDYSK__METRICS__PROMETHEUS
+              value: "true"
+            {{- end }}
+          {{- if or .Values.secretSettings .Values.existingEnvSecret }}
+          envFrom:
+            {{- if .Values.secretSettings }}
+            - secretRef:
+                name: {{ printf "%s-settings" (include "infinidysk.name" .) | quote }}
+            {{- end }}
+            {{- if .Values.existingEnvSecret }}
+            - secretRef:
+                name: {{ .Values.existingEnvSecret | quote }}
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            {{- if .Values.fuse.enabled }}
+            - name: mount
+              mountPath: /mnt
+              mountPropagation: Bidirectional
+            - name: fuse
+              mountPath: /dev/fuse
+            - name: bdi
+              mountPath: /sys/devices/virtual/bdi
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-config" .Release.Name) .Values.persistence.existingClaim | quote }}
+        {{- if .Values.fuse.enabled }}
+        - name: mount
+          hostPath:
+            path: {{ .Values.fuse.hostMountPath | quote }}
+            type: Directory
+        - name: fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+        - name: bdi
+          hostPath:
+            path: /sys/devices/virtual/bdi
+            type: Directory
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

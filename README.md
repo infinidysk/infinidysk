@@ -86,7 +86,7 @@ To keep quota counters and Arr webhook URLs when moving settings from the UI, up
 
 Next steps in the docs:
 
-1. [Run with Docker](https://www.infinidysk.com/v2/install/docker/)
+1. [Run with Docker](https://www.infinidysk.com/v2/install/docker/) or [on Kubernetes with Helm](charts/infinidysk/README.md)
 2. [Providers](https://www.infinidysk.com/v2/install/providers/)
 3. [Connect your Arr apps](https://www.infinidysk.com/v2/install/connect-arr/)
 4. [Settings](https://www.infinidysk.com/v2/reference/settings/)

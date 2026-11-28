@@ -100,3 +100,21 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
+      # The chart renders the same on every architecture, so check it once.
+      - uses: azure/setup-helm@v5
+        if: matrix.runner == 'ubuntu-26.04'
+        with:
+          version: v4.3.2
+      - uses: actions/setup-python@v7
+        if: matrix.runner == 'ubuntu-26.04'
+        with:
+          python-version: '3.13'
+      - run: python -m pip install PyYAML==6.0.3
+        if: matrix.runner == 'ubuntu-26.04'
+      - run: helm lint charts/infinidysk --strict --kube-version 1.31.0
+        if: matrix.runner == 'ubuntu-26.04'
+      - name: Check chart rendering and application configuration
+        if: matrix.runner == 'ubuntu-26.04'
+        env:
+          HELM_TEST_BINARY: target/release/infinidysk
+        run: python .github/scripts/test-helm.py

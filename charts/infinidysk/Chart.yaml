@@ -1,0 +1,9 @@
+apiVersion: v2
+name: infinidysk
+description: Usenet-backed virtual filesystem with FUSE and WebDAV
+type: application
+version: 0.0.0
+appVersion: nightly
+home: https://www.infinidysk.com/
+sources:
+  - https://github.com/infinidysk/infinidysk
