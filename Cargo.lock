@@ -1513,6 +1513,7 @@ version = "0.0.0"
 dependencies = [
  "futures-util",
  "infinidysk-core",
+ "percent-encoding",
  "sha2 0.11.1",
  "sqlx",
  "thiserror 2.0.21",

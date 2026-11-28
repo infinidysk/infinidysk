@@ -135,6 +135,13 @@ pub enum Error {
     OtherSchema(#[source] sqlx::migrate::MigrateError),
     #[error("database url must start with sqlite: or postgres:")]
     UnsupportedUrl,
+    /// The parameter's name and value stay out: a mistyped `password` holds the password.
+    #[error(
+        "database url has a query parameter infinidysk does not support; use only sslmode, \
+         sslrootcert, sslcert, sslkey, statement-cache-capacity, host, hostaddr, port, \
+         dbname, user, password, application_name and options"
+    )]
+    UnsupportedUrlParameter,
     #[error("invalid item name {0:?}")]
     InvalidName(String),
     #[error("stored row is invalid: {0}")]
@@ -1074,9 +1081,59 @@ macro_rules! delete_subtree {
     }};
 }
 
+/// The query parameters the PostgreSQL driver reads, with its aliases.
+const POSTGRES_PARAMETERS: [&str; 18] = [
+    "sslmode",
+    "ssl-mode",
+    "sslrootcert",
+    "ssl-root-cert",
+    "ssl-ca",
+    "sslcert",
+    "ssl-cert",
+    "sslkey",
+    "ssl-key",
+    "statement-cache-capacity",
+    "host",
+    "hostaddr",
+    "port",
+    "dbname",
+    "user",
+    "password",
+    "application_name",
+    "options",
+];
+
+/// Refuses a `postgres:` URL with a query parameter the driver does not read. The driver
+/// logs such a parameter's name and value as a warning, and a mistyped `password` would
+/// put the password in the log. Every caller that hands a URL to the driver checks first.
+/// Other URLs pass unchanged.
+pub fn check_postgres_url(url: &str) -> Result<(), Error> {
+    if !(url.starts_with("postgres:") || url.starts_with("postgresql:")) {
+        return Ok(());
+    }
+    // As the URL parser reads it: the query runs from the first `?` to the fragment,
+    // pairs split on `&`, and names decode `+` and percent escapes.
+    let before_fragment = url.split('#').next().unwrap_or_default();
+    let Some((_, query)) = before_fragment.split_once('?') else {
+        return Ok(());
+    };
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let name = pair.split_once('=').map_or(pair, |(name, _)| name);
+        let name = name.replace('+', " ");
+        let name = percent_encoding::percent_decode_str(&name).decode_utf8_lossy();
+        let known = POSTGRES_PARAMETERS.contains(&&*name)
+            || (name.starts_with("options[") && name.ends_with(']'));
+        if !known {
+            return Err(Error::UnsupportedUrlParameter);
+        }
+    }
+    Ok(())
+}
+
 impl Db {
     /// Opens `sqlite:<path>` (created if missing) or `postgres://…` and applies migrations.
     pub async fn connect(url: &str) -> Result<Self, Error> {
+        check_postgres_url(url)?;
         let pool = if url.starts_with("sqlite:") {
             let options = SqliteConnectOptions::from_str(url)?
                 .create_if_missing(true)
@@ -3679,6 +3736,27 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn postgres_urls_with_unknown_parameters_are_refused_without_their_values() {
+        for url in [
+            "postgres://u:p@h/x",
+            "postgresql://u@h/x?sslmode=require&password=p&options[search_path]=a",
+            "postgres://u@h/x?&application_name=a+b#pasword=fragment",
+            "postgres://u@h/x?pass%77ord=p",
+            "sqlite:/config/x.sqlite?pasword=ignored",
+        ] {
+            assert!(check_postgres_url(url).is_ok(), "{url}");
+        }
+        for url in [
+            "postgres://u@h/x?pasword=hunter2",
+            "postgres://u@h/x?sslmode=require&pass+word=hunter2",
+            "postgresql://u@h/x?options[oops=hunter2",
+        ] {
+            let error = check_postgres_url(url).expect_err(url);
+            assert!(!error.to_string().contains("hunter2"), "{error}");
+        }
+    }
 
     /// Reads in a transaction while another connection writes, then writes.
     async fn read_then_write(

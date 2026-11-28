@@ -116,7 +116,8 @@ impl Boot {
 /// Checks what this environment means for a fresh installation, as `infinidysk config
 /// validate`: the variables startup reads, the settings they give and each enabled
 /// provider's endpoint. Creates no folder, database, log or socket and connects nowhere;
-/// it does not see saved settings or check the database URL past its scheme.
+/// it does not see saved settings or check the database URL past its scheme and the
+/// names of its query parameters.
 pub fn validate_deployment() -> anyhow::Result<()> {
     let home = home_from_env()?;
     check_env_is_text()?;
@@ -133,12 +134,21 @@ pub fn validate_deployment() -> anyhow::Result<()> {
             .iter()
             .any(|scheme| url.starts_with(scheme))
     };
-    if url.is_some_and(|url| !known(&url)) {
-        return Err(config::Error::Input {
-            path: "INFINIDYSK_DATABASE_URL".to_owned(),
-            reason: "expected a sqlite: or postgres: URL",
+    if let Some(url) = &url {
+        if !known(url) {
+            return Err(config::Error::Input {
+                path: "INFINIDYSK_DATABASE_URL".to_owned(),
+                reason: "expected a sqlite: or postgres: URL",
+            }
+            .into());
         }
-        .into());
+        if infinidysk_db::check_postgres_url(url).is_err() {
+            return Err(config::Error::Input {
+                path: "INFINIDYSK_DATABASE_URL".to_owned(),
+                reason: "has a query parameter infinidysk does not support",
+            }
+            .into());
+        }
     }
     listen_from_env()?;
     var("PUID", 1000_u32)?;

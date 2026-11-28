@@ -780,7 +780,7 @@ async fn config_validate_is_offline_and_creates_nothing() {
     assert_eq!(code, Some(0), "a disabled provider is not built: {err}");
 
     let broken = provider("news.example:563", true);
-    let rejected: [(&[(&str, &std::ffi::OsStr)], &str); 6] = [
+    let rejected: [(&[(&str, &std::ffi::OsStr)], &str); 7] = [
         (
             &[("INFINIDYSK__WEBDAV__PASWORD", text("x"))],
             "INFINIDYSK__WEBDAV__PASWORD",
@@ -796,6 +796,13 @@ async fn config_validate_is_offline_and_creates_nothing() {
         (
             &[("INFINIDYSK__PROVIDERS", broken.as_ref())],
             "providers[0].hostname",
+        ),
+        (
+            &[(
+                "INFINIDYSK_DATABASE_URL",
+                text("postgres://u@127.0.0.1/x?pasword=hunter2"),
+            )],
+            "INFINIDYSK_DATABASE_URL",
         ),
         (
             &[("INFINIDYSK_CONFIG_DIR", text("relative"))],
@@ -820,7 +827,7 @@ async fn config_validate_is_offline_and_creates_nothing() {
             "{err}"
         );
         assert!(
-            !err.contains("news.example") && !err.contains("u:p@"),
+            !err.contains("news.example") && !err.contains("u:p@") && !err.contains("hunter2"),
             "{err}"
         );
     }
