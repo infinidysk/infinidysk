@@ -119,8 +119,8 @@ impl Boot {
 /// it does not see saved settings or check the database URL past its scheme and the
 /// names of its query parameters.
 pub fn validate_deployment() -> anyhow::Result<()> {
-    let home = home_from_env()?;
     check_env_is_text()?;
+    let home = home_from_env()?;
     let vars: Vec<(String, String)> = std::env::vars().collect();
     let overrides = config::parse_overrides(vars.iter().cloned())?;
     crate::auth::InitialAdmin::from_vars(&vars)?;
@@ -247,11 +247,9 @@ fn config_dir_var() -> anyhow::Result<Option<String>> {
     match std::env::var("INFINIDYSK_CONFIG_DIR") {
         Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(value)) => {
-            anyhow::bail!(
-                "INFINIDYSK_CONFIG_DIR must be valid UTF-8, not {}",
-                value.display()
-            )
+        // The value is left out: it may hold a secret.
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("INFINIDYSK_CONFIG_DIR must be valid UTF-8")
         }
     }
 }

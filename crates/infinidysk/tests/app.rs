@@ -780,7 +780,7 @@ async fn config_validate_is_offline_and_creates_nothing() {
     assert_eq!(code, Some(0), "a disabled provider is not built: {err}");
 
     let broken = provider("news.example:563", true);
-    let rejected: [(&[(&str, &std::ffi::OsStr)], &str); 7] = [
+    let rejected: [(&[(&str, &std::ffi::OsStr)], &str); 8] = [
         (
             &[("INFINIDYSK__WEBDAV__PASWORD", text("x"))],
             "INFINIDYSK__WEBDAV__PASWORD",
@@ -814,6 +814,13 @@ async fn config_validate_is_offline_and_creates_nothing() {
                 std::ffi::OsStr::from_bytes(b"\xff"),
             )],
             "INFINIDYSK_TEST_BYTES",
+        ),
+        (
+            &[(
+                "INFINIDYSK_CONFIG_DIR",
+                std::ffi::OsStr::from_bytes(b"/tmp/hunter2-\xff"),
+            )],
+            "INFINIDYSK_CONFIG_DIR",
         ),
     ];
     for (extra, want) in rejected {
@@ -1096,7 +1103,14 @@ async fn settings_patch_preserves_omissions_and_rejects_stale_writes() {
     assert_eq!(get().await, before, "refused writes change nothing");
 
     // A PUT changes a secret behind an identical mask; the old revision is stale.
-    let mut settings = get().await["settings"].clone();
+    let (code, body) = patch(
+        &revision,
+        json!({"providers": [provider(P1, Some("pw-set"))]}),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    let (revision, masked) = (body["revision"].clone(), body["settings"].clone());
+    let mut settings = masked.clone();
     settings["providers"][0]["password"] = "pw-put".into();
     let (code, body) = send(
         addr,
@@ -1105,6 +1119,7 @@ async fn settings_patch_preserves_omissions_and_rejects_stale_writes() {
     .await;
     assert_eq!(code, ok, "{body}");
     assert_eq!(stored("providers").await[0]["password"], "pw-put");
+    assert_eq!(get().await["settings"], masked, "the mask hides the change");
     let (code, _) = patch(&revision, json!({"queue": {"concurrency": 5}})).await;
     assert_eq!(code, conflict);
     // PUT still replaces the whole document: what it leaves out returns to its default.

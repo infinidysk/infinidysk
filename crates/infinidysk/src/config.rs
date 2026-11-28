@@ -1033,7 +1033,9 @@ impl Performance {
         );
     }
 
-    fn validate(&self, mount_dir: &str, default_cache_dir: &str) -> Result<(), Error> {
+    /// The ranges of the effective tuning. A preset's own values are always in range, so
+    /// this fails only on a value that is set, whichever preset is saved.
+    fn check_ranges(&self) -> Result<(), Error> {
         let t = self.effective();
         check(
             "performance.read_ahead_mb",
@@ -1076,7 +1078,12 @@ impl Performance {
             "FUSE max background",
             t.fuse_max_background,
             &FUSE_MAX_BACKGROUND,
-        )?;
+        )
+    }
+
+    /// The disk cache folder, checked against the mount. [`Self::check_ranges`] runs in
+    /// [`Settings::check_values`].
+    fn validate(&self, mount_dir: &str, default_cache_dir: &str) -> Result<(), Error> {
         let cache_dir = self.disk_cache_dir.as_deref().unwrap_or(default_cache_dir);
         let dir = std::path::Path::new(cache_dir);
         if !dir.is_absolute() {
@@ -1416,10 +1423,11 @@ impl Settings {
     /// other settings hold: ranges, single paths and addresses, and the provider and Arr
     /// lists. A variable that fails here fails with any saved settings, so startup runs
     /// this before a pending restore moves files (see [`check_supplied`]).
-    // ponytail: the OIDC, rclone RC and performance sections check fields against each
-    // other, so they stay in `validate_in`; split per-field checks out of them to catch
-    // those before a restore too.
+    // ponytail: the OIDC and rclone RC sections check fields against each other, so they
+    // stay in `validate_in`; split per-field checks out of them to catch those before a
+    // restore too.
     pub(crate) fn check_values(&mut self) -> Result<(), Error> {
+        self.performance.check_ranges()?;
         if !self.mount.dir.starts_with('/') {
             return Err(invalid(
                 "mount.dir",

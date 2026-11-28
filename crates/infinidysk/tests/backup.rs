@@ -454,51 +454,66 @@ async fn an_open_failure_records_a_rollback_and_restarts() {
 
 #[tokio::test]
 async fn a_bad_variable_stops_startup_before_a_restore_swaps() {
-    let root = root();
-    let (_, server, cancel) = start(&root).await;
-    stop(server, &cancel).await;
-    let restored = fs::read(live(&root, "")).unwrap();
-    download(&root, "a").await;
-    stage(&root, &restored);
-    let before = fs::read(live(&root, "")).unwrap();
-
-    let boot = Boot {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        database_url: db_url(&root),
-        database_source: infinidysk::database::Source::Env,
-        uid: 0,
-        gid: 0,
-        trace_minutes: 0,
-        metrics_path: root.join("metrics.sqlite"),
-        log_dir: root.join("logs"),
-        home: root.clone(),
-        config_dir: root.clone(),
-        ffprobe: "ffprobe".to_owned(),
-    };
-    let vars = [
-        ("INFINIDYSK__AUTH__API_KEY", "adminkey".to_owned()),
+    // Each is out of range with any saved settings: neither database is at fault.
+    for (key, value, want) in [
+        ("INFINIDYSK__QUEUE__CONCURRENCY", "50", "Concurrency"),
         (
-            "INFINIDYSK__MOUNT__DIR",
-            root.join("mnt").display().to_string(),
+            "INFINIDYSK__PERFORMANCE__MEMORY_CACHE_MB",
+            "0",
+            "Memory cache size",
         ),
-        // Out of range with any saved settings: neither database is at fault.
-        ("INFINIDYSK__QUEUE__CONCURRENCY", "50".to_owned()),
-    ]
-    .map(|(k, v)| (k.to_owned(), v));
-    let listener = TcpListener::bind(boot.listen).await.unwrap();
-    let error = serve(listener, &boot, vars, CancellationToken::new())
-        .await
-        .expect_err("a bad variable stops startup");
-    assert!(format!("{error:#}").contains("Concurrency"), "{error:#}");
-    assert_eq!(
-        intent(&root).unwrap()["phase"],
-        "requested",
-        "nothing moved"
-    );
-    assert_eq!(fs::read(live(&root, "")).unwrap(), before);
-    assert!(fs::metadata(live(&root, ".before-restore")).is_err());
-    assert!(has(&root, "a").await, "the live database stays in place");
-    fs::remove_dir_all(root).unwrap();
+    ] {
+        let root = root();
+        let (_, server, cancel) = start(&root).await;
+        stop(server, &cancel).await;
+        let restored = fs::read(live(&root, "")).unwrap();
+        download(&root, "a").await;
+        stage(&root, &restored);
+        let before = fs::read(live(&root, "")).unwrap();
+
+        let boot = Boot {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            database_url: db_url(&root),
+            database_source: infinidysk::database::Source::Env,
+            uid: 0,
+            gid: 0,
+            trace_minutes: 0,
+            metrics_path: root.join("metrics.sqlite"),
+            log_dir: root.join("logs"),
+            home: root.clone(),
+            config_dir: root.clone(),
+            ffprobe: "ffprobe".to_owned(),
+        };
+        let vars = [
+            ("INFINIDYSK__AUTH__API_KEY", "adminkey".to_owned()),
+            (
+                "INFINIDYSK__MOUNT__DIR",
+                root.join("mnt").display().to_string(),
+            ),
+            (key, value.to_owned()),
+        ]
+        .map(|(k, v)| (k.to_owned(), v));
+        let listener = TcpListener::bind(boot.listen).await.unwrap();
+        let error = serve(listener, &boot, vars, CancellationToken::new())
+            .await
+            .expect_err("a bad variable stops startup");
+        assert!(format!("{error:#}").contains(want), "{key}: {error:#}");
+        assert_eq!(
+            intent(&root).unwrap()["phase"],
+            "requested",
+            "{key}: nothing moved"
+        );
+        assert_eq!(fs::read(live(&root, "")).unwrap(), before, "{key}");
+        assert!(
+            fs::metadata(live(&root, ".before-restore")).is_err(),
+            "{key}"
+        );
+        assert!(
+            has(&root, "a").await,
+            "{key}: the live database stays in place"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[tokio::test]
