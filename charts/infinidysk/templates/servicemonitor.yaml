@@ -1,0 +1,22 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "infinidysk.name" . | quote }}
+  labels:
+    {{- $identity := dict "app.kubernetes.io/name" "infinidysk" "app.kubernetes.io/instance" .Release.Name }}
+    {{- mergeOverwrite (dict) .Values.serviceMonitor.labels $identity | toYaml | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "infinidysk.selector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval | quote }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ .Values.adminApiKey.existingSecret | quote }}
+          key: {{ .Values.adminApiKey.key | quote }}
+{{- end }}

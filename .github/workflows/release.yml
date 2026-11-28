@@ -189,6 +189,42 @@ jobs:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         run: gh release upload "$RELEASE_TAG" infinidysk-*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
 
+  # After image-manifest, so the image a chart installs already exists.
+  chart:
+    needs: [release-please, image-manifest]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.2
+      - name: Package the chart for the published image
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          helm package charts/infinidysk \
+            --version "$version" --app-version "$RELEASE_TAG" \
+            --destination "$RUNNER_TEMP"
+      - name: Publish the chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry.json
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+          helm push "$RUNNER_TEMP/infinidysk-${RELEASE_TAG#v}.tgz" \
+            oci://ghcr.io/infinidysk/charts
+
   announce:
     needs: [release-please, image-manifest, archives]
     runs-on: ubuntu-latest
