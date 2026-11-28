@@ -1343,12 +1343,7 @@ impl Settings {
 
     /// [`Self::validate`], with the disk cache in `default_cache_dir` when none is saved.
     pub(crate) fn validate_in(&mut self, default_cache_dir: &str) -> Result<(), Error> {
-        if !self.mount.dir.starts_with('/') {
-            return Err(invalid(
-                "mount.dir",
-                "Mount dir must be an absolute path".to_owned(),
-            ));
-        }
+        self.check_values()?;
         // A mount over the config folder would hide its files once it mounts.
         if let Some(config_dir) = std::path::Path::new(default_cache_dir).parent()
             && config_dir.starts_with(&self.mount.dir)
@@ -1361,13 +1356,82 @@ impl Settings {
                 ),
             ));
         }
+        self.rclone_rc.validate()?;
+        self.performance
+            .validate(&self.mount.dir, default_cache_dir)?;
+        if self.maintenance.window.minutes().is_none() {
+            return Err(invalid(
+                "maintenance.window",
+                "The window needs a start and a different end, each HH:MM".to_owned(),
+            ));
+        }
+        let backup_dir = &self.maintenance.backup.dir;
+        if !backup_dir.is_empty() && std::path::Path::new(backup_dir).starts_with(&self.mount.dir) {
+            return Err(invalid(
+                "maintenance.backup.dir",
+                "Backup folder must be outside the mount".to_owned(),
+            ));
+        }
+        let inside = |a: &str, b: &str| std::path::Path::new(a).starts_with(b);
+        // The mount and the STRM directory may sit inside a library folder (one `/data`
+        // for everything); library walks skip them.
+        for (i, dir) in self.imports.library_dirs.iter().enumerate() {
+            let path = dir.path.as_str();
+            let clash = [
+                (self.mount.dir.as_str(), "is inside the mount"),
+                (
+                    self.imports.strm_dir.as_str(),
+                    "is inside the completed STRM directory",
+                ),
+            ]
+            .into_iter()
+            .find(|(other, _)| inside(path, other))
+            .map(|(_, what)| what)
+            .or_else(|| {
+                self.imports
+                    .library_dirs
+                    .iter()
+                    .enumerate()
+                    .any(|(j, o)| i != j && (inside(path, &o.path) || inside(&o.path, path)))
+                    .then_some("overlaps another library folder")
+            });
+            if let Some(what) = clash {
+                return Err(invalid(
+                    "imports.library_dirs",
+                    format!("Library folder {} {what}", i + 1),
+                ));
+            }
+        }
+        self.auth.oidc.validate()?;
+        if self.imports.strategy == ImportStrategy::Strm && self.network.public_url.is_empty() {
+            return Err(invalid(
+                "imports.strategy",
+                "STRM files need a public URL, the address media servers play them from".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks and normalizes each setting that is valid or not on its own, whatever the
+    /// other settings hold: ranges, single paths and addresses, and the provider and Arr
+    /// lists. A variable that fails here fails with any saved settings, so startup runs
+    /// this before a pending restore moves files (see [`check_supplied`]).
+    // ponytail: the OIDC, rclone RC and performance sections check fields against each
+    // other, so they stay in `validate_in`; split per-field checks out of them to catch
+    // those before a restore too.
+    pub(crate) fn check_values(&mut self) -> Result<(), Error> {
+        if !self.mount.dir.starts_with('/') {
+            return Err(invalid(
+                "mount.dir",
+                "Mount dir must be an absolute path".to_owned(),
+            ));
+        }
         if self.webdav.user.trim().is_empty() {
             return Err(invalid(
                 "webdav.user",
                 "WebDAV user must not be empty".to_owned(),
             ));
         }
-        self.rclone_rc.validate()?;
         if self.sab.manual_category.trim().is_empty() {
             return Err(invalid(
                 "sab.manual_category",
@@ -1405,14 +1469,6 @@ impl Settings {
             .map(|g| g.trim().to_owned())
             .filter(|g| !g.is_empty())
             .collect();
-        self.performance
-            .validate(&self.mount.dir, default_cache_dir)?;
-        if self.maintenance.window.minutes().is_none() {
-            return Err(invalid(
-                "maintenance.window",
-                "The window needs a start and a different end, each HH:MM".to_owned(),
-            ));
-        }
         self.maintenance.scheduled.sort_unstable();
         self.maintenance.scheduled.dedup();
         check(
@@ -1422,19 +1478,11 @@ impl Settings {
             &BACKUP_KEEP,
         )?;
         let backup_dir = self.maintenance.backup.dir.trim();
-        if !backup_dir.is_empty() {
-            if !backup_dir.starts_with('/') {
-                return Err(invalid(
-                    "maintenance.backup.dir",
-                    "Backup folder must be an absolute path".to_owned(),
-                ));
-            }
-            if std::path::Path::new(backup_dir).starts_with(&self.mount.dir) {
-                return Err(invalid(
-                    "maintenance.backup.dir",
-                    "Backup folder must be outside the mount".to_owned(),
-                ));
-            }
+        if !backup_dir.is_empty() && !backup_dir.starts_with('/') {
+            return Err(invalid(
+                "maintenance.backup.dir",
+                "Backup folder must be an absolute path".to_owned(),
+            ));
         }
         self.maintenance.backup.dir = backup_dir.to_owned();
         let strm_dir = self.imports.strm_dir.trim();
@@ -1462,36 +1510,6 @@ impl Settings {
                 } else {
                     trimmed.trim_end_matches('/').to_owned()
                 };
-            }
-        }
-        let inside = |a: &str, b: &str| std::path::Path::new(a).starts_with(b);
-        // The mount and the STRM directory may sit inside a library folder (one `/data`
-        // for everything); library walks skip them.
-        for (i, dir) in self.imports.library_dirs.iter().enumerate() {
-            let path = dir.path.as_str();
-            let clash = [
-                (self.mount.dir.as_str(), "is inside the mount"),
-                (
-                    self.imports.strm_dir.as_str(),
-                    "is inside the completed STRM directory",
-                ),
-            ]
-            .into_iter()
-            .find(|(other, _)| inside(path, other))
-            .map(|(_, what)| what)
-            .or_else(|| {
-                self.imports
-                    .library_dirs
-                    .iter()
-                    .enumerate()
-                    .any(|(j, o)| i != j && (inside(path, &o.path) || inside(&o.path, path)))
-                    .then_some("overlaps another library folder")
-            });
-            if let Some(what) = clash {
-                return Err(invalid(
-                    "imports.library_dirs",
-                    format!("Library folder {} {what}", i + 1),
-                ));
             }
         }
         self.network
@@ -1523,7 +1541,6 @@ impl Settings {
             ));
         }
         self.network.public_url = url.to_owned();
-        self.auth.oidc.validate()?;
         if let Some(limit) = self.network.download_limit_mb_per_s {
             check(
                 "network.download_limit_mb_per_s",
@@ -1531,12 +1548,6 @@ impl Settings {
                 limit,
                 &DOWNLOAD_LIMIT_MB_PER_S,
             )?;
-        }
-        if self.imports.strategy == ImportStrategy::Strm && self.network.public_url.is_empty() {
-            return Err(invalid(
-                "imports.strategy",
-                "STRM files need a public URL, the address media servers play them from".to_owned(),
-            ));
         }
         let mut ids = HashSet::new();
         for (i, p) in self.providers.iter_mut().enumerate() {
@@ -2253,6 +2264,18 @@ impl ConfigStore {
 }
 
 /// The settings `env` gives a fresh installation, checked as startup checks them.
+/// Checks each variable's value on its own ([`Settings::check_values`]), without saved
+/// settings. A failure here fails with any database, so startup runs it before a
+/// pending restore swaps one in; checks that need saved settings run after the swap.
+pub(crate) fn check_supplied(env: &[Override]) -> Result<(), Error> {
+    let mut tree = serde_json::to_value(Settings::default())?;
+    for o in env {
+        set(&mut tree, &o.path, o.value.clone());
+    }
+    let mut settings: Settings = serde_json::from_value(tree)?;
+    settings.check_values()
+}
+
 pub(crate) fn fresh(env: &[Override], default_cache_dir: &str) -> Result<Settings, Error> {
     effective(&Map::new(), env, default_cache_dir)
 }

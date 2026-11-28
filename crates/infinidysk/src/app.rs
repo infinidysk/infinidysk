@@ -331,8 +331,10 @@ pub async fn serve(
     cancel: CancellationToken,
 ) -> anyhow::Result<Exit> {
     let vars: Vec<(String, String)> = vars.into_iter().collect();
-    // Input is checked before a pending restore moves anything.
+    // Input is checked before a pending restore moves anything, so a bad variable does
+    // not roll back a restore that neither database failed.
     let overrides = config::parse_overrides(vars.iter().cloned())?;
+    config::check_supplied(&overrides)?;
     let initial_admin = crate::auth::InitialAdmin::from_vars(&vars)?;
     let pending = crate::backup::boot::apply_pending(boot)?;
     let default_cache_dir = boot.home.join("cache").display().to_string();
