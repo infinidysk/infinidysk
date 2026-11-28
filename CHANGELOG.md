@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.0.0-beta.12](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.11...v2.0.0-beta.12) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** startup now fails on unknown INFINIDYSK__ names, out-of-range env values and env list entries without an id. Add a UUID "id" to every entry of INFINIDYSK__PROVIDERS and INFINIDYSK__ARR_INSTANCES.
+
+### Features
+
+* **api:** support full headless deployment ([#1970](https://github.com/infinidysk/infinidysk/issues/1970)) ([12f1dc2](https://github.com/infinidysk/infinidysk/commit/12f1dc2aaa095f88e289d61092dd5f4bf0a3eacf))
+* **metrics:** log the observed RSS drop for idle memory trims ([#1968](https://github.com/infinidysk/infinidysk/issues/1968)) ([89db517](https://github.com/infinidysk/infinidysk/commit/89db51738ba6517c72f7972fbc3f7d6d68c13008))
+
+
+### Bug Fixes
+
+* **api:** idle memory trim no longer stays blocked by files that are opened but not read ([#1962](https://github.com/infinidysk/infinidysk/issues/1962)) ([7831229](https://github.com/infinidysk/infinidysk/commit/78312298cf3877bcaaeb9f77c93cc191f29f08e8))
+* **ui:** live data keeps updating behind nginx-style reverse proxies ([#1965](https://github.com/infinidysk/infinidysk/issues/1965)) ([67b02a6](https://github.com/infinidysk/infinidysk/commit/67b02a6ee3c71d6b9ec9bf0f1f4b2902427846ed))
+
+
+### Build System
+
+* **docker:** publish a nightly infinidysk-next image from main ([#1967](https://github.com/infinidysk/infinidysk/issues/1967)) ([29468de](https://github.com/infinidysk/infinidysk/commit/29468de7f1bedeb09b41bb116e8ec85232a91a80))
+
 ## [2.0.0-beta.11](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.10...v2.0.0-beta.11) (2026-11-23)
 
 
