@@ -446,6 +446,424 @@ async fn an_unusable_config_dir_stops_startup_with_one_warning() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// One HTTP request with an optional admin key; returns the status line and body.
+async fn api(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    key: Option<&str>,
+    body: &str,
+) -> (String, String) {
+    let key = key
+        .map(|k| format!("X-Api-Key: {k}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{key}\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    send(addr, &request).await
+}
+
+/// Stops the real binary as a container stop would.
+async fn stop(child: &mut tokio::process::Child) {
+    let pid = child.id().unwrap().to_string();
+    tokio::process::Command::new("sh")
+        .args(["-c", "kill -TERM \"$1\"", "sh", &pid])
+        .status()
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(60), child.wait())
+        .await
+        .expect("the server did not stop")
+        .unwrap();
+}
+
+/// A deployment that supplies the account, keys and lists through mounted files starts
+/// without the setup page, and a restart keeps what the running server changed.
+#[tokio::test]
+async fn headless_boot_and_restart_keep_the_account_settings_and_ids() {
+    let root = std::env::temp_dir().join(format!("infinidysk-headless-{}", ItemId::new()));
+    let (home, data, secrets) = (root.join("config"), root.join("data"), root.join("secrets"));
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&secrets).unwrap();
+    let secret = |name: &str, text: &str| {
+        let path = secrets.join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let database = data.join("infinidysk.sqlite");
+    let url_file = secret("database-url", &format!("sqlite:{}\n", database.display()));
+    let password_file = secret("admin-password", "initial-password\n");
+    let key_file = secret("admin-key", "headless-admin-key\n");
+    let providers = secret(
+        "providers.json",
+        r#"[{"name":"p","hostname":"news.example","port":563,"password":"pw","enabled":false}]"#,
+    );
+    let arrs = secret(
+        "arrs.json",
+        r#"[{"name":"tv","profile":"sonarr","url":"http://sonarr:8989","api_key":"k","enabled":false}]"#,
+    );
+    let start = |addr: SocketAddr| {
+        binary()
+            .env("INFINIDYSK_CONFIG_DIR", &home)
+            .env("INFINIDYSK_LISTEN", addr.to_string())
+            .env("INFINIDYSK_DATABASE_URL_FILE", &url_file)
+            .env("INFINIDYSK_ADMIN_USERNAME", "admin")
+            .env("INFINIDYSK_ADMIN_PASSWORD_FILE", &password_file)
+            .env("INFINIDYSK__AUTH__API_KEY_FILE", &key_file)
+            .env("INFINIDYSK__PROVIDERS_FILE", &providers)
+            .env("INFINIDYSK__ARR_INSTANCES_FILE", &arrs)
+            .env("INFINIDYSK__MOUNT__FUSE", "false")
+            .env("INFINIDYSK__MOUNT__DIR", root.join("mnt"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let up = async |addr: SocketAddr| {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while TcpStream::connect(addr).await.is_err() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("the server did not answer");
+    };
+    let key = Some("headless-admin-key");
+    let login = async |addr, password: &str| {
+        let body = json!({"username": "admin", "password": password}).to_string();
+        api(addr, "POST", "/api/v1/auth/login", None, &body).await.0
+    };
+    let settings = async |addr| {
+        let (code, body) = api(addr, "GET", "/api/v1/settings", key, "").await;
+        assert_eq!(code, "HTTP/1.1 200 OK", "{body}");
+        let mut settings: Value = serde_json::from_str(&body).unwrap();
+        settings.as_object_mut().unwrap().remove("revision");
+        settings
+    };
+    let admin_hash = async || {
+        let db = infinidysk_db::Db::connect(&format!("sqlite:{}", database.display()))
+            .await
+            .unwrap();
+        let (_, hash) = db.admin().await.unwrap().expect("an account");
+        db.close().await;
+        hash
+    };
+    let free = || async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap()
+    };
+
+    let addr = free().await;
+    let mut child = start(addr);
+    up(addr).await;
+    let (_, status) = api(addr, "GET", "/api/v1/auth", None, "").await;
+    let status: Value = serde_json::from_str(&status).unwrap();
+    assert_eq!(status["setup_required"], false, "{status}");
+    assert_eq!(status["account"], true, "{status}");
+    let claim = json!({"username": "intruder", "password": "intruder-password"}).to_string();
+    let (code, _) = api(addr, "POST", "/api/v1/auth/setup", None, &claim).await;
+    assert_eq!(code, "HTTP/1.1 409 Conflict");
+    assert_eq!(
+        login(addr, "initial-password").await,
+        "HTTP/1.1 204 No Content"
+    );
+    let (_, view) = api(addr, "GET", "/api/v1/database", key, "").await;
+    let view: Value = serde_json::from_str(&view).unwrap();
+    assert_eq!(
+        view["sqlite_path"],
+        database.display().to_string(),
+        "{view}"
+    );
+    assert_eq!(view["env_managed"], true, "{view}");
+    let before = settings(addr).await;
+    for list in ["providers", "arr_instances"] {
+        uuid::Uuid::parse_str(before["settings"][list][0]["id"].as_str().unwrap()).unwrap();
+    }
+    let change = json!({"current_password": "initial-password", "password": "rotated-password"});
+    let (code, body) = api(
+        addr,
+        "PUT",
+        "/api/v1/auth/password",
+        key,
+        &change.to_string(),
+    )
+    .await;
+    assert_eq!(code, "HTTP/1.1 204 No Content", "{body}");
+    stop(&mut child).await;
+    let rotated = admin_hash().await;
+
+    let addr = free().await;
+    let mut child = start(addr);
+    up(addr).await;
+    assert_eq!(
+        login(addr, "rotated-password").await,
+        "HTTP/1.1 204 No Content"
+    );
+    assert_ne!(
+        login(addr, "initial-password").await,
+        "HTTP/1.1 204 No Content"
+    );
+    assert_eq!(settings(addr).await, before);
+    stop(&mut child).await;
+    assert_eq!(admin_hash().await, rotated);
+    assert!(!home.join("infinidysk.sqlite").exists());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// Bad deployment input stops startup with one line naming the input, before any setup
+/// page is served, and never prints a secret.
+#[tokio::test]
+async fn invalid_provisioning_fails_without_opening_setup() {
+    use std::os::unix::ffi::OsStrExt as _;
+    const SENTINEL: &str = "sentinel-secret-4e8a";
+    let root = std::env::temp_dir().join(format!("infinidysk-provision-{}", ItemId::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let password_file = root.join("password");
+    std::fs::write(&password_file, SENTINEL).unwrap();
+    let password_file = password_file.display().to_string();
+    let absent = root.join("absent").display().to_string();
+    // The driver would log an unknown parameter and its value.
+    let bad_url = format!("postgres://u@127.0.0.1/x?connect_timeout={SENTINEL}");
+    let malformed = format!(r#"[{{"id":"x","password":"{SENTINEL}""#);
+    let user = ("INFINIDYSK_ADMIN_USERNAME", "admin");
+    let cases: [(Vec<(&str, &str)>, &str); 8] = [
+        (vec![user], "INFINIDYSK_ADMIN_PASSWORD"),
+        (
+            vec![
+                user,
+                ("INFINIDYSK_ADMIN_PASSWORD", SENTINEL),
+                ("INFINIDYSK_ADMIN_PASSWORD_FILE", &password_file),
+            ],
+            "INFINIDYSK_ADMIN_PASSWORD",
+        ),
+        (
+            vec![user, ("INFINIDYSK_ADMIN_PASSWORD", "short")],
+            "at least 8 characters",
+        ),
+        (
+            vec![user, ("INFINIDYSK_ADMIN_PASWORD", SENTINEL)],
+            "INFINIDYSK_ADMIN_PASWORD",
+        ),
+        (
+            vec![("INFINIDYSK_DATABASE_URL_FILE", &absent)],
+            "INFINIDYSK_DATABASE_URL",
+        ),
+        (
+            vec![("INFINIDYSK__QUEUE__CONCURRENCY", "50")],
+            "queue.concurrency",
+        ),
+        (
+            vec![("INFINIDYSK__PROVIDERS", &malformed)],
+            "INFINIDYSK__PROVIDERS",
+        ),
+        (
+            vec![("INFINIDYSK_DATABASE_URL", &bad_url)],
+            "INFINIDYSK_DATABASE_URL",
+        ),
+    ];
+    let run = async |command: &mut tokio::process::Command, want: &str| {
+        let home = root.join(ItemId::new().to_string());
+        command
+            .env("INFINIDYSK_CONFIG_DIR", &home)
+            .env("INFINIDYSK_LISTEN", "127.0.0.1:0")
+            .env("INFINIDYSK__MOUNT__DIR", root.join("mnt"))
+            .env("RUST_LOG", "off")
+            .env("RUST_BACKTRACE", "1")
+            .env("NO_COLOR", "1");
+        let output = tokio::time::timeout(Duration::from_secs(60), command.output())
+            .await
+            .expect("startup did not stop")
+            .unwrap();
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.code(), Some(1), "{want}: {printed}");
+        let lines: Vec<&str> = printed.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1, "{want}: {printed}");
+        assert!(lines[0].contains(want), "{want}: {printed}");
+        for leak in [SENTINEL, "Error:", "backtrace", "panicked"] {
+            assert!(!printed.contains(leak), "{want}: {printed}");
+        }
+    };
+    for (vars, want) in cases {
+        let mut command = binary();
+        command.envs(vars);
+        run(&mut command, want).await;
+    }
+    let mut command = binary();
+    command.env(
+        "INFINIDYSK_TEST_BYTES",
+        std::ffi::OsStr::from_bytes(b"\xff"),
+    );
+    run(&mut command, "INFINIDYSK_TEST_BYTES").await;
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// `config validate` checks a deployment for a fresh installation without a config folder,
+/// database or free port, and leaves nothing behind.
+#[tokio::test]
+async fn config_validate_is_offline_and_creates_nothing() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let root = std::env::temp_dir().join(format!("infinidysk-validate-{}", ItemId::new()));
+    let secrets = root.join("secrets");
+    std::fs::create_dir_all(&secrets).unwrap();
+    let home = root.join("config");
+    let taken = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let secret = |name: &str, text: &str| {
+        let path = secrets.join(name);
+        std::fs::write(&path, text).unwrap();
+        path.display().to_string()
+    };
+    let provider = |hostname: &str, enabled: bool| {
+        json!([{"name": "p", "hostname": hostname,
+            "port": 563, "tls": true, "enabled": enabled}])
+        .to_string()
+    };
+    let valid = [
+        ("INFINIDYSK_CONFIG_DIR", home.display().to_string()),
+        ("INFINIDYSK_LISTEN", taken.local_addr().unwrap().to_string()),
+        (
+            "INFINIDYSK_DATABASE_URL_FILE",
+            secret("url", "postgres://u:p@127.0.0.1:1/x\n"),
+        ),
+        ("INFINIDYSK_ADMIN_USERNAME", "admin".to_owned()),
+        (
+            "INFINIDYSK_ADMIN_PASSWORD_FILE",
+            secret("password", "a-long-password\n"),
+        ),
+        (
+            "INFINIDYSK__AUTH__API_KEY_FILE",
+            secret("key", "admin-key\n"),
+        ),
+        (
+            "INFINIDYSK__PROVIDERS_FILE",
+            secret("providers", &provider("news.example", true)),
+        ),
+        ("INFINIDYSK__MOUNT__FUSE", "false".to_owned()),
+    ];
+    let run = async |args: &[&str], extra: &[(&str, &std::ffi::OsStr)]| {
+        // A direct variable in `extra` replaces the base value and its _FILE.
+        let replaced = |key: &str| {
+            extra
+                .iter()
+                .any(|(k, _)| key == *k || key.strip_suffix("_FILE") == Some(*k))
+        };
+        let mut command = binary();
+        command.args(args).envs(
+            valid
+                .iter()
+                .filter(|(k, _)| !replaced(k))
+                .map(|(k, v)| (*k, v)),
+        );
+        for (key, value) in extra {
+            command.env(key, value);
+        }
+        let output = tokio::time::timeout(Duration::from_secs(60), command.output())
+            .await
+            .expect("validate did not finish")
+            .unwrap();
+        let (out, err) = (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        );
+        (output.status.code(), out, err)
+    };
+    let text = |value: &'static str| std::ffi::OsStr::new(value);
+
+    let (code, out, err) = run(&["config", "validate"], &[]).await;
+    assert_eq!(code, Some(0), "{out}{err}");
+    assert_eq!(out, "fresh-install configuration valid\n");
+    let disabled = provider("news.example:563", false);
+    let (code, _, err) = run(
+        &["config", "validate"],
+        &[("INFINIDYSK__PROVIDERS", disabled.as_ref())],
+    )
+    .await;
+    assert_eq!(code, Some(0), "a disabled provider is not built: {err}");
+
+    let broken = provider("news.example:563", true);
+    let rejected: [(&[(&str, &std::ffi::OsStr)], &str); 8] = [
+        (
+            &[("INFINIDYSK__WEBDAV__PASWORD", text("x"))],
+            "INFINIDYSK__WEBDAV__PASWORD",
+        ),
+        (
+            &[("INFINIDYSK__QUEUE__CONCURRENCY", text("50"))],
+            "queue.concurrency",
+        ),
+        (
+            &[("INFINIDYSK_DATABASE_URL", text("mysql://u:p@127.0.0.1/x"))],
+            "INFINIDYSK_DATABASE_URL",
+        ),
+        (
+            &[("INFINIDYSK__PROVIDERS", broken.as_ref())],
+            "providers[0].hostname",
+        ),
+        (
+            &[(
+                "INFINIDYSK_DATABASE_URL",
+                text("postgres://u@127.0.0.1/x?pasword=hunter2"),
+            )],
+            "INFINIDYSK_DATABASE_URL",
+        ),
+        (
+            &[("INFINIDYSK_CONFIG_DIR", text("relative"))],
+            "absolute path",
+        ),
+        (
+            &[(
+                "INFINIDYSK_TEST_BYTES",
+                std::ffi::OsStr::from_bytes(b"\xff"),
+            )],
+            "INFINIDYSK_TEST_BYTES",
+        ),
+        (
+            &[(
+                "INFINIDYSK_CONFIG_DIR",
+                std::ffi::OsStr::from_bytes(b"/tmp/hunter2-\xff"),
+            )],
+            "INFINIDYSK_CONFIG_DIR",
+        ),
+    ];
+    for (extra, want) in rejected {
+        let (code, out, err) = run(&["config", "validate"], extra).await;
+        assert_eq!(code, Some(1), "{want}: {out}{err}");
+        assert!(out.is_empty(), "{want}: {out}");
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines.len(), 1, "{want}: {err}");
+        assert!(
+            lines[0].starts_with("invalid: ") && lines[0].contains(want),
+            "{err}"
+        );
+        assert!(
+            !err.contains("news.example") && !err.contains("u:p@") && !err.contains("hunter2"),
+            "{err}"
+        );
+    }
+    for args in [
+        &["config"][..],
+        &["config", "check"],
+        &["config", "validate", "x"],
+    ] {
+        let (code, _, err) = run(args, &[]).await;
+        assert_eq!(code, Some(2), "{args:?}");
+        assert_eq!(err, "usage: infinidysk config validate\n");
+    }
+
+    assert!(!home.exists(), "validate created the config folder");
+    let left: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["secrets"]);
+    drop(taken);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// `INFINIDYSK_CONFIG_DIR` decides where the real binary makes its database and logs, and
 /// where it looks for a 1.x install to import.
 #[tokio::test]
@@ -514,6 +932,219 @@ async fn healthz_answers_without_sign_in_and_the_probe_reads_it() {
     cancel.cancel();
     server.await.unwrap().unwrap();
     assert!(infinidysk::healthcheck::probe(addr).await.is_err());
+}
+
+/// A conditional partial write changes only what it names, keeps the secrets of list
+/// entries that stay, and refuses to land on settings it did not read.
+#[tokio::test]
+async fn settings_patch_preserves_omissions_and_rejects_stale_writes() {
+    const P1: &str = "0190f6c4-0000-7000-8000-0000000000e1";
+    const P2: &str = "0190f6c4-0000-7000-8000-0000000000e2";
+    const P3: &str = "0190f6c4-0000-7000-8000-0000000000e3";
+    const A1: &str = "0190f6c4-0000-7000-8000-0000000000e4";
+    const A2: &str = "0190f6c4-0000-7000-8000-0000000000e5";
+    let (addr, cancel, server, database_url) = start().await;
+    let get = async || -> Value {
+        let (code, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+        assert_eq!(code, "HTTP/1.1 200 OK", "{body}");
+        serde_json::from_str(&body).unwrap()
+    };
+    let patch = async |revision: &Value, changes: Value| -> (String, Value) {
+        let body = json!({"revision": revision, "changes": changes}).to_string();
+        let (code, body) = send(addr, &admin_request("PATCH", "/api/v1/settings", &body)).await;
+        (code, serde_json::from_str(&body).unwrap_or(Value::Null))
+    };
+    let ok = "HTTP/1.1 200 OK";
+    let conflict = "HTTP/1.1 409 Conflict";
+    let bad = "HTTP/1.1 400 Bad Request";
+    let stored = async |key: &str| -> Value {
+        let db = infinidysk_db::Db::connect(&database_url).await.unwrap();
+        let config = db.config().await.unwrap();
+        db.close().await;
+        config
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map_or(Value::Null, |(_, v)| serde_json::from_str(&v).unwrap())
+    };
+    let provider = |id: &str, password: Option<&str>| {
+        let mut p = json!({"id": id, "name": id, "hostname": "news.example", "enabled": false});
+        if let Some(password) = password {
+            p["password"] = password.into();
+        }
+        p
+    };
+    let arr = |id: &str, key: Option<&str>| {
+        let mut a = json!({"id": id, "name": id, "profile": "sonarr",
+            "url": "http://sonarr:8989", "enabled": false});
+        if let Some(key) = key {
+            a["api_key"] = key.into();
+        }
+        a
+    };
+
+    let first = get().await;
+    let (code, body) = patch(
+        &first["revision"],
+        json!({
+            "providers": [provider(P1, Some("pw-one")), provider(P2, Some("pw-two"))],
+            "arr_instances": [arr(A1, Some("arr-key"))],
+        }),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_ne!(body["revision"], first["revision"]);
+    let read = body["revision"].clone();
+
+    // Two clients read one revision; the second write is refused.
+    let (code, a) = patch(&read, json!({"queue": {"concurrency": 3}})).await;
+    assert_eq!(code, ok, "{a}");
+    let (code, _) = patch(&read, json!({"queue": {"concurrency": 4}})).await;
+    assert_eq!(code, conflict);
+    assert_eq!(get().await["settings"]["queue"]["concurrency"], 3);
+    let before_removal = a["revision"].clone();
+    let listed = a["settings"]["providers"].clone();
+    let (code, body) = patch(&before_removal, json!({"providers": [provider(P1, None)]})).await;
+    assert_eq!(code, ok, "{body}");
+    // Still stale, not a MASK on an id that is gone.
+    let (code, _) = patch(&before_removal, json!({"providers": listed})).await;
+    assert_eq!(code, conflict);
+
+    let current = get().await;
+    let revision = current["revision"].clone();
+    let path = |body: &Value| body["path"].as_str().unwrap_or_default().to_owned();
+    let (code, body) = patch(&revision, json!({"maintenance": {"scheduled": ["dust"]}})).await;
+    assert_eq!(
+        (code.as_str(), path(&body)),
+        (bad, "maintenance.scheduled[0]".into())
+    );
+    let (code, body) = patch(&revision, json!({"bogus": 1})).await;
+    assert_eq!((code.as_str(), path(&body)), (bad, "bogus".into()));
+    let (code, body) = patch(&revision, json!({"queue": []})).await;
+    assert_eq!((code.as_str(), path(&body)), (bad, "queue".into()));
+    let (code, body) = patch(&revision, json!({"webdav": {"password": "other"}})).await;
+    assert_eq!(
+        (code.as_str(), path(&body)),
+        (bad, "webdav.password".into())
+    );
+    let unknown = format!(
+        r#"{{"revision":"{}","changes":{{}},"extra":1}}"#,
+        revision.as_str().unwrap()
+    );
+    let (code, _) = send(addr, &admin_request("PATCH", "/api/v1/settings", &unknown)).await;
+    assert_eq!(code, bad);
+    let after = get().await;
+    assert_eq!(
+        after["revision"], revision,
+        "refused writes keep the revision"
+    );
+    assert_eq!(after["settings"]["queue"]["concurrency"], 3);
+
+    // Lists replaced by id keep secrets left out or masked.
+    let (code, body) = patch(
+        &revision,
+        json!({
+            "providers": [provider(P1, None)],
+            "arr_instances": [{"id": A1, "name": "renamed", "profile": "sonarr",
+                "url": "http://sonarr:8989", "enabled": false}],
+        }),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_eq!(stored("providers").await[0]["password"], "pw-one");
+    assert_eq!(stored("arr_instances").await[0]["api_key"], "arr-key");
+    assert_eq!(stored("arr_instances").await[0]["name"], "renamed");
+    let (code, body) = patch(
+        &body["revision"],
+        json!({"providers": [provider(P1, Some(infinidysk::config::MASK))],
+            "network": {"download_limit_mb_per_s": 100}}),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_eq!(stored("providers").await[0]["password"], "pw-one");
+    assert_eq!(body["settings"]["network"]["download_limit_mb_per_s"], 100);
+    let webdav = body["settings"]["webdav"].clone();
+    let (code, body) = patch(
+        &body["revision"],
+        json!({"providers": [provider(P1, Some(""))],
+            "network": {"download_limit_mb_per_s": null}}),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    let password = &stored("providers").await[0]["password"];
+    assert!(password.is_null() || password == "");
+    assert_eq!(
+        body["settings"]["network"]["download_limit_mb_per_s"],
+        Value::Null
+    );
+    assert_eq!(body["settings"]["webdav"], webdav);
+    assert_eq!(body["settings"]["queue"]["concurrency"], 3);
+
+    let revision = body["revision"].clone();
+    let refused = [
+        (
+            json!({"providers": [{"name": "no-id", "hostname": "news.example"}]}),
+            "providers[0].id",
+        ),
+        (
+            json!({"providers": [provider(P3, Some(infinidysk::config::MASK))]}),
+            "providers[0].password",
+        ),
+        (
+            json!({"arr_instances": [arr(A2, None)]}),
+            "arr_instances[0]",
+        ),
+        // Valid as a setting, but startup could not build its TLS endpoint.
+        (
+            json!({"providers": [{"id": P3, "name": "p3",
+                "hostname": "news.example:563", "tls": true, "enabled": true}]}),
+            "providers[0].hostname",
+        ),
+    ];
+    let before = get().await;
+    for (changes, want) in refused {
+        let (code, body) = patch(&revision, changes).await;
+        assert_eq!(code, bad, "{want}: {body}");
+        assert!(path(&body).starts_with(want), "{want}: {body}");
+    }
+    assert_eq!(get().await, before, "refused writes change nothing");
+
+    // A PUT changes a secret behind an identical mask; the old revision is stale.
+    let (code, body) = patch(
+        &revision,
+        json!({"providers": [provider(P1, Some("pw-set"))]}),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    let (revision, masked) = (body["revision"].clone(), body["settings"].clone());
+    let mut settings = masked.clone();
+    settings["providers"][0]["password"] = "pw-put".into();
+    let (code, body) = send(
+        addr,
+        &admin_request("PUT", "/api/v1/settings", &settings.to_string()),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    assert_eq!(stored("providers").await[0]["password"], "pw-put");
+    assert_eq!(get().await["settings"], masked, "the mask hides the change");
+    let (code, _) = patch(&revision, json!({"queue": {"concurrency": 5}})).await;
+    assert_eq!(code, conflict);
+    // PUT still replaces the whole document: what it leaves out returns to its default.
+    let mut settings = get().await["settings"].clone();
+    let sections = settings.as_object_mut().unwrap();
+    sections.remove("queue");
+    sections.remove("providers");
+    let (code, body) = send(
+        addr,
+        &admin_request("PUT", "/api/v1/settings", &settings.to_string()),
+    )
+    .await;
+    assert_eq!(code, ok, "{body}");
+    let body: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["settings"]["queue"]["concurrency"], 2);
+    assert_eq!(body["settings"]["providers"], json!([]));
+
+    cancel.cancel();
+    server.await.unwrap().unwrap();
 }
 
 #[tokio::test]

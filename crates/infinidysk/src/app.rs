@@ -82,15 +82,21 @@ pub struct Boot {
 impl Boot {
     /// `setting` is `INFINIDYSK_CONFIG_DIR` as [`config_dir_from_env`] checked it; it sets
     /// [`Self::home`] and [`Self::config_dir`]. Also reads `INFINIDYSK_LISTEN`,
-    /// `INFINIDYSK_DATABASE_URL` (default: the URL in `<home>/database.toml`, else
+    /// `INFINIDYSK_DATABASE_URL` or `INFINIDYSK_DATABASE_URL_FILE` (default: the URL in `<home>/database.toml`, else
     /// `<home>/infinidysk.sqlite`), `PUID`, `PGID`, `INFINIDYSK_TRACE_MINUTES`,
     /// `INFINIDYSK_METRICS_PATH` (default: `metrics.sqlite` in `config_dir`),
     /// `INFINIDYSK_LOG_DIR` (default: `logs` in `config_dir`) and `INFINIDYSK_FFPROBE`
     /// (default: `ffprobe` on `PATH`).
     pub fn from_env(setting: Option<&Path>) -> anyhow::Result<Self> {
+        check_env_is_text()?;
         let home = setting.map_or_else(|| DEFAULT_HOME.into(), Path::to_path_buf);
-        let (_, database_url, database_source) =
-            crate::database::select(std::env::var("INFINIDYSK_DATABASE_URL").ok(), &home)?;
+        let url = config::supplied_text(
+            "INFINIDYSK_DATABASE_URL",
+            std::env::var("INFINIDYSK_DATABASE_URL").ok(),
+            std::env::var("INFINIDYSK_DATABASE_URL_FILE").ok(),
+        )?;
+        let (_, database_url, database_source) = crate::database::select(url, &home)?;
+        check_url_parameters(&database_url, database_source)?;
         let beside = base_dir(setting, &database_url);
         Ok(Self {
             listen: listen_from_env()?,
@@ -106,6 +112,113 @@ impl Boot {
             ffprobe: var("INFINIDYSK_FFPROBE", "ffprobe".to_owned())?,
         })
     }
+}
+
+/// Checks what this environment means for a fresh installation, as `infinidysk config
+/// validate`: the variables startup reads, the settings they give and each enabled
+/// provider's endpoint. Creates no folder, database, log or socket and connects nowhere;
+/// it does not see saved settings or check the database URL past its scheme and the
+/// names of its query parameters.
+pub fn validate_deployment() -> anyhow::Result<()> {
+    check_env_is_text()?;
+    let home = home_from_env()?;
+    let vars: Vec<(String, String)> = std::env::vars().collect();
+    let overrides = config::parse_overrides(vars.iter().cloned())?;
+    crate::auth::InitialAdmin::from_vars(&vars)?;
+    let url = config::supplied_text(
+        "INFINIDYSK_DATABASE_URL",
+        std::env::var("INFINIDYSK_DATABASE_URL").ok(),
+        std::env::var("INFINIDYSK_DATABASE_URL_FILE").ok(),
+    )?;
+    let known = |url: &str| {
+        ["sqlite:", "postgres:", "postgresql:"]
+            .iter()
+            .any(|scheme| url.starts_with(scheme))
+    };
+    if let Some(url) = &url {
+        if !known(url) {
+            return Err(config::Error::Input {
+                path: "INFINIDYSK_DATABASE_URL".to_owned(),
+                reason: "expected a sqlite: or postgres: URL",
+            }
+            .into());
+        }
+        check_url_parameters(url, crate::database::Source::Env)?;
+    }
+    listen_from_env()?;
+    var("PUID", 1000_u32)?;
+    var("PGID", 1000_u32)?;
+    var("INFINIDYSK_TRACE_MINUTES", 0_u32)?;
+    let settings = config::fresh(&overrides, &home.join("cache").display().to_string())?;
+    check_endpoints(&settings.providers).map_err(anyhow::Error::from)
+}
+
+/// Refuses a PostgreSQL URL with a query parameter the driver would log, value and all,
+/// as a bad input: one line naming where the URL came from, never the URL.
+fn check_url_parameters(url: &str, source: crate::database::Source) -> Result<(), config::Error> {
+    if infinidysk_db::check_postgres_url(url).is_err() {
+        return Err(config::Error::Input {
+            path: match source {
+                crate::database::Source::Env => "INFINIDYSK_DATABASE_URL",
+                crate::database::Source::BootFile | crate::database::Source::Default => {
+                    "the URL in database.toml"
+                }
+            }
+            .to_owned(),
+            reason: "has a query parameter infinidysk does not support",
+        });
+    }
+    Ok(())
+}
+
+impl From<EndpointCheck> for anyhow::Error {
+    fn from(check: EndpointCheck) -> Self {
+        match check {
+            EndpointCheck::Host(error) => error.into(),
+            EndpointCheck::Other(error) => {
+                Self::from(error).context("configuring Usenet providers")
+            }
+        }
+    }
+}
+
+/// Why [`check_endpoints`] failed.
+pub(crate) enum EndpointCheck {
+    /// A provider's hostname is not a server name; the error names its setting.
+    Host(config::Error),
+    /// Building the endpoint failed for a reason that is not the settings.
+    Other(infinidysk_nntp::Error),
+}
+
+/// Builds each enabled provider's endpoint, as startup does, without connecting.
+/// `providers` must be resolved (see [`config::Provider::resolve`]).
+pub(crate) fn check_endpoints(providers: &[config::Provider]) -> Result<(), EndpointCheck> {
+    for (index, provider) in providers.iter().enumerate().filter(|(_, p)| p.enabled) {
+        match endpoint(provider) {
+            Ok(_) => {}
+            Err(infinidysk_nntp::Error::InvalidArgument(_)) => {
+                return Err(EndpointCheck::Host(config::Error::Input {
+                    path: format!("providers[{index}].hostname"),
+                    reason: "not a valid server name",
+                }));
+            }
+            Err(error) => return Err(EndpointCheck::Other(error)),
+        }
+    }
+    Ok(())
+}
+
+/// `std::env::vars` panics on a variable that is not UTF-8 and prints its value.
+fn check_env_is_text() -> Result<(), config::Error> {
+    for (name, value) in std::env::vars_os() {
+        if name.to_str().is_none() || value.to_str().is_none() {
+            return Err(config::Error::Input {
+                path: name.to_string_lossy().into_owned(),
+                reason: "must be valid UTF-8",
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The base folder: `INFINIDYSK_CONFIG_DIR` (`setting`), else the folder of a `sqlite:`
@@ -152,11 +265,9 @@ fn config_dir_var() -> anyhow::Result<Option<String>> {
     match std::env::var("INFINIDYSK_CONFIG_DIR") {
         Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(value)) => {
-            anyhow::bail!(
-                "INFINIDYSK_CONFIG_DIR must be valid UTF-8, not {}",
-                value.display()
-            )
+        // The value is left out: it may hold a secret.
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("INFINIDYSK_CONFIG_DIR must be valid UTF-8")
         }
     }
 }
@@ -169,7 +280,7 @@ fn config_dir_setting(value: Option<&str>) -> anyhow::Result<Option<PathBuf>> {
     let dir = Path::new(value);
     // An empty value is not absolute either.
     if !dir.is_absolute() {
-        anyhow::bail!("INFINIDYSK_CONFIG_DIR must be an absolute path, not {value:?}");
+        anyhow::bail!("INFINIDYSK_CONFIG_DIR must be an absolute path");
     }
     Ok(Some(dir.to_path_buf()))
 }
@@ -235,8 +346,14 @@ pub async fn serve(
     vars: impl IntoIterator<Item = (String, String)>,
     cancel: CancellationToken,
 ) -> anyhow::Result<Exit> {
-    let pending = crate::backup::boot::apply_pending(boot)?;
     let vars: Vec<(String, String)> = vars.into_iter().collect();
+    // Input is checked before a pending restore moves anything, so a bad variable does
+    // not roll back a restore that neither database failed.
+    let overrides = config::parse_overrides(vars.iter().cloned())?;
+    let supplied = config::check_supplied(&overrides)?;
+    check_endpoints(&supplied.providers)?;
+    let initial_admin = crate::auth::InitialAdmin::from_vars(&vars)?;
+    let pending = crate::backup::boot::apply_pending(boot)?;
     let default_cache_dir = boot.home.join("cache").display().to_string();
     let db = match Db::connect(&boot.database_url).await {
         Ok(db) => db,
@@ -249,15 +366,16 @@ pub async fn serve(
         Err(error) => return Err(anyhow::Error::from(error).context("opening the database")),
     };
     // Past `finish` a restore no longer rolls back, so its settings must load first.
+    // Providers are built after `finish`, so their endpoints are checked here too.
     if pending.swapped()
         && let Err(error) =
-            ConfigStore::load_in(db.clone(), vars.iter().cloned(), default_cache_dir.clone()).await
+            ConfigStore::load_overrides(db.clone(), &overrides, default_cache_dir.clone())
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|store| Ok(check_endpoints(&store.settings().providers)?))
     {
         db.close().await;
-        let reason = format!(
-            "{:#}",
-            anyhow::Error::from(error).context("loading settings")
-        );
+        let reason = format!("{:#}", error.context("loading settings"));
         warn!(%reason, "the restored database did not open; putting the previous one back");
         crate::backup::boot::begin_roll_back(boot, pending, &reason)?;
         return Ok(Exit::Restart);
@@ -287,7 +405,7 @@ pub async fn serve(
         return Ok(Exit::Stopped);
     }
     crate::upgrade::stamp_migrated(&db, &boot.config_dir).await;
-    let mut store = ConfigStore::load_in(db.clone(), vars, default_cache_dir.clone())
+    let mut store = ConfigStore::load_overrides(db.clone(), &overrides, default_cache_dir.clone())
         .await
         .context("loading settings")?;
     store
@@ -616,11 +734,15 @@ pub async fn serve(
         handoff: Arc::clone(&handoff),
     };
     let config = Arc::new(RwLock::new(store));
-    let auth = Arc::new(
-        Auth::load(db.clone(), Arc::clone(&config))
+    let mut auth = Auth::load(db.clone(), Arc::clone(&config))
+        .await
+        .context("loading the admin account")?;
+    if let Some(initial) = initial_admin {
+        auth.provision(initial)
             .await
-            .context("loading the admin account")?,
-    );
+            .context("creating the admin account")?;
+    }
+    let auth = Arc::new(auth);
     let sab =
         Sab::new(Arc::clone(&queue), Arc::clone(&config)).context("building the NZB fetcher")?;
     let discovery = Arc::new(

@@ -50,6 +50,20 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("config") {
+        if std::env::args().skip(2).ne(["validate"]) {
+            eprintln!("usage: infinidysk config validate");
+            std::process::exit(2);
+        }
+        match app::validate_deployment() {
+            Ok(()) => println!("fresh-install configuration valid"),
+            Err(error) => {
+                eprintln!("invalid: {}", reason(&error));
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
     // Checked before anything reads it, so a folder infinidysk cannot use stops with one line.
     let setting = match app::config_dir_from_env() {
         Ok(setting) => setting,
@@ -63,7 +77,22 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     };
-    let boot = Boot::from_env(setting.as_deref())?;
+    let boot = match Boot::from_env(setting.as_deref()) {
+        Ok(boot) => boot,
+        // A bad variable is a known failure: one line, no backtrace.
+        Err(error)
+            if matches!(
+                error.downcast_ref(),
+                Some(infinidysk::config::Error::Input { .. })
+            ) =>
+        {
+            tracing_subscriber::fmt().init();
+            let reason = reason(&error);
+            tracing::warn!(%reason, "cannot use the environment; fix the variable named in the reason, then restart");
+            std::process::exit(1);
+        }
+        Err(error) => return Err(error),
+    };
     let (capture, unkept) = match Capture::persisted(&boot.log_dir, (boot.uid, boot.gid)) {
         Ok(capture) => (capture, None),
         Err(error) => (Capture::MEMORY, Some(error)),
@@ -101,15 +130,18 @@ async fn main() -> anyhow::Result<()> {
     });
     let exit = match app::serve(listener, &boot, std::env::vars(), cancel).await {
         Ok(exit) => exit,
-        // Invalid saved settings are a known failure: one line, no backtrace.
+        // Invalid settings are a known failure: one line, no backtrace.
         Err(error)
             if matches!(
                 error.downcast_ref::<infinidysk::config::Error>(),
-                Some(infinidysk::config::Error::Invalid { .. })
+                Some(
+                    infinidysk::config::Error::Invalid { .. }
+                        | infinidysk::config::Error::Input { .. }
+                )
             ) =>
         {
-            let reason = format!("{error:#}");
-            let message = "the saved settings are invalid; fix them or override them with INFINIDYSK__ variables, then restart";
+            let reason = reason(&error);
+            let message = "the settings are invalid; fix the saved setting or the INFINIDYSK variable named in the reason, then restart";
             // A stricter RUST_LOG must not hide why startup stopped.
             if tracing::enabled!(tracing::Level::WARN) {
                 tracing::warn!(%reason, "{message}");
@@ -128,4 +160,12 @@ async fn main() -> anyhow::Result<()> {
         return Err(error).context("restarting");
     }
     Ok(())
+}
+
+/// The error chain, led by the setting path when the message lacks it.
+fn reason(error: &anyhow::Error) -> String {
+    match error.downcast_ref::<infinidysk::config::Error>() {
+        Some(infinidysk::config::Error::Invalid { path, .. }) => format!("{path}: {error:#}"),
+        _ => format!("{error:#}"),
+    }
 }

@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 futures-util.workspace = true
 infinidysk-core.workspace = true
+percent-encoding.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true

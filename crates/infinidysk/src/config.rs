@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::fmt::Write as _;
 use std::ops::RangeInclusive;
 
 use infinidysk_db::Db;
@@ -34,6 +35,14 @@ pub enum Error {
     },
     #[error("{0} is set by an environment variable and cannot be changed here")]
     Locked(String),
+    /// Deployment or request input that cannot be used. `reason` is fixed text, so no
+    /// input value reaches the message.
+    #[error("{path}: {reason}")]
+    Input {
+        /// The variable as it was set, or the dotted setting path like `providers[0].id`.
+        path: String,
+        reason: &'static str,
+    },
 }
 
 impl Error {
@@ -42,7 +51,7 @@ impl Error {
     pub fn path(&self) -> Option<&str> {
         match self {
             Self::Invalid { path, .. } => Some(path),
-            Self::Locked(path) => Some(path),
+            Self::Locked(path) | Self::Input { path, .. } => Some(path),
             Self::Db(_) | Self::Json(_) => None,
         }
     }
@@ -279,16 +288,35 @@ impl MaintenanceWindow {
     /// they are equal.
     #[must_use]
     pub fn minutes(&self) -> Option<(u16, u16)> {
-        let parse = |s: &str| {
-            let (h, m) = s.split_once(':')?;
-            if h.len() != 2 || m.len() != 2 {
-                return None;
-            }
-            let (h, m): (u16, u16) = (h.parse().ok()?, m.parse().ok()?);
-            (h < 24 && m < 60).then_some(h * 60 + m)
-        };
-        let (start, end) = (parse(&self.start)?, parse(&self.end)?);
+        let (start, end) = (Self::time(&self.start)?, Self::time(&self.end)?);
         (start != end).then_some((start, end))
+    }
+
+    /// `HH:MM` in minutes after midnight.
+    fn time(value: &str) -> Option<u16> {
+        let (h, m) = value.split_once(':')?;
+        if h.len() != 2 || m.len() != 2 {
+            return None;
+        }
+        let (h, m): (u16, u16) = (h.parse().ok()?, m.parse().ok()?);
+        (h < 24 && m < 60).then_some(h * 60 + m)
+    }
+
+    /// Each end on its own. Whether they differ is checked once both are known, since a
+    /// variable can set one end and the saved settings the other.
+    fn check_times(&self) -> Result<(), Error> {
+        for (path, value) in [
+            ("maintenance.window.start", &self.start),
+            ("maintenance.window.end", &self.end),
+        ] {
+            if Self::time(value).is_none() {
+                return Err(invalid(
+                    path,
+                    "The window start and end must each be HH:MM".to_owned(),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -671,9 +699,9 @@ impl Oidc {
         }
     }
 
-    /// Trims the fields; checks them only while SSO is on, so clearing the issuer alone
-    /// always turns SSO off.
-    pub(crate) fn validate(&mut self) -> Result<(), Error> {
+    /// Trims the fields and checks the ones that are valid or not on their own: the
+    /// display name, and the issuer when one is set (it turns SSO on).
+    fn check_values(&mut self) -> Result<(), Error> {
         self.issuer = self.issuer.trim().to_owned();
         self.client_id = self.client_id.trim().to_owned();
         self.redirect_uri = self.redirect_uri.trim().to_owned();
@@ -692,17 +720,27 @@ impl Oidc {
                 format!("Display name must be plain text of at most {MAX_DISPLAY_NAME} characters"),
             ));
         }
-        if !self.enabled() {
-            return Ok(());
-        }
-        if !issuer_ok(&self.issuer) {
+        if self.enabled() && !issuer_ok(&self.issuer) {
             return Err(invalid(
                 "auth.oidc.issuer",
-                format!(
-                    "Issuer {:?} must be an https:// address without a query (http:// only on this machine)",
-                    self.issuer
-                ),
+                "Issuer must be an https:// address without a query (http:// only on this machine)"
+                    .to_owned(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Trims and checks every field.
+    pub(crate) fn validate(&mut self) -> Result<(), Error> {
+        self.check_values()?;
+        self.check_required()
+    }
+
+    /// The fields SSO needs, checked only while it is on, so clearing the issuer alone
+    /// always turns SSO off. Runs after [`Self::check_values`].
+    fn check_required(&self) -> Result<(), Error> {
+        if !self.enabled() {
+            return Ok(());
         }
         if self.client_id.is_empty() {
             return Err(invalid(
@@ -719,10 +757,7 @@ impl Oidc {
         if !self.redirect_uri.is_empty() && !redirect_ok(&self.redirect_uri) {
             return Err(invalid(
                 "auth.oidc.redirect_uri",
-                format!(
-                    "Redirect URI {:?} must be an http:// or https:// address without a fragment",
-                    self.redirect_uri
-                ),
+                "Redirect URI must be an http:// or https:// address without a fragment".to_owned(),
             ));
         }
         Ok(())
@@ -821,13 +856,19 @@ impl RcloneRc {
         Ok(url)
     }
 
-    fn validate(&mut self) -> Result<(), Error> {
+    /// Trims the fields and checks a URL that is set, whether or not RC is on.
+    fn check_values(&mut self) -> Result<(), Error> {
         for field in [&mut self.url, &mut self.fs, &mut self.user] {
             *field = field.trim().to_owned();
         }
         if !self.url.is_empty() {
             self.forget_url()?;
         }
+        Ok(())
+    }
+
+    /// The fields RC needs while it is on. Runs after [`Self::check_values`].
+    fn validate(&self) -> Result<(), Error> {
         if !self.enabled {
             return Ok(());
         }
@@ -1029,7 +1070,9 @@ impl Performance {
         );
     }
 
-    fn validate(&self, mount_dir: &str, default_cache_dir: &str) -> Result<(), Error> {
+    /// The ranges of the effective tuning. A preset's own values are always in range, so
+    /// this fails only on a value that is set, whichever preset is saved.
+    fn check_ranges(&self) -> Result<(), Error> {
         let t = self.effective();
         check(
             "performance.read_ahead_mb",
@@ -1072,19 +1115,24 @@ impl Performance {
             "FUSE max background",
             t.fuse_max_background,
             &FUSE_MAX_BACKGROUND,
-        )?;
+        )
+    }
+
+    /// The disk cache folder, checked against the mount. [`Self::check_ranges`] runs in
+    /// [`Settings::check_values`].
+    fn validate(&self, mount_dir: &str, default_cache_dir: &str) -> Result<(), Error> {
         let cache_dir = self.disk_cache_dir.as_deref().unwrap_or(default_cache_dir);
         let dir = std::path::Path::new(cache_dir);
         if !dir.is_absolute() {
             return Err(invalid(
                 "performance.disk_cache_dir",
-                format!("Disk cache dir {cache_dir:?} must be an absolute path"),
+                "Disk cache dir must be an absolute path".to_owned(),
             ));
         }
         if dir.starts_with(mount_dir) {
             return Err(invalid(
                 "performance.disk_cache_dir",
-                format!("Disk cache dir {cache_dir:?} must be outside the mount dir"),
+                "Disk cache dir must be outside the mount dir".to_owned(),
             ));
         }
         Ok(())
@@ -1300,8 +1348,8 @@ impl Settings {
             self.network.download_limit_mb_per_s = None;
         }
         let pd = Provider::default();
-        for p in &mut self.providers {
-            let f = format!("providers[{}].", p.label());
+        for (i, p) in self.providers.iter_mut().enumerate() {
+            let f = format!("providers[{i}].");
             reset(
                 &format!("{f}max_connections"),
                 &mut p.max_connections,
@@ -1339,12 +1387,7 @@ impl Settings {
 
     /// [`Self::validate`], with the disk cache in `default_cache_dir` when none is saved.
     pub(crate) fn validate_in(&mut self, default_cache_dir: &str) -> Result<(), Error> {
-        if !self.mount.dir.starts_with('/') {
-            return Err(invalid(
-                "mount.dir",
-                format!("Mount dir {:?} must be an absolute path", self.mount.dir),
-            ));
-        }
+        self.check_values()?;
         // A mount over the config folder would hide its files once it mounts.
         if let Some(config_dir) = std::path::Path::new(default_cache_dir).parent()
             && config_dir.starts_with(&self.mount.dir)
@@ -1352,10 +1395,87 @@ impl Settings {
             return Err(invalid(
                 "mount.dir",
                 format!(
-                    "Mount dir {:?} must not contain the config folder {}",
-                    self.mount.dir,
+                    "Mount dir must not contain the config folder {}",
                     config_dir.display()
                 ),
+            ));
+        }
+        self.rclone_rc.validate()?;
+        self.performance
+            .validate(&self.mount.dir, default_cache_dir)?;
+        if self.maintenance.window.minutes().is_none() {
+            return Err(invalid(
+                "maintenance.window",
+                "The window needs a start and a different end, each HH:MM".to_owned(),
+            ));
+        }
+        let backup_dir = &self.maintenance.backup.dir;
+        if !backup_dir.is_empty() && std::path::Path::new(backup_dir).starts_with(&self.mount.dir) {
+            return Err(invalid(
+                "maintenance.backup.dir",
+                "Backup folder must be outside the mount".to_owned(),
+            ));
+        }
+        let inside = |a: &str, b: &str| std::path::Path::new(a).starts_with(b);
+        // The mount and the STRM directory may sit inside a library folder (one `/data`
+        // for everything); library walks skip them.
+        for (i, dir) in self.imports.library_dirs.iter().enumerate() {
+            let path = dir.path.as_str();
+            let clash = [
+                (self.mount.dir.as_str(), "is inside the mount"),
+                (
+                    self.imports.strm_dir.as_str(),
+                    "is inside the completed STRM directory",
+                ),
+            ]
+            .into_iter()
+            .find(|(other, _)| inside(path, other))
+            .map(|(_, what)| what)
+            .or_else(|| {
+                self.imports
+                    .library_dirs
+                    .iter()
+                    .enumerate()
+                    .any(|(j, o)| i != j && (inside(path, &o.path) || inside(&o.path, path)))
+                    .then_some("overlaps another library folder")
+            });
+            if let Some(what) = clash {
+                return Err(invalid(
+                    "imports.library_dirs",
+                    format!("Library folder {} {what}", i + 1),
+                ));
+            }
+        }
+        self.auth.oidc.check_required()?;
+        if self.imports.strategy == ImportStrategy::Strm && self.network.public_url.is_empty() {
+            return Err(invalid(
+                "imports.strategy",
+                "STRM files need a public URL, the address media servers play them from".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks and normalizes each setting that is valid or not on its own, whatever the
+    /// other settings hold: ranges, single paths and addresses, and the provider and Arr
+    /// lists. A variable that fails here fails with any saved settings, so startup runs
+    /// this before a pending restore moves files (see [`check_supplied`]).
+    pub(crate) fn check_values(&mut self) -> Result<(), Error> {
+        self.performance.check_ranges()?;
+        self.auth.oidc.check_values()?;
+        self.rclone_rc.check_values()?;
+        if let Some(dir) = &self.performance.disk_cache_dir
+            && !std::path::Path::new(dir).is_absolute()
+        {
+            return Err(invalid(
+                "performance.disk_cache_dir",
+                "Disk cache dir must be an absolute path".to_owned(),
+            ));
+        }
+        if !self.mount.dir.starts_with('/') {
+            return Err(invalid(
+                "mount.dir",
+                "Mount dir must be an absolute path".to_owned(),
             ));
         }
         if self.webdav.user.trim().is_empty() {
@@ -1364,7 +1484,6 @@ impl Settings {
                 "WebDAV user must not be empty".to_owned(),
             ));
         }
-        self.rclone_rc.validate()?;
         if self.sab.manual_category.trim().is_empty() {
             return Err(invalid(
                 "sab.manual_category",
@@ -1402,14 +1521,6 @@ impl Settings {
             .map(|g| g.trim().to_owned())
             .filter(|g| !g.is_empty())
             .collect();
-        self.performance
-            .validate(&self.mount.dir, default_cache_dir)?;
-        if self.maintenance.window.minutes().is_none() {
-            return Err(invalid(
-                "maintenance.window",
-                "The window needs a start and a different end, each HH:MM".to_owned(),
-            ));
-        }
         self.maintenance.scheduled.sort_unstable();
         self.maintenance.scheduled.dedup();
         check(
@@ -1419,39 +1530,31 @@ impl Settings {
             &BACKUP_KEEP,
         )?;
         let backup_dir = self.maintenance.backup.dir.trim();
-        if !backup_dir.is_empty() {
-            if !backup_dir.starts_with('/') {
-                return Err(invalid(
-                    "maintenance.backup.dir",
-                    format!("Backup folder {backup_dir:?} must be an absolute path"),
-                ));
-            }
-            if std::path::Path::new(backup_dir).starts_with(&self.mount.dir) {
-                return Err(invalid(
-                    "maintenance.backup.dir",
-                    format!("Backup folder {backup_dir:?} must be outside the mount"),
-                ));
-            }
+        if !backup_dir.is_empty() && !backup_dir.starts_with('/') {
+            return Err(invalid(
+                "maintenance.backup.dir",
+                "Backup folder must be an absolute path".to_owned(),
+            ));
         }
         self.maintenance.backup.dir = backup_dir.to_owned();
         let strm_dir = self.imports.strm_dir.trim();
         if !strm_dir.starts_with('/') {
             return Err(invalid(
                 "imports.strm_dir",
-                format!("STRM directory {strm_dir:?} must be an absolute path"),
+                "STRM directory must be an absolute path".to_owned(),
             ));
         }
         self.imports.strm_dir = strm_dir.to_owned();
         self.imports
             .library_dirs
             .retain(|d| !d.path.trim().is_empty());
-        for dir in &mut self.imports.library_dirs {
+        for (i, dir) in self.imports.library_dirs.iter_mut().enumerate() {
             for path in [&mut dir.path, &mut dir.arr_path] {
                 let trimmed = path.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with('/') {
                     return Err(invalid(
                         "imports.library_dirs",
-                        format!("Library folder {trimmed:?} must be an absolute path"),
+                        format!("Library folder {} must be an absolute path", i + 1),
                     ));
                 }
                 *path = if trimmed == "/" {
@@ -1461,44 +1564,14 @@ impl Settings {
                 };
             }
         }
-        let inside = |a: &str, b: &str| std::path::Path::new(a).starts_with(b);
-        // The mount and the STRM directory may sit inside a library folder (one `/data`
-        // for everything); library walks skip them.
-        for (i, dir) in self.imports.library_dirs.iter().enumerate() {
-            let path = dir.path.as_str();
-            let clash = [
-                (self.mount.dir.as_str(), "is inside the mount"),
-                (
-                    self.imports.strm_dir.as_str(),
-                    "is inside the completed STRM directory",
-                ),
-            ]
-            .into_iter()
-            .find(|(other, _)| inside(path, other))
-            .map(|(_, what)| what)
-            .or_else(|| {
-                self.imports
-                    .library_dirs
-                    .iter()
-                    .enumerate()
-                    .any(|(j, o)| i != j && (inside(path, &o.path) || inside(&o.path, path)))
-                    .then_some("overlaps another library folder")
-            });
-            if let Some(what) = clash {
-                return Err(invalid(
-                    "imports.library_dirs",
-                    format!("Library folder {path:?} {what}"),
-                ));
-            }
-        }
         self.network
             .trusted_proxies
             .retain(|p| !p.trim().is_empty());
-        for proxy in &mut self.network.trusted_proxies {
+        for (i, proxy) in self.network.trusted_proxies.iter_mut().enumerate() {
             if infinidysk_webdav::parse_proxy(proxy).is_none() {
                 return Err(invalid(
                     "network.trusted_proxies",
-                    format!("Trusted proxy {proxy:?} is not an IP address or CIDR range"),
+                    format!("Trusted proxy {} is not an IP address or CIDR range", i + 1),
                 ));
             }
             *proxy = proxy.trim().to_owned();
@@ -1516,13 +1589,10 @@ impl Settings {
         {
             return Err(invalid(
                 "network.public_url",
-                format!(
-                    "Public URL {url:?} must be an http:// or https:// address without a query"
-                ),
+                "Public URL must be an http:// or https:// address without a query".to_owned(),
             ));
         }
         self.network.public_url = url.to_owned();
-        self.auth.oidc.validate()?;
         if let Some(limit) = self.network.download_limit_mb_per_s {
             check(
                 "network.download_limit_mb_per_s",
@@ -1531,81 +1601,65 @@ impl Settings {
                 &DOWNLOAD_LIMIT_MB_PER_S,
             )?;
         }
-        if self.imports.strategy == ImportStrategy::Strm && self.network.public_url.is_empty() {
-            return Err(invalid(
-                "imports.strategy",
-                "STRM files need a public URL, the address media servers play them from".to_owned(),
-            ));
-        }
         let mut ids = HashSet::new();
-        for p in &mut self.providers {
+        for (i, p) in self.providers.iter_mut().enumerate() {
             if !ids.insert(p.id) {
                 return Err(invalid(
                     "providers",
                     format!("Duplicate provider id {}", p.id),
                 ));
             }
-            p.resolve()?;
+            p.resolve(&Provider::label(i))?;
         }
         ids.clear();
-        for a in &self.arr_instances {
+        for (i, a) in self.arr_instances.iter().enumerate() {
             if !ids.insert(a.id) {
                 return Err(invalid(
                     "arr_instances",
                     format!("Duplicate Arr instance id {}", a.id),
                 ));
             }
-            a.validate()?;
+            a.validate(&ArrInstance::label(i))?;
         }
         Ok(())
     }
 }
 
 impl Provider {
-    fn label(&self) -> &str {
-        [&self.name, &self.hostname]
-            .into_iter()
-            .find(|s| !s.is_empty())
-            .or(self.profile.as_ref())
-            .map_or("", String::as_str)
+    /// Names the provider at `index` in messages by its list position. The name and
+    /// hostname are user input that can carry credentials, so messages leave them out.
+    pub(crate) fn label(index: usize) -> String {
+        format!("provider {}", index + 1)
     }
 
-    pub(crate) fn resolve(&mut self) -> Result<(), Error> {
+    /// Checks the provider and fills `port`, `backbone` and `name` from its profile.
+    /// `label` names it in errors; see [`Provider::label`].
+    pub(crate) fn resolve(&mut self, label: &str) -> Result<(), Error> {
         const P: &str = "providers";
-        let label = self.label().to_owned();
         check(
             P,
-            &format!("Provider {label}: max connections"),
+            &format!("{label}: max connections"),
             self.max_connections,
             &MAX_CONNECTIONS,
         )?;
         check(
             P,
-            &format!("Provider {label}: pipeline depth"),
+            &format!("{label}: pipeline depth"),
             self.pipeline_depth,
             &PIPELINE_DEPTH,
         )?;
         if let Some(quota) = &self.quota {
+            check(P, &format!("{label}: quota GB"), quota.gb, &QUOTA_GB)?;
             check(
                 P,
-                &format!("Provider {label}: quota GB"),
-                quota.gb,
-                &QUOTA_GB,
-            )?;
-            check(
-                P,
-                &format!("Provider {label}: quota reset day"),
+                &format!("{label}: quota reset day"),
                 quota.reset_day,
                 &RESET_DAY,
             )?;
         }
         if let Some(id) = &self.profile {
-            let profile = catalog::profile(id).ok_or_else(|| {
-                invalid(
-                    P,
-                    format!("Provider {label}: unknown catalog profile {id:?}"),
-                )
-            })?;
+            let profile = catalog::profile(id)
+                .ok_or_else(|| invalid(P, format!("{label}: unknown catalog profile")))?;
             let server = if self.hostname.is_empty() {
                 profile.servers.first()
             } else {
@@ -1617,10 +1671,7 @@ impl Provider {
             .ok_or_else(|| {
                 invalid(
                     P,
-                    format!(
-                        "Provider {label}: {} is not a {} server",
-                        self.hostname, profile.name
-                    ),
+                    format!("{label}: hostname is not a {} server", profile.name),
                 )
             })?;
             server.hostname.clone_into(&mut self.hostname);
@@ -1633,22 +1684,17 @@ impl Provider {
             if self.hostname.is_empty()
                 || self
                     .hostname
-                    .contains(|c: char| c.is_whitespace() || c == '/')
+                    .contains(|c: char| c.is_whitespace() || c == '/' || c == '@')
             {
-                return Err(invalid(
-                    P,
-                    format!("Provider {label}: invalid hostname {:?}", self.hostname),
-                ));
+                return Err(invalid(P, format!("{label}: invalid hostname")));
             }
-            check(P, &format!("Provider {label}: port"), self.port, &PORT)?;
+            check(P, &format!("{label}: port"), self.port, &PORT)?;
             if let Some(b) = &self.backbone
                 && catalog::backbone(b).is_none()
             {
                 return Err(invalid(
                     P,
-                    format!(
-                        "Provider {label}: unknown backbone {b:?}; pick one from the catalog or none"
-                    ),
+                    format!("{label}: unknown backbone; pick one from the catalog or none"),
                 ));
             }
             if self.name.is_empty() {
@@ -1660,10 +1706,16 @@ impl Provider {
 }
 
 impl ArrInstance {
-    pub(crate) fn validate(&self) -> Result<(), Error> {
+    /// Names the Arr instance at `index` in messages by its list position; its name is
+    /// user input that can carry credentials.
+    pub(crate) fn label(index: usize) -> String {
+        format!("Arr instance {}", index + 1)
+    }
+
+    /// `label` names the instance in errors; see [`ArrInstance::label`].
+    pub(crate) fn validate(&self, label: &str) -> Result<(), Error> {
         const A: &str = "arr_instances";
-        let label = &self.name;
-        if label.trim().is_empty() {
+        if self.name.trim().is_empty() {
             return Err(invalid(A, "Arr instance name must not be empty".to_owned()));
         }
         let rest = self
@@ -1673,22 +1725,369 @@ impl ArrInstance {
         if rest.is_none_or(str::is_empty) {
             return Err(invalid(
                 A,
-                format!("Arr instance {label}: URL must start with http:// or https://"),
+                format!("{label}: URL must start with http:// or https://"),
             ));
         }
         if self.api_key.0.is_empty() {
-            return Err(invalid(
-                A,
-                format!("Arr instance {label}: API key is required"),
-            ));
+            return Err(invalid(A, format!("{label}: API key is required")));
         }
         Ok(())
     }
 }
 
-struct Override {
+/// One setting an `INFINIDYSK__…` variable fixes.
+#[derive(Clone)]
+pub(crate) struct Override {
     path: Vec<String>,
     value: Value,
+}
+
+/// Server secrets [`ConfigStore::generate_missing_secrets`] fills when empty.
+const GENERATED: [[&str; 2]; 6] = [
+    ["sab", "api_key"],
+    ["auth", "api_key"],
+    ["auth", "session_key"],
+    ["webdav", "password"],
+    ["webdav", "download_key"],
+    ["imports", "strm_key"],
+];
+
+fn input(path: impl Into<String>, reason: &'static str) -> Error {
+    Error::Input {
+        path: path.into(),
+        reason,
+    }
+}
+
+/// A variable that names a setting, before its value is decoded.
+struct Named {
+    name: String,
+    path: Vec<String>,
+    raw: String,
+    /// `raw` is the path of a file that holds the value.
+    file: bool,
+}
+
+/// The text of a startup input `name`, given directly or read from the file `name_FILE`
+/// names. A file loses one terminal LF or CRLF; errors never show the file's content.
+pub(crate) fn supplied_text(
+    name: &str,
+    direct: Option<String>,
+    file: Option<String>,
+) -> Result<Option<String>, Error> {
+    let bad = |reason| input(name, reason);
+    match (direct, file) {
+        (Some(_), Some(_)) => Err(bad("set the variable or its _FILE, not both")),
+        (direct, None) => Ok(direct),
+        (None, Some(path)) => {
+            if !std::path::Path::new(&path).is_absolute() {
+                return Err(bad("_FILE needs an absolute path"));
+            }
+            let mut text = std::fs::read_to_string(path)
+                .map_err(|_| bad("_FILE must be a readable UTF-8 file"))?;
+            if text.ends_with('\n') {
+                text.pop();
+                if text.ends_with('\r') {
+                    text.pop();
+                }
+            }
+            Ok(Some(text))
+        }
+    }
+}
+
+/// The setting path `rest` (a name without [`ENV_PREFIX`]) names, and whether it is the
+/// `_FILE` form. The exact name wins over the `_FILE` reading.
+fn setting_path(defaults: &Value, rest: &str) -> Option<(Vec<String>, bool)> {
+    let path =
+        |rest: &str| -> Vec<String> { rest.split("__").map(str::to_ascii_lowercase).collect() };
+    let exact = path(rest);
+    if lookup(defaults, &exact).is_some() {
+        return Some((exact, false));
+    }
+    let cut = rest.len().checked_sub("_FILE".len())?;
+    let stem = rest
+        .get(..cut)
+        .filter(|_| rest[cut..].eq_ignore_ascii_case("_FILE"))?;
+    let stem = path(stem);
+    lookup(defaults, &stem).is_some().then_some((stem, true))
+}
+
+/// Parses the `INFINIDYSK__…` variables in `vars`. A name that is not a setting, two
+/// names for one setting, a value of the wrong JSON kind or type, an unknown property,
+/// and an empty generated key are errors. Ranges and other value rules are left to
+/// [`Settings::validate`].
+pub(crate) fn parse_overrides(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> Result<Vec<Override>, Error> {
+    let defaults = serde_json::to_value(Settings::default())?;
+    let mut named = Vec::new();
+    for (name, raw) in vars {
+        let Some(rest) = name.strip_prefix(ENV_PREFIX) else {
+            continue;
+        };
+        let Some((path, file)) = setting_path(&defaults, rest) else {
+            return Err(input(name, "not a setting"));
+        };
+        named.push(Named {
+            name,
+            path,
+            raw,
+            file,
+        });
+    }
+    named.sort_by(|a, b| (&a.path, &a.name).cmp(&(&b.path, &b.name)));
+    // Compares paths, never string prefixes: `auth` is not a prefix of `authors`.
+    if let Some(pair) = named
+        .windows(2)
+        .find(|pair| pair[1].path.starts_with(&pair[0].path))
+    {
+        let reason = if pair[0].path == pair[1].path && pair[0].file != pair[1].file {
+            "set the variable or its _FILE, not both"
+        } else {
+            "sets the same setting as another variable"
+        };
+        return Err(input(pair[1].name.clone(), reason));
+    }
+
+    let mut env = Vec::with_capacity(named.len());
+    let mut tree = defaults.clone();
+    for Named {
+        name,
+        path,
+        raw,
+        file,
+    } in named
+    {
+        let raw = if file {
+            supplied_text(&name, None, Some(raw))?.unwrap_or_default()
+        } else {
+            raw
+        };
+        let default = lookup(&defaults, &path).unwrap_or(&Value::Null);
+        let mut value = decode_text(&name, &path, default, raw)?;
+        if let [list] = &path[..]
+            && matches!(list.as_str(), "providers" | "arr_instances")
+            && let Some(entries) = value.as_array_mut()
+        {
+            resolve_env_ids(list, entries)?;
+        }
+        set(&mut tree, &path, value.clone());
+        env.push(Override { path, value });
+    }
+    check_lists(&tree)?;
+    reject_readarr(&tree)?;
+    let settings = decode_settings(tree)?;
+    let decoded = serde_json::to_value(&settings)?;
+    for o in &env {
+        let known = lookup(&decoded, &o.path).unwrap_or(&Value::Null);
+        check_input(&o.path.join("."), &o.value, known)?;
+    }
+    if let Some(o) = env.iter().find(|o| o.path == ["experiments"]) {
+        // Counted, not named: the entries are free text and could hold a secret.
+        let dropped = o
+            .value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|name| !EXPERIMENTS.iter().any(|e| e.name == *name))
+            .count();
+        if dropped > 0 {
+            tracing::warn!(
+                variable = "INFINIDYSK__EXPERIMENTS",
+                dropped,
+                "ignoring experiments this version does not have"
+            );
+        }
+    }
+    // A generated secret a variable owns is never generated: a new one on every start
+    // would break clients that saved the old one.
+    for secret in GENERATED {
+        let Some(o) = env
+            .iter()
+            .find(|o| o.path == secret || o.path == [secret[0]])
+        else {
+            continue;
+        };
+        let path = secret.map(str::to_owned);
+        if lookup(&decoded, &path).and_then(Value::as_str) != Some("") {
+            continue;
+        }
+        let reason = if o.path == path {
+            "must not be empty when a variable sets it"
+        } else if lookup(&o.value, &path[1..]).is_none() {
+            "is left out of the object a variable sets for its parent; add it to that \
+             object, since a secret a variable owns is never generated"
+        } else {
+            "must not be empty in the object a variable sets for its parent"
+        };
+        return Err(input(path.join("."), reason));
+    }
+    Ok(env)
+}
+
+/// The JSON value of a variable's text: text settings stay verbatim, so a numeric
+/// password is not read as a number; everything else is JSON of the setting's kind.
+fn decode_text(name: &str, path: &[String], default: &Value, raw: String) -> Result<Value, Error> {
+    if default.is_string() {
+        return Ok(Value::String(raw));
+    }
+    let parsed = serde_json::from_str::<Value>(&raw);
+    // The optional disk cache folder also takes a plain path.
+    if default.is_null() && path == ["performance", "disk_cache_dir"] {
+        return Ok(parsed.unwrap_or(Value::String(raw)));
+    }
+    let value = parsed.map_err(|_| input(name, "expected a JSON value"))?;
+    match default {
+        Value::Array(_) if !value.is_array() => Err(input(name, "expected a JSON list")),
+        Value::Object(_) if !value.is_object() => Err(input(name, "expected a JSON object")),
+        _ => Ok(value),
+    }
+}
+
+/// The namespace and key format are persistent: quotas and Arr webhooks use these IDs.
+fn resolve_env_ids(list: &str, entries: &mut [Value]) -> Result<(), Error> {
+    const NAMESPACE: Uuid = uuid::uuid!("13428296-ca9c-44e3-8440-2056062debab");
+    for (index, entry) in entries.iter_mut().enumerate() {
+        let Value::Object(entry) = entry else {
+            return Err(input(format!("{list}[{index}]"), "expected a JSON object"));
+        };
+        if let Some(id) = entry.get("id") {
+            if id.as_str().is_none_or(|id| Uuid::parse_str(id).is_err()) {
+                return Err(input(format!("{list}[{index}].id"), "expected a UUID"));
+            }
+            continue;
+        }
+        let fields: &[&str] = if list == "providers" {
+            &["name", "profile", "hostname"]
+        } else {
+            &["name"]
+        };
+        let Some((field, key)) = fields.iter().find_map(|&field| {
+            let key = entry.get(field)?.as_str()?;
+            (!key.is_empty()).then_some((field, key))
+        }) else {
+            // No valid entry lacks all its identity fields. Let settings validation
+            // report the missing or mistyped field rather than asking for a UUID.
+            continue;
+        };
+        let key = if field == "hostname" {
+            key.to_ascii_lowercase()
+        } else {
+            key.to_owned()
+        };
+        let id = Uuid::new_v5(&NAMESPACE, format!("{list}/{field}/{key}").as_bytes());
+        entry.insert("id".to_owned(), Value::String(id.to_string()));
+    }
+    Ok(())
+}
+
+/// Checks the list entries decoding would drop without a word: a library folder without
+/// a path and a maintenance job that cannot be scheduled. Values are never shown.
+pub(crate) fn check_lists(tree: &Value) -> Result<(), Error> {
+    let at = |section: &str, key: &str| tree.get(section).and_then(|s| s.get(key));
+    if let Some(Value::Array(dirs)) = at("imports", "library_dirs") {
+        for (index, dir) in dirs.iter().enumerate() {
+            let blank = match dir {
+                Value::String(path) => path.trim().is_empty(),
+                Value::Object(dir) => match dir.get("path") {
+                    None => true,
+                    Some(Value::String(path)) => path.trim().is_empty(),
+                    Some(_) => false,
+                },
+                _ => false,
+            };
+            if blank {
+                return Err(input(
+                    format!("imports.library_dirs[{index}]"),
+                    "needs a folder path",
+                ));
+            }
+        }
+    }
+    if let Some(Value::Array(jobs)) = at("maintenance", "scheduled") {
+        for (index, job) in jobs.iter().enumerate() {
+            let known = MaintenanceJob::ALL
+                .iter()
+                .any(|j| !j.always_scheduled() && job.as_str() == Some(j.id()));
+            if !known {
+                return Err(input(
+                    format!("maintenance.scheduled[{index}]"),
+                    "not a maintenance job that can be scheduled",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Decodes `tree`; an error names the failing setting, never the value or the parser text.
+pub(crate) fn decode_settings(tree: Value) -> Result<Settings, Error> {
+    serde_path_to_error::deserialize(tree).map_err(|error| {
+        let mut path = String::new();
+        let mut last = "";
+        for segment in error.path() {
+            match segment {
+                serde_path_to_error::Segment::Seq { index } => {
+                    // Writing to a String cannot fail.
+                    let _ = write!(path, "[{index}]");
+                }
+                serde_path_to_error::Segment::Map { key } if identifier(key) => {
+                    if !path.is_empty() {
+                        path.push('.');
+                    }
+                    path.push_str(key);
+                    last = key;
+                }
+                _ => break,
+            }
+        }
+        let reason = if last == "id" {
+            "expected a UUID"
+        } else {
+            "wrong type or missing value"
+        };
+        input(path, reason)
+    })
+}
+
+fn identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// Checks that every member of `supplied` exists, spelled exactly, in `decoded`, its
+/// typed form, and that no list or object stands where the type is not one. Serde would
+/// read a list as a struct by position and a one-member object as an enum.
+pub(crate) fn check_input(path: &str, supplied: &Value, decoded: &Value) -> Result<(), Error> {
+    match (supplied, decoded) {
+        (Value::Object(supplied), Value::Object(known)) => {
+            for (name, child) in supplied {
+                let field = match (identifier(name), path.is_empty()) {
+                    (false, _) => path.to_owned(),
+                    (true, true) => name.clone(),
+                    (true, false) => format!("{path}.{name}"),
+                };
+                let kept = known
+                    .get(name)
+                    .ok_or_else(|| input(field.clone(), "unknown property"))?;
+                check_input(&field, child, kept)?;
+            }
+        }
+        (Value::Array(supplied), Value::Array(known)) => {
+            for (index, (child, kept)) in supplied.iter().zip(known).enumerate() {
+                check_input(&format!("{path}[{index}]"), child, kept)?;
+            }
+        }
+        (Value::Array(_) | Value::Object(_), _) => {
+            return Err(input(path, "wrong JSON type"));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Effective settings plus the layers they came from.
@@ -1699,6 +2098,8 @@ pub struct ConfigStore {
     settings: Settings,
     /// The disk cache folder when none is saved; validation checks it against the mount.
     default_cache_dir: String,
+    /// Changes on every load and save, so a conditional write sees any write between.
+    revision: Uuid,
 }
 
 impl ConfigStore {
@@ -1716,29 +2117,17 @@ impl ConfigStore {
         vars: impl IntoIterator<Item = (String, String)>,
         default_cache_dir: String,
     ) -> Result<Self, Error> {
-        let defaults = serde_json::to_value(Settings::default())?;
-        let mut env: Vec<Override> = vars
-            .into_iter()
-            .filter_map(|(key, raw)| {
-                let path: Vec<String> = key
-                    .strip_prefix(ENV_PREFIX)?
-                    .split("__")
-                    .map(str::to_ascii_lowercase)
-                    .collect();
-                let Some(default) = lookup(&defaults, &path) else {
-                    tracing::warn!(key, "ignoring unknown config environment variable");
-                    return None;
-                };
-                // Strings stay verbatim so a numeric password is not parsed as a number.
-                let value = if default.is_string() {
-                    Value::String(raw)
-                } else {
-                    serde_json::from_str(&raw).unwrap_or(Value::String(raw))
-                };
-                Some(Override { path, value })
-            })
-            .collect();
+        let env = parse_overrides(vars)?;
+        Self::load_overrides(db, &env, default_cache_dir).await
+    }
 
+    /// [`Self::load_in`] with variables [`parse_overrides`] already parsed.
+    pub(crate) async fn load_overrides(
+        db: Db,
+        env: &[Override],
+        default_cache_dir: String,
+    ) -> Result<Self, Error> {
+        let mut env = env.to_vec();
         let mut stored = Map::new();
         for (key, value) in db.config().await? {
             stored.insert(key, serde_json::from_str(&value)?);
@@ -1757,7 +2146,13 @@ impl ConfigStore {
             env,
             settings,
             default_cache_dir,
+            revision: Uuid::new_v4(),
         })
+    }
+
+    /// The token of the settings as they are now; a successful save replaces it.
+    pub const fn revision(&self) -> Uuid {
+        self.revision
     }
 
     pub const fn settings(&self) -> &Settings {
@@ -1915,8 +2310,43 @@ impl ConfigStore {
         }
         self.settings = effective(&next, &self.env, &self.default_cache_dir)?;
         self.stored = next;
+        self.revision = Uuid::new_v4();
         Ok(())
     }
+}
+
+/// The settings `env` gives a fresh installation, checked as startup checks them.
+/// Checks each variable's value on its own ([`Settings::check_values`]), without saved
+/// settings. A failure here fails with any database, so startup runs it before a
+/// pending restore swaps one in; checks that need saved settings run after the swap.
+/// Returns those settings, with providers resolved, for checks outside this module.
+pub(crate) fn check_supplied(env: &[Override]) -> Result<Settings, Error> {
+    let mut tree = serde_json::to_value(Settings::default())?;
+    for o in env {
+        set(&mut tree, &o.path, o.value.clone());
+    }
+    let mut settings: Settings = serde_json::from_value(tree)?;
+    settings.check_values()?;
+    // A default end is valid, so only a supplied end can fail here.
+    let window = &settings.maintenance.window;
+    window.check_times()?;
+    // A variable at or above an end owns it; saved settings can supply only the other.
+    let owns = |end: &str| {
+        let target = ["maintenance", "window", end];
+        env.iter()
+            .any(|o| o.path.len() <= target.len() && o.path.iter().zip(target).all(|(a, b)| a == b))
+    };
+    if owns("start") && owns("end") && window.minutes().is_none() {
+        return Err(invalid(
+            "maintenance.window",
+            "The window needs a start and a different end, each HH:MM".to_owned(),
+        ));
+    }
+    Ok(settings)
+}
+
+pub(crate) fn fresh(env: &[Override], default_cache_dir: &str) -> Result<Settings, Error> {
+    effective(&Map::new(), env, default_cache_dir)
 }
 
 fn effective(
@@ -1924,14 +2354,35 @@ fn effective(
     env: &[Override],
     default_cache_dir: &str,
 ) -> Result<Settings, Error> {
-    let mut tree = serde_json::to_value(Settings::default())?;
+    let defaults = serde_json::to_value(Settings::default())?;
+    let mut tree = defaults.clone();
     merge(&mut tree, Value::Object(stored.clone()));
+    // A stored value that a variable replaces is not in effect.
+    for o in env {
+        if let Some(value) = lookup(&defaults, &o.path) {
+            set(&mut tree, &o.path, value.clone());
+        }
+    }
+    reject_readarr(&tree)?;
+    let mut saved: Settings = serde_json::from_value(tree)?;
+    // A default end can equal a valid stored other end; it cannot equal both defaults.
+    let sets = |end: &str| env.iter().any(|o| o.path == ["maintenance", "window", end]);
+    let window = &mut saved.maintenance.window;
+    if sets("start") != sets("end") && window.minutes().is_none() {
+        let d = MaintenanceWindow::default();
+        if sets("start") {
+            window.start = d.end;
+        } else {
+            window.end = d.start;
+        }
+    }
+    saved.reset_invalid();
+    // Variables are checked as given, never reset.
+    let mut tree = serde_json::to_value(&saved)?;
     for o in env {
         set(&mut tree, &o.path, o.value.clone());
     }
-    reject_readarr(&tree)?;
     let mut settings: Settings = serde_json::from_value(tree)?;
-    settings.reset_invalid();
     settings.validate_in(default_cache_dir)?;
     check_rc_url_override(stored, env, &settings.rclone_rc)?;
     Ok(settings)
@@ -1974,19 +2425,19 @@ fn check_rc_url_override(
 /// Readarr support was dropped; an instance left from before stops startup with what
 /// to do, not a parse error.
 fn reject_readarr(tree: &Value) -> Result<(), Error> {
-    let Some(arr) = tree["arr_instances"]
+    let Some(index) = tree["arr_instances"]
         .as_array()
-        .and_then(|arrs| arrs.iter().find(|a| a["profile"] == "readarr"))
+        .and_then(|arrs| arrs.iter().position(|a| a["profile"] == "readarr"))
     else {
         return Ok(());
     };
     Err(invalid(
         "arr_instances",
         format!(
-            "Arr instance \"{}\" is a Readarr, which infinidysk no longer supports. Remove \
-             it first: in the previous version under Settings > Automation > Arr \
-             instances, or from INFINIDYSK__ARR_INSTANCES. Then upgrade and add Chaptarr.",
-            arr["name"].as_str().unwrap_or_default()
+            "{} is a Readarr, which infinidysk no longer supports. Remove it first: in the \
+             previous version under Settings > Automation > Arr instances, or from \
+             INFINIDYSK__ARR_INSTANCES. Then upgrade and add Chaptarr.",
+            ArrInstance::label(index)
         ),
     ))
 }
@@ -2017,7 +2468,7 @@ fn remove(tree: &mut Value, path: &[String]) {
 }
 
 /// Objects merge key by key; anything else replaces.
-fn merge(base: &mut Value, over: Value) {
+pub(crate) fn merge(base: &mut Value, over: Value) {
     match (base, over) {
         (Value::Object(base), Value::Object(over)) => {
             for (key, value) in over {
@@ -2048,5 +2499,41 @@ fn diff(value: Value, default: Option<&Value>) -> Option<Value> {
         }
         (value, Some(default)) if &value == default => None,
         (value, _) => Some(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn supplied(vars: &[(&str, &str)]) -> Result<Settings, Error> {
+        let vars = vars.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned()));
+        check_supplied(&parse_overrides(vars).unwrap())
+    }
+
+    #[test]
+    fn equal_window_ends_fail_before_a_restore_only_when_variables_set_both() {
+        let window = r#"{"start":"07:00","end":"07:00"}"#;
+        for vars in [
+            &[("INFINIDYSK__MAINTENANCE__WINDOW", window)][..],
+            &[
+                ("INFINIDYSK__MAINTENANCE__WINDOW__START", "07:00"),
+                ("INFINIDYSK__MAINTENANCE__WINDOW__END", "07:00"),
+            ],
+        ] {
+            let error = supplied(vars).expect_err("both ends are supplied");
+            assert!(
+                matches!(
+                    error,
+                    Error::Invalid {
+                        path: "maintenance.window",
+                        ..
+                    }
+                ),
+                "{error}"
+            );
+        }
+        // The saved start can differ, so the comparison waits for the saved settings.
+        supplied(&[("INFINIDYSK__MAINTENANCE__WINDOW__END", "03:00")]).unwrap();
     }
 }

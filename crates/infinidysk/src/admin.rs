@@ -87,6 +87,7 @@ pub struct Admin {
     paths(
         get_settings,
         put_settings,
+        patch_settings,
         get_key,
         get_catalog,
         provider_status::post_provider_check,
@@ -219,7 +220,10 @@ impl Modify for Security {
 
 pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
     Router::new()
-        .route("/api/v1/settings", get(get_settings).put(put_settings))
+        .route(
+            "/api/v1/settings",
+            get(get_settings).put(put_settings).patch(patch_settings),
+        )
         .route("/api/v1/settings/keys/{name}", get(get_key))
         .route("/api/v1/catalog", get(get_catalog))
         .route(
@@ -520,10 +524,13 @@ struct SettingsView {
     experiments: &'static [config::Experiment],
     /// Experiments `INFINIDYSK_EXPERIMENTS` switches on whatever the settings say.
     env_experiments: Vec<String>,
+    /// Changes on every save and restart; send it with `PATCH` to write only these settings.
+    revision: Uuid,
 }
 
 fn view(admin: &Admin, store: &ConfigStore) -> SettingsView {
     SettingsView {
+        revision: store.revision(),
         settings: store.settings().masked(),
         locked: store.locked().collect(),
         restart_required: admin.live.restart_required(store.settings()),
@@ -549,6 +556,125 @@ async fn put_settings(
     State(admin): State<Arc<Admin>>,
     Json(settings): Json<Settings>,
 ) -> Result<Json<SettingsView>, Fail> {
+    write_settings(&admin, settings, None).await
+}
+
+const STALE: &str = "the settings changed after this revision was read; read them again";
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct SettingsPatch {
+    /// The `revision` of the settings the changes were made against.
+    revision: Uuid,
+    /// Settings to change, shaped like `settings`. Objects merge; values and lists
+    /// replace. A list entry that keeps its `id` keeps a secret it leaves out.
+    #[schema(value_type = HashMap<String, serde_json::Value>)]
+    changes: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Changes only the given settings, if none changed since `revision` was read.
+#[utoipa::path(patch, path = "/api/v1/settings", tag = "settings", request_body = SettingsPatch,
+    responses(
+        (status = 200, body = SettingsView),
+        (status = 400, body = ApiError, description = "Invalid or locked by the environment"),
+        (status = 409, body = ApiError, description = "The settings changed after `revision`"),
+    ))]
+async fn patch_settings(
+    State(admin): State<Arc<Admin>>,
+    body: Result<Json<SettingsPatch>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<SettingsView>, Fail> {
+    let Ok(Json(mut patch)) = body else {
+        return Err(Fail::Bad(
+            "expected a JSON object with a UUID revision and an object of changes".to_owned(),
+        ));
+    };
+    let mut snapshot = {
+        let store = admin.config.read().await;
+        if store.revision() != patch.revision {
+            return Err(Fail::Conflict(STALE.to_owned()));
+        }
+        keep_list_secrets(&mut patch.changes, store.settings())?;
+        serde_json::to_value(store.settings().masked()).map_err(|_| Fail::Internal)?
+    };
+    let changes = serde_json::Value::Object(patch.changes);
+    config::check_lists(&changes)?;
+    config::merge(&mut snapshot, changes.clone());
+    let candidate = config::decode_settings(snapshot)?;
+    let decoded = serde_json::to_value(&candidate).map_err(|_| Fail::Internal)?;
+    config::check_input("", &changes, &decoded)?;
+    write_settings(&admin, candidate, Some(patch.revision)).await
+}
+
+/// A replaced list keeps the secret of every entry that stays and takes none for a new one.
+fn keep_list_secrets(
+    changes: &mut serde_json::Map<String, serde_json::Value>,
+    current: &Settings,
+) -> Result<(), Fail> {
+    use serde_json::Value;
+    let bad = |path: String, reason: &str| Fail::Setting(path, reason.to_owned());
+    for (list, secret) in [("providers", "password"), ("arr_instances", "api_key")] {
+        let Some(Value::Array(entries)) = changes.get_mut(list) else {
+            continue;
+        };
+        for (index, entry) in entries.iter_mut().enumerate() {
+            let Value::Object(entry) = entry else {
+                continue;
+            };
+            let id = entry
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .ok_or_else(|| bad(format!("{list}[{index}].id"), "expected a UUID"))?;
+            let stays = if list == "providers" {
+                current.providers.iter().any(|p| p.id == id)
+            } else {
+                current.arr_instances.iter().any(|a| a.id == id)
+            };
+            match entry.get(secret) {
+                None if stays => {
+                    entry.insert(secret.to_owned(), Value::String(config::MASK.to_owned()));
+                }
+                Some(Value::String(text)) if text == config::MASK && !stays => {
+                    return Err(bad(
+                        format!("{list}[{index}].{secret}"),
+                        "enter the secret for a new entry",
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Saves `settings` and applies them; with `expected`, only if the revision is still that.
+/// Refuses settings whose enabled providers startup could not build. Saving them would
+/// pass validation, fail to apply, and then stop the next start before the admin API.
+fn check_candidate_endpoints(settings: &Settings) -> Result<(), Fail> {
+    let mut providers = settings.providers.clone();
+    for (i, p) in providers.iter_mut().enumerate() {
+        // An entry that does not resolve fails validation when it is saved.
+        if p.resolve(&config::Provider::label(i)).is_err() {
+            return Ok(());
+        }
+    }
+    match crate::app::check_endpoints(&providers) {
+        Ok(()) => Ok(()),
+        Err(crate::app::EndpointCheck::Host(error)) => Err(error.into()),
+        Err(crate::app::EndpointCheck::Other(error)) => {
+            tracing::warn!(reason = %error, "could not configure Usenet providers");
+            Err(Fail::Failed(
+                "could not configure Usenet providers".to_owned(),
+            ))
+        }
+    }
+}
+
+async fn write_settings(
+    admin: &Admin,
+    settings: Settings,
+    expected: Option<Uuid>,
+) -> Result<Json<SettingsView>, Fail> {
     // The probe can hang on a dead share, so it runs before the settings lock.
     let wanted = |current: &config::Imports| {
         let next = &settings.imports;
@@ -558,6 +684,7 @@ async fn put_settings(
             && (current.strategy != next.strategy || current.strm_dir != dir))
             .then(|| dir.to_owned())
     };
+    check_candidate_endpoints(&settings)?;
     let probed = wanted(&admin.config.read().await.settings().imports);
     if let Some(dir) = &probed
         && let Err(reason) = admin.live.probe_strm_dir(dir).await
@@ -568,6 +695,9 @@ async fn put_settings(
         ));
     }
     let mut store = admin.config.write().await;
+    if expected.is_some_and(|revision| revision != store.revision()) {
+        return Err(Fail::Conflict(STALE.to_owned()));
+    }
     if let Some(dir) = wanted(&store.settings().imports)
         && probed.as_ref() != Some(&dir)
     {
@@ -581,7 +711,7 @@ async fn put_settings(
     if let Err(error) = admin.live.apply(store.settings()).await {
         return Err(Fail::Bad(format!("saved, but could not apply: {error:#}")));
     }
-    let view = view(&admin, &store);
+    let view = view(admin, &store);
     drop(store);
     Ok(Json(view))
 }
@@ -1452,7 +1582,7 @@ async fn post_arr_test(
         instance.name = format!("{:?}", instance.profile);
     }
     instance
-        .validate()
+        .validate("Arr instance")
         .map_err(|error| Fail::Bad(error.to_string()))?;
     let arr = crate::app::to_arr(&instance);
     Ok(Json(

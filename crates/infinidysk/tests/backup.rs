@@ -453,6 +453,95 @@ async fn an_open_failure_records_a_rollback_and_restarts() {
 }
 
 #[tokio::test]
+async fn a_bad_variable_stops_startup_before_a_restore_swaps() {
+    // Each is out of range with any saved settings: neither database is at fault.
+    for (key, value, want) in [
+        ("INFINIDYSK__QUEUE__CONCURRENCY", "50", "Concurrency"),
+        (
+            "INFINIDYSK__PERFORMANCE__MEMORY_CACHE_MB",
+            "0",
+            "Memory cache size",
+        ),
+        (
+            "INFINIDYSK__PERFORMANCE__DISK_CACHE_DIR",
+            "cache",
+            "Disk cache dir",
+        ),
+        // No saved start makes this end valid.
+        ("INFINIDYSK__MAINTENANCE__WINDOW__END", "25:00", "HH:MM"),
+        (
+            "INFINIDYSK__AUTH__OIDC__ISSUER",
+            "not-a-url",
+            "Issuer must be",
+        ),
+        ("INFINIDYSK__RCLONE_RC__URL", "ftp://rclone", "RC base URL"),
+        // Both ends from the variable: no saved end can make them differ.
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW",
+            r#"{"start":"07:00","end":"07:00"}"#,
+            "different end",
+        ),
+        // A setting, but startup could not build its TLS endpoint.
+        (
+            "INFINIDYSK__PROVIDERS",
+            r#"[{"name":"p","hostname":"news.example:563","tls":true}]"#,
+            "providers[0].hostname",
+        ),
+    ] {
+        let root = root();
+        let (_, server, cancel) = start(&root).await;
+        stop(server, &cancel).await;
+        let restored = fs::read(live(&root, "")).unwrap();
+        download(&root, "a").await;
+        stage(&root, &restored);
+        let before = fs::read(live(&root, "")).unwrap();
+
+        let boot = Boot {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            database_url: db_url(&root),
+            database_source: infinidysk::database::Source::Env,
+            uid: 0,
+            gid: 0,
+            trace_minutes: 0,
+            metrics_path: root.join("metrics.sqlite"),
+            log_dir: root.join("logs"),
+            home: root.clone(),
+            config_dir: root.clone(),
+            ffprobe: "ffprobe".to_owned(),
+        };
+        let vars = [
+            ("INFINIDYSK__AUTH__API_KEY", "adminkey".to_owned()),
+            (
+                "INFINIDYSK__MOUNT__DIR",
+                root.join("mnt").display().to_string(),
+            ),
+            (key, value.to_owned()),
+        ]
+        .map(|(k, v)| (k.to_owned(), v));
+        let listener = TcpListener::bind(boot.listen).await.unwrap();
+        let error = serve(listener, &boot, vars, CancellationToken::new())
+            .await
+            .expect_err("a bad variable stops startup");
+        assert!(format!("{error:#}").contains(want), "{key}: {error:#}");
+        assert_eq!(
+            intent(&root).unwrap()["phase"],
+            "requested",
+            "{key}: nothing moved"
+        );
+        assert_eq!(fs::read(live(&root, "")).unwrap(), before, "{key}");
+        assert!(
+            fs::metadata(live(&root, ".before-restore")).is_err(),
+            "{key}"
+        );
+        assert!(
+            has(&root, "a").await,
+            "{key}: the live database stays in place"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn a_restore_that_does_not_open_rolls_back_in_a_fresh_process() {
     for future in [false, true] {
         let root = root();

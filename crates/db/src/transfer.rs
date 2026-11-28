@@ -130,6 +130,7 @@ pub async fn connect(url: &str, lock_timeout: Duration) -> Result<PgConnection, 
     if !(url.starts_with("postgres:") || url.starts_with("postgresql:")) {
         return Err(Error::NotPostgres);
     }
+    crate::check_postgres_url(url)?;
     let options = PgConnectOptions::from_str(url)?
         .application_name("infinidysk-transfer")
         .options([("lock_timeout", format!("{}ms", lock_timeout.as_millis()))]);
@@ -141,6 +142,7 @@ pub fn describe(url: &str) -> Result<String, Error> {
     if !(url.starts_with("postgres:") || url.starts_with("postgresql:")) {
         return Err(Error::NotPostgres);
     }
+    crate::check_postgres_url(url)?;
     let options = PgConnectOptions::from_str(url)?;
     let user = options.get_username();
     Ok(format!(

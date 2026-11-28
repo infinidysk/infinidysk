@@ -1420,6 +1420,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sha2 0.11.1",
  "sqlx",
  "thiserror 2.0.21",
@@ -1512,6 +1513,7 @@ version = "0.0.0"
 dependencies = [
  "futures-util",
  "infinidysk-core",
+ "percent-encoding",
  "sha2 0.11.1",
  "sqlx",
  "thiserror 2.0.21",
@@ -3242,6 +3244,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4058,6 +4066,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

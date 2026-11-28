@@ -437,22 +437,26 @@ fn keep_valid(s: &mut Settings, notes: &mut Vec<String>, default_cache_dir: &str
             s.network.trusted_proxies = Settings::default().network.trusted_proxies;
         }),
     ];
-    let mut fallbacks = fallbacks.into_iter();
+    let mut fallbacks = Vec::from(fallbacks);
+    // Whichever fallback clears the current error goes next, so this does not depend on
+    // the order validation reports errors in.
     while let Err(error) = s.validate_in(default_cache_dir) {
-        let Some((what, reset)) = fallbacks.next() else {
+        let cleared = fallbacks.iter().enumerate().find_map(|(i, (_, reset))| {
+            let mut next = s.clone();
+            reset(&mut next);
+            (next
+                .validate_in(default_cache_dir)
+                .map_err(|e| e.to_string())
+                != Err(error.to_string()))
+            .then_some((i, next))
+        });
+        let Some((i, next)) = cleared else {
             notes.push(format!("the carried-over settings are invalid: {error}"));
             return;
         };
-        let mut next = s.clone();
-        reset(&mut next);
-        if next
-            .validate_in(default_cache_dir)
-            .map_err(|e| e.to_string())
-            != Err(error.to_string())
-        {
-            notes.push(format!("{what} not carried over: {error}"));
-            *s = next;
-        }
+        let (what, _) = fallbacks.remove(i);
+        notes.push(format!("{what} not carried over: {error}"));
+        *s = next;
     }
 }
 
@@ -2271,8 +2275,12 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("http://auth.example.com/") && error.contains("OIDC_*"),
+            error.contains("Issuer must be") && error.contains("OIDC_*"),
             "{error}"
+        );
+        assert!(
+            !error.contains("auth.example.com"),
+            "input stays out: {error}"
         );
         let mut notes = Vec::new();
         let o = oidc(|n| vars.get(n).copied(), true, &mut notes).unwrap();
