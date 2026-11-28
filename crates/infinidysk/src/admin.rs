@@ -648,6 +648,28 @@ fn keep_list_secrets(
 }
 
 /// Saves `settings` and applies them; with `expected`, only if the revision is still that.
+/// Refuses settings whose enabled providers startup could not build. Saving them would
+/// pass validation, fail to apply, and then stop the next start before the admin API.
+fn check_candidate_endpoints(settings: &Settings) -> Result<(), Fail> {
+    let mut providers = settings.providers.clone();
+    for (i, p) in providers.iter_mut().enumerate() {
+        // An entry that does not resolve fails validation when it is saved.
+        if p.resolve(&config::Provider::label(i)).is_err() {
+            return Ok(());
+        }
+    }
+    match crate::app::check_endpoints(&providers) {
+        Ok(()) => Ok(()),
+        Err(crate::app::EndpointCheck::Host(error)) => Err(error.into()),
+        Err(crate::app::EndpointCheck::Other(error)) => {
+            tracing::warn!(reason = %error, "could not configure Usenet providers");
+            Err(Fail::Failed(
+                "could not configure Usenet providers".to_owned(),
+            ))
+        }
+    }
+}
+
 async fn write_settings(
     admin: &Admin,
     settings: Settings,
@@ -662,6 +684,7 @@ async fn write_settings(
             && (current.strategy != next.strategy || current.strm_dir != dir))
             .then(|| dir.to_owned())
     };
+    check_candidate_endpoints(&settings)?;
     let probed = wanted(&admin.config.read().await.settings().imports);
     if let Some(dir) = &probed
         && let Err(reason) = admin.live.probe_strm_dir(dir).await

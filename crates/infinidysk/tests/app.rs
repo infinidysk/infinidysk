@@ -1073,12 +1073,20 @@ async fn settings_patch_preserves_omissions_and_rejects_stale_writes() {
             json!({"arr_instances": [arr(A2, None)]}),
             "arr_instances[0]",
         ),
+        // Valid as a setting, but startup could not build its TLS endpoint.
+        (
+            json!({"providers": [{"id": P3, "name": "p3",
+                "hostname": "news.example:563", "tls": true, "enabled": true}]}),
+            "providers[0].hostname",
+        ),
     ];
+    let before = get().await;
     for (changes, want) in refused {
         let (code, body) = patch(&revision, changes).await;
         assert_eq!(code, bad, "{want}: {body}");
         assert!(path(&body).starts_with(want), "{want}: {body}");
     }
+    assert_eq!(get().await, before, "refused writes change nothing");
 
     // A PUT changes a secret behind an identical mask; the old revision is stale.
     let mut settings = get().await["settings"].clone();

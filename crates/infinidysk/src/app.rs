@@ -145,24 +145,36 @@ pub fn validate_deployment() -> anyhow::Result<()> {
     var("PGID", 1000_u32)?;
     var("INFINIDYSK_TRACE_MINUTES", 0_u32)?;
     let settings = config::fresh(&overrides, &home.join("cache").display().to_string())?;
-    check_endpoints(&settings.providers)
+    match check_endpoints(&settings.providers) {
+        Ok(()) => Ok(()),
+        Err(EndpointCheck::Host(error)) => Err(error.into()),
+        Err(EndpointCheck::Other(error)) => {
+            Err(anyhow::Error::from(error).context("configuring Usenet providers"))
+        }
+    }
+}
+
+/// Why [`check_endpoints`] failed.
+pub(crate) enum EndpointCheck {
+    /// A provider's hostname is not a server name; the error names its setting.
+    Host(config::Error),
+    /// Building the endpoint failed for a reason that is not the settings.
+    Other(infinidysk_nntp::Error),
 }
 
 /// Builds each enabled provider's endpoint, as startup does, without connecting.
-fn check_endpoints(providers: &[config::Provider]) -> anyhow::Result<()> {
+/// `providers` must be resolved (see [`config::Provider::resolve`]).
+pub(crate) fn check_endpoints(providers: &[config::Provider]) -> Result<(), EndpointCheck> {
     for (index, provider) in providers.iter().enumerate().filter(|(_, p)| p.enabled) {
         match endpoint(provider) {
             Ok(_) => {}
             Err(infinidysk_nntp::Error::InvalidArgument(_)) => {
-                return Err(config::Error::Input {
+                return Err(EndpointCheck::Host(config::Error::Input {
                     path: format!("providers[{index}].hostname"),
                     reason: "not a valid server name",
-                }
-                .into());
+                }));
             }
-            Err(error) => {
-                return Err(anyhow::Error::from(error).context("configuring Usenet providers"));
-            }
+            Err(error) => return Err(EndpointCheck::Other(error)),
         }
     }
     Ok(())
